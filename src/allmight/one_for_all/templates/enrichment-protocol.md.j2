@@ -1,0 +1,83 @@
+---
+name: enrichment-protocol
+description: >-
+  Knowledge enrichment protocol. Guides agents on when and how to contribute
+  to the knowledge graph while working. Auto-loaded when agent reads or modifies code.
+---
+
+# Enrichment Protocol — Enrich As You Work
+
+> This is an **advisory** protocol. Follow it naturally as you work —
+> don't treat it as a mandatory checklist.
+>
+> Current Power Level: {{ "%.1f" | format(power_level.coverage_pct) }}%
+
+## When to Enrich
+
+### On reading and understanding code
+When you read a symbol (function, class, module) and understand its purpose:
+- If the sidecar has no `intent` for this symbol → set it via `enrich_symbol`
+- Write intent as a **human-readable description** of what the code does and why
+
+### On discovering relationships
+When you notice that two entities are related:
+- Code ↔ Issue: a function relates to a bug report or feature request
+- Code ↔ Test: a function has specific test cases
+- Code ↔ Doc: a module is documented somewhere
+- Code ↔ Code: two modules collaborate or one depends on the other
+
+Link them via `enrich_symbol(..., relations=[target_uid])`.
+Always `lookup` the target UID first to verify it exists.
+
+### On modifying code
+After changing code:
+- Check if the sidecar intent is still accurate
+- Update intent if the purpose changed
+- Add relations to any new dependencies you introduced
+
+## How to Enrich
+
+```python
+# 1. Set intent for a symbol you understood
+enrich_symbol(
+    config="./workspace_config.yaml",
+    file_path="src/module.py",       # exact_relative_path from search
+    symbol="ClassName.method_name",   # short name, not full UID
+    intent="Validates user input and returns sanitized data",
+    index="source_code"
+)
+
+# 2. Link a code symbol to a related issue
+enrich_symbol(
+    config="./workspace_config.yaml",
+    file_path="src/module.py",
+    symbol="ClassName.method_name",
+    relations=["./issues/bug-123.md::*"],
+    index="source_code"
+)
+```
+
+## Available Indices
+
+{% for idx in indices %}
+- **`{{ idx.name }}`** — {{ idx.description }}
+{% endfor %}
+
+## Priority Guidelines
+
+Focus enrichment on:
+1. **Entry points** — main functions, API handlers, CLI commands
+2. **Complex logic** — algorithms, state machines, non-obvious control flow
+3. **Cross-cutting concerns** — error handling, auth, logging patterns
+4. **Frequently modified** — hot files that change often
+
+Don't bother enriching:
+- Auto-generated code
+- Simple getters/setters
+- Boilerplate that's obvious from naming
+
+## Quality over Quantity
+
+- A few well-written intents are worth more than many shallow ones
+- Intent should answer "what does this do and **why**"
+- Relations should capture **meaningful** connections, not trivial ones

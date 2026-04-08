@@ -1,0 +1,10 @@
+Export the knowledge graph as a panoramic visualization.
+
+1. Scan all sidecar YAML files across all SMAK indices defined in `{{ smak_config_path }}`.
+2. Build a graph of symbols (nodes) and relations (edges).
+3. Generate a Mermaid diagram showing the key relationships.
+4. Write output to `all-might/panorama/overview.mermaid`.
+5. Also write `all-might/panorama/graph.json` with the full graph data.
+6. Report summary statistics: node count, edge count, clusters, orphans.
+
+Focus on the most connected symbols — omit isolated nodes with no relations.

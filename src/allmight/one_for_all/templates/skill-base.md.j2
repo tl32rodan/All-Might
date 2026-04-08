@@ -1,0 +1,88 @@
+---
+name: one-for-all
+description: >-
+  Project knowledge graph guide for {{ project_name }}.
+  Provides project structure, SMAK index reference, key enriched symbols,
+  and current Power Level. Auto-loaded when agent needs to understand the project.
+---
+
+# One For All — {{ project_name }}
+
+> This skill works alongside the `smak` skill. For SMAK MCP tool reference
+> (search, enrich_symbol, lookup, etc.), see that skill.
+>
+> Generated at: {{ generated_at }}
+
+## 1. Project Overview
+
+- **Name**: {{ project_name }}
+{% if languages %}
+- **Languages**: {{ languages | join(', ') }}
+{% endif %}
+{% if frameworks %}
+- **Frameworks**: {{ frameworks | join(', ') }}
+{% endif %}
+
+## 2. SMAK Index Reference
+
+Every SMAK tool takes `config="{{ smak_config_path }}"` as its first parameter.
+
+| Index | Description | Paths |
+|-------|-------------|-------|
+{% for idx in indices %}
+| `{{ idx.name }}` | {{ idx.description }} | `{{ idx.paths | join(', ') }}` |
+{% endfor %}
+
+Use `describe_workspace(config="{{ smak_config_path }}")` to verify indices are active.
+
+### Choosing the right index
+
+{% for idx in indices %}
+- **`{{ idx.name }}`** — {{ idx.description }}
+{% endfor %}
+
+When unsure which index, use `search_all(config="{{ smak_config_path }}", query="...")` to search everything.
+
+## 3. Key Symbols
+
+{% if key_symbols %}
+The following symbols have been enriched with intent and/or relations:
+
+| Symbol | File | Intent | Relations |
+|--------|------|--------|-----------|
+{% for sym in key_symbols %}
+| `{{ sym.name }}` | `{{ sym.file_path }}` | {{ sym.intent[:80] }}{% if sym.intent|length > 80 %}...{% endif %} | {{ sym.relation_count }} |
+{% endfor %}
+
+These are your best starting points for understanding the codebase.
+{% else %}
+> No symbols have been enriched yet. As you work with this project and use
+> `enrich_symbol` to annotate code, this section will be populated when you
+> run `/regenerate`.
+{% endif %}
+
+## 4. Power Level
+
+- **Coverage**: {{ "%.1f" | format(power_level.coverage_pct) }}%
+- **Enriched symbols**: {{ power_level.enriched_symbols }} / {{ power_level.total_symbols }}
+- **Total relations**: {{ power_level.total_relations }}
+
+{% if power_level.by_index %}
+### Coverage by Index
+
+| Index | Coverage |
+|-------|----------|
+{% for name, pct in power_level.by_index.items() %}
+| `{{ name }}` | {{ "%.1f" | format(pct) }}% |
+{% endfor %}
+{% endif %}
+
+Run `/power-level` to get fresh metrics, or `/regenerate` to update this skill.
+
+## 5. Getting Started
+
+1. Run `describe_workspace(config="{{ smak_config_path }}")` to see available indices
+2. Use `search(config="{{ smak_config_path }}", query="...", index="...")` to explore
+3. When you understand a symbol's purpose, enrich it (see the `enrichment-protocol` skill)
+4. Run `/power-level` periodically to track progress
+5. Run `/regenerate` after significant enrichment to update this skill
