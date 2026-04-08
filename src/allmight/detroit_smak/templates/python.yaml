@@ -1,0 +1,15 @@
+# Python project index template
+# Used when Detroit SMAK detects a Python project
+indices:
+  - name: source_code
+    description: "Python source code — modules, classes, and functions"
+    paths: ["./src"]
+  - name: tests
+    description: "Unit tests, integration tests, and test fixtures"
+    paths: ["./tests", "./src/tests"]
+  - name: documentation
+    description: "Architecture docs, API docs, and README files"
+    paths: ["./docs"]
+  - name: issues
+    description: "Bug reports, feature requests, and known problems"
+    paths: ["./issues"]

@@ -1,0 +1,19 @@
+# Verilog/EDA project index template
+# Used when Detroit SMAK detects an EDA project (Verilog, SystemVerilog, VHDL)
+indices:
+  - name: rtl
+    description: "RTL design files — Verilog/SystemVerilog modules"
+    paths: ["$DDI_ROOT_PATH/rtl"]
+    path_env: DDI_ROOT_PATH
+  - name: verification
+    description: "UVM testbenches, coverage models, and assertion libraries"
+    paths: ["$DDI_ROOT_PATH/verif"]
+    path_env: DDI_ROOT_PATH
+  - name: constraints
+    description: "SDC timing constraints, floorplan DEF, and power intent UPF"
+    paths: ["$DDI_ROOT_PATH/constraints"]
+    path_env: DDI_ROOT_PATH
+  - name: release_notes
+    description: "ECO history, release notes, known issues, and waiver documentation"
+    paths: ["$DDI_ROOT_PATH/doc/releases"]
+    path_env: DDI_ROOT_PATH
