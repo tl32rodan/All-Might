@@ -6,13 +6,13 @@ the knowledge graph maturity indicator.
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
 
-from ..core.domain import IndexSpec, PowerLevel
+from ..core.domain import PowerLevel
+from ..utils.yaml_io import load_config, load_indices, resolve_path, sidecar_to_source, write_yaml
 
 
 class PowerTracker:
@@ -27,10 +27,10 @@ class PowerTracker:
         Returns:
             The calculated PowerLevel.
         """
-        config = self._load_config(config_path)
+        config = load_config(config_path)
         root = Path(config.get("project", {}).get("root", config_path.parent.parent))
         smak_config_path = config.get("smak", {}).get("config_path", "workspace_config.yaml")
-        indices = self._load_indices(root / smak_config_path)
+        indices = load_indices(root / smak_config_path)
 
         total_symbols = 0
         enriched_symbols = 0
@@ -44,7 +44,7 @@ class PowerTracker:
             idx_enriched = 0
 
             for path_str in idx.paths:
-                search_path = self._resolve_path(root, path_str)
+                search_path = resolve_path(root, path_str)
                 if not search_path.is_dir():
                     continue
 
@@ -55,7 +55,7 @@ class PowerTracker:
                     except Exception:
                         continue
 
-                    source_file = self._sidecar_to_source(sidecar)
+                    source_file = sidecar_to_source(sidecar)
                     files_with_sidecars.add(source_file)
 
                     for sym in data.get("symbols", []):
@@ -137,45 +137,3 @@ class PowerTracker:
         with open(tracker_path, "w") as f:
             yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
-    def _load_config(self, config_path: Path) -> dict:
-        if config_path.exists():
-            with open(config_path) as f:
-                return yaml.safe_load(f) or {}
-        return {}
-
-    def _load_indices(self, config_path: Path) -> list[IndexSpec]:
-        if not config_path.exists():
-            return []
-        with open(config_path) as f:
-            config = yaml.safe_load(f) or {}
-        return [
-            IndexSpec(
-                name=idx["name"],
-                description=idx.get("description", ""),
-                paths=idx.get("paths", []),
-                path_env=idx.get("path_env"),
-            )
-            for idx in config.get("indices", [])
-        ]
-
-    def _resolve_path(self, root: Path, path_str: str) -> Path:
-        if path_str.startswith("$"):
-            parts = path_str.split("/", 1)
-            env_var = parts[0][1:]
-            env_val = os.environ.get(env_var, "")
-            if env_val and len(parts) > 1:
-                return Path(env_val) / parts[1]
-            elif env_val:
-                return Path(env_val)
-        if path_str.startswith("./"):
-            return root / path_str[2:]
-        if path_str.startswith("/"):
-            return Path(path_str)
-        return root / path_str
-
-    def _sidecar_to_source(self, sidecar: Path) -> str:
-        name = sidecar.name
-        if name.startswith(".") and name.endswith(".sidecar.yaml"):
-            source_name = name[1 : -len(".sidecar.yaml")]
-            return str(sidecar.parent / source_name)
-        return str(sidecar)

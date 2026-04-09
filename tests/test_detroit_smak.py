@@ -108,21 +108,17 @@ class TestProjectInitializer:
         assert (skills_dir / "one-for-all" / "SKILL.md").exists()
         assert (skills_dir / "enrichment" / "SKILL.md").exists()
 
-    def test_installs_smak_skill(self, sample_project, smak_path):
-        if smak_path is None:
-            pytest.skip("SMAK submodule not available")
-
+    def test_does_not_install_smak_skill(self, sample_project, smak_path):
+        """Phase 7: agents use All-Might commands, not SMAK MCP tools directly."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
         initializer.initialize(manifest, smak_path=smak_path)
 
-        # SMAK skill should be copied
+        # SMAK skill should NOT be installed (agents go through All-Might)
         smak_skill = sample_project / ".claude" / "skills" / "smak" / "SKILL.md"
-        assert smak_skill.exists()
-        content = smak_skill.read_text()
-        assert "SMAK" in content
+        assert not smak_skill.exists()
 
     def test_creates_commands(self, sample_project, smak_path):
         scanner = ProjectScanner()
@@ -132,9 +128,19 @@ class TestProjectInitializer:
         initializer.initialize(manifest, smak_path=smak_path)
 
         commands_dir = sample_project / ".claude" / "commands"
+        # Original commands
         assert (commands_dir / "power-level.md").exists()
         assert (commands_dir / "regenerate.md").exists()
         assert (commands_dir / "panorama.md").exists()
+        # Phase 7 new commands
+        assert (commands_dir / "search.md").exists()
+        assert (commands_dir / "enrich.md").exists()
+        assert (commands_dir / "ingest.md").exists()
+        assert (commands_dir / "explain.md").exists()
+        assert (commands_dir / "graph-report.md").exists()
+        assert (commands_dir / "add-index.md").exists()
+        assert (commands_dir / "remove-index.md").exists()
+        assert (commands_dir / "list-indices.md").exists()
 
     def test_updates_claude_md(self, sample_project, smak_path):
         scanner = ProjectScanner()
@@ -149,7 +155,8 @@ class TestProjectInitializer:
         assert "ALL-MIGHT" in content
         assert "/power-level" in content
 
-    def test_one_for_all_references_smak_skill(self, sample_project, smak_path):
+    def test_one_for_all_uses_allmight_commands(self, sample_project, smak_path):
+        """Phase 7: One For All references All-Might commands, not SMAK MCP."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
@@ -157,9 +164,13 @@ class TestProjectInitializer:
         initializer.initialize(manifest, smak_path=smak_path)
 
         one_for_all = (sample_project / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
-        # Should reference the smak skill, not duplicate tool docs
-        assert "smak" in one_for_all.lower()
-        assert "works alongside" in one_for_all.lower()
+        # Should reference All-Might commands
+        assert "/search" in one_for_all
+        assert "/enrich" in one_for_all
+        assert "/explain" in one_for_all
+        # Should NOT reference SMAK MCP tools directly
+        assert "enrich_symbol(" not in one_for_all
+        assert "describe_workspace(" not in one_for_all
 
     def test_idempotent(self, sample_project, smak_path):
         """Running init twice should not break anything."""

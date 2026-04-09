@@ -8,8 +8,8 @@ description: >-
 
 # One For All — {{ project_name }}
 
-> This skill works alongside the `smak` skill. For SMAK MCP tool reference
-> (search, enrich_symbol, lookup, etc.), see that skill.
+> All knowledge graph operations go through **All-Might commands**.
+> You do NOT call SMAK MCP tools directly.
 >
 > Generated at: {{ generated_at }}
 
@@ -25,15 +25,13 @@ description: >-
 
 ## 2. SMAK Index Reference
 
-Every SMAK tool takes `config="{{ smak_config_path }}"` as its first parameter.
-
 | Index | Description | Paths |
 |-------|-------------|-------|
 {% for idx in indices %}
 | `{{ idx.name }}` | {{ idx.description }} | `{{ idx.paths | join(', ') }}` |
 {% endfor %}
 
-Use `describe_workspace(config="{{ smak_config_path }}")` to verify indices are active.
+Use `/list-indices` to verify indices are active.
 
 ### Choosing the right index
 
@@ -41,7 +39,7 @@ Use `describe_workspace(config="{{ smak_config_path }}")` to verify indices are 
 - **`{{ idx.name }}`** — {{ idx.description }}
 {% endfor %}
 
-When unsure which index, use `search_all(config="{{ smak_config_path }}", query="...")` to search everything.
+When unsure which index, use `/search "<query>"` to search the default index.
 
 ## 3. Key Symbols
 
@@ -55,9 +53,10 @@ The following symbols have been enriched with intent and/or relations:
 {% endfor %}
 
 These are your best starting points for understanding the codebase.
+Use `/explain "<uid>"` to see full graph context for any symbol.
 {% else %}
 > No symbols have been enriched yet. As you work with this project and use
-> `enrich_symbol` to annotate code, this section will be populated when you
+> `/enrich` to annotate code, this section will be populated when you
 > run `/regenerate`.
 {% endif %}
 
@@ -79,10 +78,26 @@ These are your best starting points for understanding the codebase.
 
 Run `/power-level` to get fresh metrics, or `/regenerate` to update this skill.
 
-## 5. Getting Started
+## 5. All-Might Commands
 
-1. Run `describe_workspace(config="{{ smak_config_path }}")` to see available indices
-2. Use `search(config="{{ smak_config_path }}", query="...", index="...")` to explore
-3. When you understand a symbol's purpose, enrich it (see the `enrichment-protocol` skill)
+| Command | Purpose |
+|---------|---------|
+| `/search <query>` | Semantic search with graph context |
+| `/explain <uid>` | Full graph context for a symbol |
+| `/enrich` | Annotate a symbol with intent/relations |
+| `/ingest` | Trigger SMAK vector store ingest |
+| `/power-level` | Check knowledge coverage metrics |
+| `/regenerate` | Update this skill with latest state |
+| `/panorama` | Export knowledge graph visualization |
+| `/graph-report` | Graph intelligence report |
+| `/add-index` | Add a new SMAK index |
+| `/remove-index` | Remove an index |
+| `/list-indices` | List all configured indices |
+
+## 6. Getting Started
+
+1. Use `/search "..."` to explore the codebase semantically
+2. Use `/explain "path::symbol"` for deep context on any symbol
+3. When you understand a symbol's purpose, use `/enrich` (see `enrichment-protocol` skill)
 4. Run `/power-level` periodically to track progress
 5. Run `/regenerate` after significant enrichment to update this skill

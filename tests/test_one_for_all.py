@@ -124,14 +124,19 @@ class TestOneForAllGenerator:
         # 2 symbols total, 2 with intent = 100%
         assert "100.0%" in content
 
-    def test_references_smak_skill(self, initialized_project):
-        """Test that One For All references the smak skill."""
+    def test_uses_allmight_commands(self, initialized_project):
+        """Test that One For All references All-Might commands, not SMAK MCP."""
         config_path = initialized_project / "all-might" / "config.yaml"
         generator = OneForAllGenerator()
         content = generator.generate(config_path)
 
-        assert "works alongside" in content.lower()
-        assert "smak" in content.lower()
+        # Should reference All-Might commands
+        assert "/search" in content
+        assert "/enrich" in content
+        assert "/explain" in content
+        # Should NOT reference SMAK MCP tools directly
+        assert "enrich_symbol(" not in content
+        assert "describe_workspace(" not in content
 
     def test_idempotent_regeneration(self, initialized_project):
         """Test that regenerating twice produces consistent results."""
