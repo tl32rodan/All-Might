@@ -20,7 +20,7 @@ class TestConfigManager(unittest.TestCase):
         # Write initial workspace_config.yaml
         config = {
             "indices": [
-                {"name": "source_code", "description": "Source code", "paths": ["./src"]},
+                {"name": "source_code", "uri": "./smak/source_code", "description": "Source code", "paths": ["./src"]},
             ],
         }
         with open(root / "workspace_config.yaml", "w") as f:
@@ -132,6 +132,50 @@ class TestConfigManager(unittest.TestCase):
             mgr2 = ConfigManager(root)
             names = [idx.name for idx in mgr2.list_indices()]
             self.assertEqual(names, ["source_code", "docs", "tests"])
+
+    def test_add_index_auto_generates_uri(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._setup_project(tmp)
+            mgr = ConfigManager(root)
+            new = mgr.add_index("tests", "Test files", ["./tests"])
+            self.assertEqual(new.uri, "./smak/tests")
+
+            # Verify persisted in workspace_config.yaml
+            with open(root / "workspace_config.yaml") as f:
+                data = yaml.safe_load(f)
+            tests_idx = next(idx for idx in data["indices"] if idx["name"] == "tests")
+            self.assertEqual(tests_idx["uri"], "./smak/tests")
+
+    def test_add_index_with_custom_uri(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._setup_project(tmp)
+            mgr = ConfigManager(root)
+            new = mgr.add_index("tests", "Test files", ["./tests"], uri="./custom/tests")
+            self.assertEqual(new.uri, "./custom/tests")
+
+    def test_roundtrip_preserves_uri(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._setup_project(tmp)
+            mgr = ConfigManager(root)
+
+            # Verify existing uri is preserved
+            idx = mgr.get_index("source_code")
+            self.assertEqual(idx.uri, "./smak/source_code")
+
+            # Add index, modify something, check uri survives round-trip
+            mgr.add_index("docs", "Documentation", ["./docs"])
+            mgr2 = ConfigManager(root)
+            sc = mgr2.get_index("source_code")
+            self.assertEqual(sc.uri, "./smak/source_code")
+            docs = mgr2.get_index("docs")
+            self.assertEqual(docs.uri, "./smak/docs")
+
+    def test_update_index_preserves_uri(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._setup_project(tmp)
+            mgr = ConfigManager(root)
+            updated = mgr.update_index("source_code", description="Updated")
+            self.assertEqual(updated.uri, "./smak/source_code")
 
 
 if __name__ == "__main__":

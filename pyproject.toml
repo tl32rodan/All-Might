@@ -16,6 +16,7 @@ dependencies = [
     "jinja2>=3.1",
     "pyyaml>=6.0",
     "rich>=13.0",
+    "smak>=0.1.0",
 ]
 
 [project.optional-dependencies]

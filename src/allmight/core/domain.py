@@ -20,6 +20,7 @@ class IndexSpec:
     name: str
     description: str
     paths: list[str]
+    uri: str | None = None
     path_env: str | None = None
 
 

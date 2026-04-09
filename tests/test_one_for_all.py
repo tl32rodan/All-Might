@@ -26,9 +26,7 @@ def initialized_project(tmp_path):
     manifest = scanner.scan(tmp_path)
     initializer = ProjectInitializer()
 
-    smak_path = Path(__file__).parent.parent / "deps" / "smak"
-    smak = smak_path if smak_path.exists() else None
-    initializer.initialize(manifest, smak_path=smak)
+    initializer.initialize(manifest, smak_path=None)
 
     return tmp_path
 

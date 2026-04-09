@@ -10,7 +10,6 @@ Takes a ProjectManifest from the Scanner and generates:
 
 from __future__ import annotations
 
-import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -103,6 +102,7 @@ class ProjectInitializer:
         for idx in manifest.indices:
             entry: dict = {
                 "name": idx.name,
+                "uri": idx.uri or f"./smak/{idx.name}",
                 "description": idx.description,
                 "paths": idx.paths,
             }
@@ -125,31 +125,31 @@ class ProjectInitializer:
         All-Might commands instead. So we do NOT install smak/SKILL.md
         (the HOW layer). We only install sos-smak/SKILL.md for SOS
         environments, since it provides path resolution rules.
+
+        SOS skill content is bundled in All-Might — no runtime dependency
+        on SMAK skill files being present on disk.
         """
+        if not manifest.has_path_env:
+            return
+
+        from .sos_skill_content import SOS_SKILL_BODY
+
         skills_dir = root / ".claude" / "skills"
         skills_dir.mkdir(parents=True, exist_ok=True)
 
-        if smak_path is None:
-            # Try common locations
-            candidates = [
-                root / "deps" / "smak",
-                root.parent / "smak",
-                root.parent / "SMAK",
-            ]
-            for candidate in candidates:
-                if (candidate / "smak-skill").exists():
-                    smak_path = candidate
-                    break
-
-        # Conditionally copy sos-smak-skill/ → .claude/skills/sos-smak/
-        # (SOS path rules are still needed for environments with $DDI_ROOT_PATH)
-        if smak_path and manifest.has_path_env:
-            sos_src = smak_path / "sos-smak-skill" / "SKILL.md"
-            if sos_src.exists():
-                sos_dst = skills_dir / "sos-smak"
-                if not sos_dst.exists():
-                    sos_dst.mkdir(exist_ok=True)
-                    shutil.copy2(sos_src, sos_dst / "SKILL.md")
+        self._write_skill(
+            skills_dir / "sos-smak" / "SKILL.md",
+            name="sos-smak-skill",
+            description=(
+                "CliosoftSOS environment guide for SMAK. Teaches agents the "
+                "internal EDA version control workflow — online vs. version "
+                "control vs. SOS workspace — and how to correctly use SMAK "
+                "(path_env, sidecar editing, ingestion) within this environment. "
+                "Load this skill when working in projects that use CliosoftSOS "
+                "and $DDI_ROOT_PATH."
+            ),
+            body=SOS_SKILL_BODY,
+        )
 
     def _generate_allmight_skills(self, root: Path, manifest: ProjectManifest) -> None:
         """Generate All-Might skills (WHAT + WHEN/WHY + bootstrap layers)."""
