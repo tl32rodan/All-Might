@@ -36,6 +36,7 @@ def load_indices(config_path: Path) -> list[IndexSpec]:
             name=idx["name"],
             description=idx.get("description", ""),
             paths=idx.get("paths", []),
+            uri=idx.get("uri"),
             path_env=idx.get("path_env"),
         )
         for idx in config.get("indices", [])

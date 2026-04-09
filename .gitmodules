@@ -1,3 +1,0 @@
-[submodule "deps/smak"]
-	path = deps/smak
-	url = https://github.com/tl32rodan/smak.git

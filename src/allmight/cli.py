@@ -339,16 +339,17 @@ def config():
 @click.option("--name", required=True, help="Index name")
 @click.option("--description", required=True, help="Index description")
 @click.option("--paths", required=True, multiple=True, help="Paths to include (repeatable)")
+@click.option("--uri", default=None, help="Vector store URI (default: ./smak/<name>)")
 @click.option("--path-env", default=None, help="Environment variable for path prefix")
 @click.option("--root", "root_path", default=".", type=click.Path(exists=True), help="Project root")
-def config_add_index(name: str, description: str, paths: tuple, path_env: str | None, root_path: str):
+def config_add_index(name: str, description: str, paths: tuple, uri: str | None, path_env: str | None, root_path: str):
     """Add a new SMAK index."""
     from pathlib import Path as P
 
     from .config import ConfigManager
 
     mgr = ConfigManager(P(root_path).resolve())
-    idx = mgr.add_index(name, description, list(paths), path_env=path_env)
+    idx = mgr.add_index(name, description, list(paths), uri=uri, path_env=path_env)
     click.echo(f"Added index '{idx.name}': {idx.description}")
 
 
@@ -380,7 +381,7 @@ def config_list_indices(root_path: str, as_json: bool):
     indices = mgr.list_indices()
 
     if as_json:
-        data = [{"name": i.name, "description": i.description, "paths": i.paths} for i in indices]
+        data = [{"name": i.name, "uri": i.uri, "description": i.description, "paths": i.paths} for i in indices]
         click.echo(json.dumps(data, indent=2, ensure_ascii=False))
         return
 

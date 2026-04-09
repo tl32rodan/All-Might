@@ -34,6 +34,7 @@ class ConfigManager:
         name: str,
         description: str,
         paths: list[str],
+        uri: str | None = None,
         path_env: str | None = None,
     ) -> IndexSpec:
         """Add a new index. Raises ValueError if name already exists."""
@@ -44,6 +45,7 @@ class ConfigManager:
             name=name,
             description=description,
             paths=paths,
+            uri=uri or f"./smak/{name}",
             path_env=path_env,
         )
         indices.append(new_index)
@@ -70,6 +72,7 @@ class ConfigManager:
                     name=kwargs.get("name", idx.name),
                     description=kwargs.get("description", idx.description),
                     paths=kwargs.get("paths", idx.paths),
+                    uri=kwargs.get("uri", idx.uri),
                     path_env=kwargs.get("path_env", idx.path_env),
                 )
                 indices[i] = updated
@@ -100,6 +103,7 @@ class ConfigManager:
                 name=idx["name"],
                 description=idx.get("description", ""),
                 paths=idx.get("paths", []),
+                uri=idx.get("uri"),
                 path_env=idx.get("path_env"),
             )
             for idx in config.get("indices", [])
@@ -134,6 +138,7 @@ class ConfigManager:
         """Convert IndexSpec to SMAK workspace_config format."""
         d: dict = {
             "name": idx.name,
+            "uri": idx.uri or f"./smak/{idx.name}",
             "description": idx.description,
             "paths": idx.paths,
         }

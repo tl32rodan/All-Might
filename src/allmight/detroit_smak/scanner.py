@@ -70,6 +70,7 @@ class ProjectScanner:
                     name=d,
                     description=f"{role} — {self._describe_eda_dir(d, languages)}",
                     paths=[f"./{d}"],
+                    uri=f"./smak/{d}",
                 ))
         elif source_dirs:
             lang_str = ", ".join(languages[:3]) if languages else "source"
@@ -77,6 +78,7 @@ class ProjectScanner:
                 name="source_code",
                 description=f"Project source code ({lang_str})",
                 paths=[f"./{d}" for d in source_dirs],
+                uri="./smak/source_code",
             ))
         else:
             # Fallback: index the entire root
@@ -85,6 +87,7 @@ class ProjectScanner:
                 name="source_code",
                 description=f"Project source code ({lang_str})",
                 paths=["."],
+                uri="./smak/source_code",
             ))
 
         # Test index
@@ -94,6 +97,7 @@ class ProjectScanner:
                 name="tests",
                 description="Unit tests, integration tests, and test cases",
                 paths=[f"./{d}" for d in test_dirs],
+                uri="./smak/tests",
             ))
         # Check for tests nested inside src
         for src_dir in source_dirs:
@@ -103,6 +107,7 @@ class ProjectScanner:
                     name="tests",
                     description="Unit tests, integration tests, and test cases",
                     paths=[f"./{src_dir}/tests"],
+                    uri="./smak/tests",
                 ))
                 break
 
@@ -113,6 +118,7 @@ class ProjectScanner:
                 name="documentation",
                 description="Architecture docs, API docs, and general knowledge base",
                 paths=[f"./{d}" for d in doc_dirs],
+                uri="./smak/documentation",
             ))
 
         # Issues index
@@ -121,6 +127,7 @@ class ProjectScanner:
                 name="issues",
                 description="Bug reports, tickets, and known problems",
                 paths=["./issues"],
+                uri="./smak/issues",
             ))
 
         # Constraints index (EDA-specific)
@@ -129,6 +136,7 @@ class ProjectScanner:
                 name="constraints",
                 description="SDC timing constraints, floorplan DEF, and power intent UPF",
                 paths=["./constraints"],
+                uri="./smak/constraints",
             ))
 
         return indices

@@ -1,9 +1,5 @@
 """Tests for Detroit SMAK — scanner and initializer."""
 
-from pathlib import Path
-import tempfile
-import shutil
-
 import pytest
 
 from allmight.detroit_smak.scanner import ProjectScanner
@@ -22,15 +18,6 @@ def sample_project(tmp_path):
     (tmp_path / "docs" / "README.md").write_text("# Project\n")
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'test'\n")
     return tmp_path
-
-
-@pytest.fixture
-def smak_path():
-    """Return the path to the SMAK submodule."""
-    p = Path(__file__).parent.parent / "deps" / "smak"
-    if p.exists():
-        return p
-    return None
 
 
 class TestProjectScanner:
@@ -59,73 +46,67 @@ class TestProjectScanner:
         assert "tests" in index_names
         assert "documentation" in index_names
 
-    def test_scan_smak_demo(self, smak_path):
-        """Test scanning SMAK's own demo workspace."""
-        if smak_path is None:
-            pytest.skip("SMAK submodule not available")
-        demo = smak_path / "demo" / "workspace_a"
-        if not demo.exists():
-            pytest.skip("SMAK demo workspace not found")
-
+    def test_scan_proposes_uri(self, sample_project):
+        """Test that scanner proposes uri for each index."""
         scanner = ProjectScanner()
-        manifest = scanner.scan(demo)
-        # Name comes from git remote or directory — both are valid
-        assert manifest.name in ("workspace_a", "smak")
-        assert len(manifest.indices) > 0
+        manifest = scanner.scan(sample_project)
+        for idx in manifest.indices:
+            assert idx.uri is not None
+            assert idx.uri.startswith("./smak/")
 
 
 class TestProjectInitializer:
-    def test_creates_workspace_dir(self, sample_project, smak_path):
+    def test_creates_workspace_dir(self, sample_project):
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=smak_path)
+        initializer.initialize(manifest, smak_path=None)
 
         assert (sample_project / "all-might").is_dir()
         assert (sample_project / "all-might" / "config.yaml").exists()
         assert (sample_project / "all-might" / "enrichment" / "tracker.yaml").exists()
         assert (sample_project / "all-might" / "panorama").is_dir()
 
-    def test_creates_workspace_config(self, sample_project, smak_path):
+    def test_creates_workspace_config(self, sample_project):
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=smak_path)
+        initializer.initialize(manifest, smak_path=None)
 
         assert (sample_project / "workspace_config.yaml").exists()
 
-    def test_creates_skills(self, sample_project, smak_path):
+    def test_creates_skills(self, sample_project):
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=smak_path)
+        initializer.initialize(manifest, smak_path=None)
 
         skills_dir = sample_project / ".claude" / "skills"
         assert (skills_dir / "detroit-smak" / "SKILL.md").exists()
         assert (skills_dir / "one-for-all" / "SKILL.md").exists()
         assert (skills_dir / "enrichment" / "SKILL.md").exists()
 
-    def test_does_not_install_smak_skill(self, sample_project, smak_path):
+    def test_does_not_install_smak_skill(self, sample_project):
         """Phase 7: agents use All-Might commands, not SMAK MCP tools directly."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=smak_path)
+        initializer.initialize(manifest, smak_path=None)
 
         # SMAK skill should NOT be installed (agents go through All-Might)
         smak_skill = sample_project / ".claude" / "skills" / "smak" / "SKILL.md"
         assert not smak_skill.exists()
 
-    def test_creates_commands(self, sample_project, smak_path):
+    def test_creates_commands(self, sample_project):
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=smak_path)
+        initializer.initialize(manifest, smak_path=None)
 
         commands_dir = sample_project / ".claude" / "commands"
         # Original commands
@@ -142,12 +123,12 @@ class TestProjectInitializer:
         assert (commands_dir / "remove-index.md").exists()
         assert (commands_dir / "list-indices.md").exists()
 
-    def test_updates_claude_md(self, sample_project, smak_path):
+    def test_updates_claude_md(self, sample_project):
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=smak_path)
+        initializer.initialize(manifest, smak_path=None)
 
         claude_md = sample_project / ".claude" / "CLAUDE.md"
         assert claude_md.exists()
@@ -155,13 +136,13 @@ class TestProjectInitializer:
         assert "ALL-MIGHT" in content
         assert "/power-level" in content
 
-    def test_one_for_all_uses_allmight_commands(self, sample_project, smak_path):
+    def test_one_for_all_uses_allmight_commands(self, sample_project):
         """Phase 7: One For All references All-Might commands, not SMAK MCP."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=smak_path)
+        initializer.initialize(manifest, smak_path=None)
 
         one_for_all = (sample_project / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
         # Should reference All-Might commands
@@ -172,14 +153,46 @@ class TestProjectInitializer:
         assert "enrich_symbol(" not in one_for_all
         assert "describe_workspace(" not in one_for_all
 
-    def test_idempotent(self, sample_project, smak_path):
+    def test_workspace_config_has_uri(self, sample_project):
+        """Test that generated workspace_config.yaml includes uri for each index."""
+        import yaml
+
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+
+        initializer = ProjectInitializer()
+        initializer.initialize(manifest, smak_path=None)
+
+        with open(sample_project / "workspace_config.yaml") as f:
+            config = yaml.safe_load(f)
+
+        for idx in config["indices"]:
+            assert "uri" in idx, f"Index '{idx['name']}' missing uri"
+            assert idx["uri"].startswith("./smak/")
+
+    def test_sos_skill_bundled(self, sample_project):
+        """Test that SOS skill is generated from bundled content (no smak_path needed)."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        manifest.has_path_env = True  # Simulate SOS environment
+
+        initializer = ProjectInitializer()
+        initializer.initialize(manifest, smak_path=None)
+
+        sos_skill = sample_project / ".claude" / "skills" / "sos-smak" / "SKILL.md"
+        assert sos_skill.exists()
+        content = sos_skill.read_text()
+        assert "CliosoftSOS" in content
+        assert "DDI_ROOT_PATH" in content
+
+    def test_idempotent(self, sample_project):
         """Running init twice should not break anything."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=smak_path)
-        initializer.initialize(manifest, smak_path=smak_path)
+        initializer.initialize(manifest, smak_path=None)
+        initializer.initialize(manifest, smak_path=None)
 
         # Should still work — no errors, files still exist
         assert (sample_project / "all-might" / "config.yaml").exists()
