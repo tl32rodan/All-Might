@@ -119,10 +119,12 @@ class ProjectInitializer:
         manifest: ProjectManifest,
         smak_path: Path | None,
     ) -> None:
-        """Install SMAK skills into .claude/skills/ (HOW + WHERE layers).
+        """Install SMAK environment skills into .claude/skills/.
 
-        Copies smak-skill/ and optionally sos-smak-skill/ from the SMAK
-        installation into the project's .claude/skills/ directory.
+        Phase 7: Agents no longer call SMAK MCP tools directly — they use
+        All-Might commands instead. So we do NOT install smak/SKILL.md
+        (the HOW layer). We only install sos-smak/SKILL.md for SOS
+        environments, since it provides path resolution rules.
         """
         skills_dir = root / ".claude" / "skills"
         skills_dir.mkdir(parents=True, exist_ok=True)
@@ -135,28 +137,19 @@ class ProjectInitializer:
                 root.parent / "SMAK",
             ]
             for candidate in candidates:
-                if (candidate / "smak-skill" / "SKILL.md").exists():
+                if (candidate / "smak-skill").exists():
                     smak_path = candidate
                     break
 
-        if smak_path and (smak_path / "smak-skill" / "SKILL.md").exists():
-            # Copy smak-skill/ → .claude/skills/smak/
-            smak_skill_dst = skills_dir / "smak"
-            if not smak_skill_dst.exists():
-                smak_skill_dst.mkdir(exist_ok=True)
-                shutil.copy2(
-                    smak_path / "smak-skill" / "SKILL.md",
-                    smak_skill_dst / "SKILL.md",
-                )
-
-            # Conditionally copy sos-smak-skill/ → .claude/skills/sos-smak/
-            if manifest.has_path_env:
-                sos_src = smak_path / "sos-smak-skill" / "SKILL.md"
-                if sos_src.exists():
-                    sos_dst = skills_dir / "sos-smak"
-                    if not sos_dst.exists():
-                        sos_dst.mkdir(exist_ok=True)
-                        shutil.copy2(sos_src, sos_dst / "SKILL.md")
+        # Conditionally copy sos-smak-skill/ → .claude/skills/sos-smak/
+        # (SOS path rules are still needed for environments with $DDI_ROOT_PATH)
+        if smak_path and manifest.has_path_env:
+            sos_src = smak_path / "sos-smak-skill" / "SKILL.md"
+            if sos_src.exists():
+                sos_dst = skills_dir / "sos-smak"
+                if not sos_dst.exists():
+                    sos_dst.mkdir(exist_ok=True)
+                    shutil.copy2(sos_src, sos_dst / "SKILL.md")
 
     def _generate_allmight_skills(self, root: Path, manifest: ProjectManifest) -> None:
         """Generate All-Might skills (WHAT + WHEN/WHY + bootstrap layers)."""
@@ -246,6 +239,77 @@ class ProjectInitializer:
             "Focus on the most connected symbols — omit isolated nodes with no relations.\n"
         )
 
+        # /search
+        (commands_dir / "search.md").write_text(
+            "Search the knowledge graph via All-Might.\n\n"
+            "Usage: `/search <query>` or `/search <query> --index <index>`\n\n"
+            "Run `allmight search \"<query>\" --index source_code` to perform semantic search.\n"
+            "Results include SMAK hits. Use `allmight explain <uid>` for graph context on any result.\n"
+        )
+
+        # /enrich
+        (commands_dir / "enrich.md").write_text(
+            "Enrich a symbol with intent and/or relations via All-Might.\n\n"
+            "Usage: `/enrich --file <path> --symbol <name> --intent \"description\"`\n\n"
+            "Run `allmight enrich --file <path> --symbol <name> --intent \"...\"` to annotate.\n"
+            "Add `--relation <uid>` (repeatable) to link to other symbols.\n"
+            "Add `--bidirectional` to create the reverse link too.\n"
+        )
+
+        # /ingest
+        (commands_dir / "ingest.md").write_text(
+            "Trigger SMAK ingest to update the vector store.\n\n"
+            "Usage: `/ingest` or `/ingest --index <index>`\n\n"
+            "Run `allmight ingest` to re-ingest all indices, or\n"
+            "`allmight ingest --index source_code` for a specific index.\n"
+        )
+
+        # /explain
+        (commands_dir / "explain.md").write_text(
+            "Show full graph context for a symbol.\n\n"
+            "Usage: `/explain <uid>`\n\n"
+            "Run `allmight explain \"<path>::<symbol>\"` to see:\n"
+            "- Intent, outgoing/incoming relations, degree\n"
+            "- Whether it's a god node (highly connected)\n"
+            "- Which community/cluster it belongs to\n"
+        )
+
+        # /graph-report
+        (commands_dir / "graph-report.md").write_text(
+            "Generate a graph intelligence report.\n\n"
+            "Run `allmight report` to produce `all-might/panorama/GRAPH_REPORT.md`.\n"
+            "The report includes:\n"
+            "- Overview metrics (nodes, edges, density)\n"
+            "- God nodes (most connected symbols)\n"
+            "- Communities (connected components)\n"
+            "- Orphan nodes (symbols with no relations)\n"
+            "- Cross-index relations\n"
+        )
+
+        # /add-index
+        (commands_dir / "add-index.md").write_text(
+            "Add a new SMAK index to the workspace configuration.\n\n"
+            "Usage: `/add-index --name <name> --description \"desc\" --paths <path>`\n\n"
+            "Run `allmight config add-index --name <name> --description \"...\" --paths <path>`.\n"
+            "This updates both `workspace_config.yaml` and `all-might/config.yaml`.\n"
+            "After adding, run `/ingest --index <name>` to populate the vector store.\n"
+        )
+
+        # /remove-index
+        (commands_dir / "remove-index.md").write_text(
+            "Remove a SMAK index from the workspace configuration.\n\n"
+            "Usage: `/remove-index --name <name>`\n\n"
+            "Run `allmight config remove-index --name <name>`.\n"
+            "This updates both `workspace_config.yaml` and `all-might/config.yaml`.\n"
+        )
+
+        # /list-indices
+        (commands_dir / "list-indices.md").write_text(
+            "List all SMAK indices in the workspace configuration.\n\n"
+            "Run `allmight config list-indices` to see all configured indices.\n"
+            "Add `--json` for machine-readable output.\n"
+        )
+
     def _update_claude_md(self, root: Path, manifest: ProjectManifest) -> None:
         """Append All-Might baseline instructions to .claude/CLAUDE.md."""
         claude_dir = root / ".claude"
@@ -256,16 +320,32 @@ class ProjectInitializer:
         allmight_section = f"""{marker}
 ## All-Might: Active Knowledge Graph
 
-This project uses **All-Might** for active knowledge graph management on top of SMAK.
+This project uses **All-Might** as the single interface for knowledge graph operations.
+Agents interact with SMAK through All-Might commands — not SMAK MCP tools directly.
 
-- **Skills**: Check `.claude/skills/` for available skills (one-for-all, enrichment, smak)
-- **Commands**: `/power-level`, `/regenerate`, `/panorama`
-- **Workspace**: `all-might/` contains config, enrichment tracker, and panorama exports
-- **SMAK config**: `workspace_config.yaml` defines the semantic indices
+- **Skills**: `.claude/skills/` — `one-for-all` (project map), `enrichment` (protocol)
+- **Workspace**: `all-might/` — config, enrichment tracker, panorama exports
+- **SMAK config**: `workspace_config.yaml` — semantic index definitions
+
+### Commands
+
+| Command | Purpose |
+|---------|---------|
+| `/search <query>` | Semantic search with graph context |
+| `/enrich` | Annotate a symbol with intent/relations |
+| `/explain <uid>` | Full graph context for a symbol |
+| `/ingest` | Trigger SMAK vector store ingest |
+| `/power-level` | Knowledge graph coverage metrics |
+| `/regenerate` | Regenerate One For All skill |
+| `/panorama` | Export knowledge graph visualization |
+| `/graph-report` | Generate graph intelligence report |
+| `/add-index` | Add a new SMAK index |
+| `/remove-index` | Remove an existing index |
+| `/list-indices` | List all configured indices |
 
 ### Quick Start
 1. The `one-for-all` skill auto-loads with project context
-2. Use SMAK tools (search, enrich_symbol, etc.) as guided by the `smak` skill
+2. Use `/search` to explore, `/explain` for deep context
 3. Follow the `enrichment-protocol` skill to contribute knowledge as you work
 4. Run `/power-level` to check coverage, `/regenerate` to update skills
 """
@@ -351,8 +431,8 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 
         return f"""# One For All — {manifest.name}
 
-> This skill works alongside the `smak` skill. For SMAK MCP tool reference
-> (search, enrich_symbol, lookup, etc.), see that skill.
+> All knowledge graph operations go through **All-Might commands**.
+> You do NOT call SMAK MCP tools directly.
 
 ## Project Overview
 
@@ -366,12 +446,12 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 
 {index_table}
 
-Use `describe_workspace(config="./workspace_config.yaml")` to verify indices are active.
+Use `/list-indices` to verify indices are active.
 
 ## Key Symbols
 
 > No symbols have been enriched yet. As you work with this project and use
-> `enrich_symbol` to annotate code, this section will be populated when you
+> `/enrich` to annotate code, this section will be populated when you
 > run `/regenerate`.
 
 ## Power Level
@@ -382,11 +462,27 @@ Use `describe_workspace(config="./workspace_config.yaml")` to verify indices are
 
 Run `/power-level` to get current metrics, or `/regenerate` to update this skill.
 
+## All-Might Commands
+
+| Command | Purpose |
+|---------|---------|
+| `/search <query>` | Semantic search with graph context |
+| `/explain <uid>` | Full graph context for a symbol |
+| `/enrich` | Annotate a symbol with intent/relations |
+| `/ingest` | Trigger SMAK vector store ingest |
+| `/power-level` | Check knowledge coverage metrics |
+| `/regenerate` | Update this skill with latest state |
+| `/panorama` | Export knowledge graph visualization |
+| `/graph-report` | Graph intelligence report |
+| `/add-index` | Add a new SMAK index |
+| `/remove-index` | Remove an index |
+| `/list-indices` | List all configured indices |
+
 ## Getting Started
 
-1. Run `describe_workspace(config="./workspace_config.yaml")` to see available indices
-2. Use `search(config="./workspace_config.yaml", query="...", index="...")` to explore
-3. When you understand a symbol's purpose, enrich it (see the `enrichment-protocol` skill)
+1. Use `/search "..."` to explore the codebase semantically
+2. Use `/explain "path::symbol"` for deep context on any symbol
+3. When you understand a symbol's purpose, use `/enrich` (see `enrichment-protocol` skill)
 4. Run `/power-level` periodically to track progress
 """
 
@@ -396,12 +492,14 @@ Run `/power-level` to get current metrics, or `/regenerate` to update this skill
 
 > This is an **advisory** protocol. Follow it naturally as you work —
 > don't treat it as a mandatory checklist.
+>
+> All enrichment goes through **All-Might commands** — not SMAK MCP tools directly.
 
 ## When to Enrich
 
 ### On reading and understanding code
 When you read a symbol (function, class, module) and understand its purpose:
-- If the sidecar has no `intent` for this symbol → set it via `enrich_symbol`
+- If the sidecar has no `intent` for this symbol → use `/enrich` to set it
 - Write intent as a **human-readable description** of what the code does and why
 
 ### On discovering relationships
@@ -411,8 +509,8 @@ When you notice that two entities are related:
 - Code ↔ Doc: a module is documented somewhere
 - Code ↔ Code: two modules collaborate or one depends on the other
 
-Link them via `enrich_symbol(..., relations=[target_uid])`.
-Always `lookup` the target UID first to verify it exists.
+Link them via `/enrich --file <path> --symbol <name> --relation <target_uid>`.
+Use `/search` or `/explain` to find and verify UIDs before linking.
 
 ### On modifying code
 After changing code:
@@ -422,25 +520,31 @@ After changing code:
 
 ## How to Enrich
 
-```python
+Use the `/enrich` command (or `allmight enrich` CLI):
+
+```bash
 # 1. Set intent for a symbol you understood
-enrich_symbol(
-    config="./workspace_config.yaml",
-    file_path="src/module.py",       # exact_relative_path from search
-    symbol="ClassName.method_name",   # short name, not full UID
-    intent="Validates user input and returns sanitized data",
-    index="source_code"
-)
+allmight enrich --file src/module.py --symbol "ClassName.method_name" \\
+    --intent "Validates user input and returns sanitized data"
 
 # 2. Link a code symbol to a related issue
-enrich_symbol(
-    config="./workspace_config.yaml",
-    file_path="src/module.py",
-    symbol="ClassName.method_name",
-    relations=["./issues/bug-123.md::*"],
-    index="source_code"
-)
+allmight enrich --file src/module.py --symbol "ClassName.method_name" \\
+    --relation "./issues/bug-123.md::*"
+
+# 3. Create bidirectional relation
+allmight enrich --file src/module.py --symbol "ClassName.method_name" \\
+    --relation "src/other.py::OtherClass" --bidirectional
 ```
+
+## Useful Commands
+
+| Command | When to use |
+|---------|-------------|
+| `/search <query>` | Find symbols to enrich |
+| `/explain <uid>` | Check existing enrichment for a symbol |
+| `/enrich` | Add intent and/or relations |
+| `/power-level` | Check overall enrichment progress |
+| `/graph-report` | See which areas need attention |
 
 ## Priority Guidelines
 

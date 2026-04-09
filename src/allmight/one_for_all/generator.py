@@ -14,6 +14,7 @@ import yaml
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ..core.domain import IndexSpec, PowerLevel, SymbolInfo
+from ..utils.yaml_io import load_config, load_indices, resolve_path, sidecar_to_source
 
 # Template directory is relative to this module
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -40,12 +41,12 @@ class OneForAllGenerator:
             The generated SKILL.md content as a string.
             Also writes the file to .claude/skills/one-for-all/SKILL.md.
         """
-        config = self._load_config(config_path)
+        config = load_config(config_path)
         root = Path(config.get("project", {}).get("root", config_path.parent.parent))
 
         # Load SMAK workspace config
         smak_config_path = config.get("smak", {}).get("config_path", "workspace_config.yaml")
-        indices = self._load_indices(root / smak_config_path)
+        indices = load_indices(root / smak_config_path)
 
         # Scan sidecar files for enriched symbols
         symbols = self._scan_sidecars(root, indices)
@@ -82,29 +83,6 @@ class OneForAllGenerator:
 
         return content
 
-    def _load_config(self, config_path: Path) -> dict:
-        """Load all-might/config.yaml."""
-        if config_path.exists():
-            with open(config_path) as f:
-                return yaml.safe_load(f) or {}
-        return {}
-
-    def _load_indices(self, config_path: Path) -> list[IndexSpec]:
-        """Load SMAK workspace_config.yaml and parse indices."""
-        if not config_path.exists():
-            return []
-        with open(config_path) as f:
-            config = yaml.safe_load(f) or {}
-        return [
-            IndexSpec(
-                name=idx["name"],
-                description=idx.get("description", ""),
-                paths=idx.get("paths", []),
-                path_env=idx.get("path_env"),
-            )
-            for idx in config.get("indices", [])
-        ]
-
     def _scan_sidecars(self, root: Path, indices: list[IndexSpec]) -> list[SymbolInfo]:
         """Scan all sidecar YAML files and extract symbol information."""
         symbols: list[SymbolInfo] = []
@@ -112,7 +90,7 @@ class OneForAllGenerator:
         for idx in indices:
             for path_str in idx.paths:
                 # Resolve path (handle environment variables)
-                search_path = self._resolve_path(root, path_str)
+                search_path = resolve_path(root, path_str)
                 if not search_path.is_dir():
                     continue
 
@@ -120,7 +98,7 @@ class OneForAllGenerator:
                     try:
                         with open(sidecar) as f:
                             data = yaml.safe_load(f) or {}
-                        file_path = self._sidecar_to_source_path(sidecar)
+                        file_path = sidecar_to_source(sidecar)
                         for sym in data.get("symbols", []):
                             intent = sym.get("intent", "")
                             relations = sym.get("relations", [])
@@ -174,33 +152,6 @@ class OneForAllGenerator:
         """
         enriched = [s for s in symbols if s.has_intent]
         return sorted(enriched, key=lambda s: s.relation_count, reverse=True)[:limit]
-
-    def _resolve_path(self, root: Path, path_str: str) -> Path:
-        """Resolve a path that may contain environment variables."""
-        import os
-
-        if path_str.startswith("$"):
-            parts = path_str.split("/", 1)
-            env_var = parts[0][1:]  # Remove $
-            env_val = os.environ.get(env_var, "")
-            if env_val and len(parts) > 1:
-                return Path(env_val) / parts[1]
-            elif env_val:
-                return Path(env_val)
-        if path_str.startswith("./"):
-            return root / path_str[2:]
-        if path_str.startswith("/"):
-            return Path(path_str)
-        return root / path_str
-
-    def _sidecar_to_source_path(self, sidecar: Path) -> str:
-        """Convert a sidecar path back to its source file path."""
-        # .foo.py.sidecar.yaml → foo.py
-        name = sidecar.name
-        if name.startswith(".") and name.endswith(".sidecar.yaml"):
-            source_name = name[1 : -len(".sidecar.yaml")]
-            return str(sidecar.parent / source_name)
-        return str(sidecar)
 
     def _generate_enrichment_skill(
         self, root: Path, indices: list[IndexSpec], power_level: PowerLevel

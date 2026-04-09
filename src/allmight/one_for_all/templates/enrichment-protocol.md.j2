@@ -10,13 +10,15 @@ description: >-
 > This is an **advisory** protocol. Follow it naturally as you work —
 > don't treat it as a mandatory checklist.
 >
+> All enrichment goes through **All-Might commands** — not SMAK MCP tools directly.
+>
 > Current Power Level: {{ "%.1f" | format(power_level.coverage_pct) }}%
 
 ## When to Enrich
 
 ### On reading and understanding code
 When you read a symbol (function, class, module) and understand its purpose:
-- If the sidecar has no `intent` for this symbol → set it via `enrich_symbol`
+- If the sidecar has no `intent` for this symbol → use `/enrich` to set it
 - Write intent as a **human-readable description** of what the code does and why
 
 ### On discovering relationships
@@ -26,8 +28,8 @@ When you notice that two entities are related:
 - Code ↔ Doc: a module is documented somewhere
 - Code ↔ Code: two modules collaborate or one depends on the other
 
-Link them via `enrich_symbol(..., relations=[target_uid])`.
-Always `lookup` the target UID first to verify it exists.
+Link them via `/enrich --file <path> --symbol <name> --relation <target_uid>`.
+Use `/search` or `/explain` to find and verify UIDs before linking.
 
 ### On modifying code
 After changing code:
@@ -37,25 +39,31 @@ After changing code:
 
 ## How to Enrich
 
-```python
+Use the `/enrich` command (or `allmight enrich` CLI):
+
+```bash
 # 1. Set intent for a symbol you understood
-enrich_symbol(
-    config="./workspace_config.yaml",
-    file_path="src/module.py",       # exact_relative_path from search
-    symbol="ClassName.method_name",   # short name, not full UID
-    intent="Validates user input and returns sanitized data",
-    index="source_code"
-)
+allmight enrich --file src/module.py --symbol "ClassName.method_name" \
+    --intent "Validates user input and returns sanitized data"
 
 # 2. Link a code symbol to a related issue
-enrich_symbol(
-    config="./workspace_config.yaml",
-    file_path="src/module.py",
-    symbol="ClassName.method_name",
-    relations=["./issues/bug-123.md::*"],
-    index="source_code"
-)
+allmight enrich --file src/module.py --symbol "ClassName.method_name" \
+    --relation "./issues/bug-123.md::*"
+
+# 3. Create bidirectional relation
+allmight enrich --file src/module.py --symbol "ClassName.method_name" \
+    --relation "src/other.py::OtherClass" --bidirectional
 ```
+
+## Useful Commands
+
+| Command | When to use |
+|---------|-------------|
+| `/search <query>` | Find symbols to enrich |
+| `/explain <uid>` | Check existing enrichment for a symbol |
+| `/enrich` | Add intent and/or relations |
+| `/power-level` | Check overall enrichment progress |
+| `/graph-report` | See which areas need attention |
 
 ## Available Indices
 
