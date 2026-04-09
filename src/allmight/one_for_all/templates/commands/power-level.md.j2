@@ -1,0 +1,10 @@
+Analyze the project's knowledge graph coverage (Power Level).
+
+1. Read `all-might/enrichment/tracker.yaml` for the last known Power Level.
+2. Scan all sidecar YAML files (`.*.sidecar.yaml`) across all SMAK indices defined in `{{ smak_config_path }}`.
+3. For each sidecar, count total symbols vs symbols with non-empty `intent`.
+4. Count total relations across all sidecars.
+5. Report the overall coverage percentage and per-index breakdown.
+6. Update `all-might/enrichment/tracker.yaml` with the new metrics.
+
+Display results in a clear table format with coverage bars.

@@ -1,0 +1,9 @@
+# Generic project index template
+# Fallback when no specific project type is detected
+indices:
+  - name: source_code
+    description: "Project source code"
+    paths: ["."]
+  - name: documentation
+    description: "Documentation and knowledge base"
+    paths: ["./docs", "./doc"]
