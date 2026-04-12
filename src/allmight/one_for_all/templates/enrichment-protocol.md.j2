@@ -60,7 +60,10 @@ allmight enrich --file src/module.py --symbol "ClassName.method_name" \
 > **Do NOT edit sidecar files by hand.** This schema is shown for understanding only.
 > All modifications MUST go through `/enrich` or `allmight enrich`.
 
-Sidecar files are named `.{source_filename}.sidecar.yaml` and sit beside their source file.
+Sidecar files are named `.{source_filename}.sidecar.yaml` and sit beside their source file
+at the **source code path** (not in the All-Might workspace folder).
+In SOS environments, sidecars are created in the SOS workspace (Layer 3) and checked in
+to the canonical path (Layer 1/2) via `sos check-in`.
 
 ```yaml
 # Example: .module.py.sidecar.yaml

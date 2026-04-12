@@ -335,6 +335,32 @@ and stores per-symbol metadata in **sidecar YAML files** (`.{{filename}}.sidecar
 
 Mental model: `init → ingest → search → enrich → knowledge graph`
 
+### Workspace Architecture
+
+This folder is a **standalone All-Might workspace hub** — it is decoupled from source code.
+
+```
+<this folder>/                        ← Claude Code project root
+├── workspace_config.yaml             ← Index definitions (points to source paths)
+├── smak/                             ← FAISS vector databases (built by smak ingest)
+├── .claude/                          ← Skills, commands, CLAUDE.md
+└── all-might/                        ← Workspace metadata, enrichment tracker
+```
+
+**Source code is NOT in this folder.** It lives at external paths managed by the project's
+version control system. Indices in `workspace_config.yaml` reference these external paths
+(e.g., via `$DDI_ROOT_PATH` in SOS/EDA environments).
+
+| What | Location |
+|------|----------|
+| FAISS databases | `./smak/<index_name>/` (local, built by `smak ingest`) |
+| Index config | `./workspace_config.yaml` (local) |
+| Source code | External paths defined in `workspace_config.yaml` |
+| Sidecar files | Beside source files at the external path (not in this folder) |
+
+**Key implication for agents**: When you need to read or modify source files, you must
+navigate to the paths listed in `workspace_config.yaml` — they are outside this folder.
+
 - **Skills**: `.claude/skills/` — `one-for-all` (project map), `enrichment` (protocol)
 - **Workspace**: `all-might/` — config, enrichment tracker, panorama exports
 - **SMAK config**: `workspace_config.yaml` — semantic index definitions
@@ -474,6 +500,10 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 
 Use `/list-indices` to verify indices are active.
 
+> **Note:** This workspace is a standalone hub — source code is at external paths
+> listed in the "Paths" column above. FAISS databases are stored locally in `./smak/`.
+> Sidecar files live beside the source files at those external paths, not here.
+
 ## Key Symbols
 
 > No symbols have been enriched yet. As you work with this project and use
@@ -567,7 +597,10 @@ allmight enrich --file src/module.py --symbol "ClassName.method_name" \\
 > **Do NOT edit sidecar files by hand.** This schema is shown for understanding only.
 > All modifications MUST go through `/enrich` or `allmight enrich`.
 
-Sidecar files are named `.{source_filename}.sidecar.yaml` and sit beside their source file.
+Sidecar files are named `.{source_filename}.sidecar.yaml` and sit beside their source file
+at the **source code path** (not in the All-Might workspace folder).
+In SOS environments, sidecars are created in the SOS workspace (Layer 3) and checked in
+to the canonical path (Layer 1/2) via `sos check-in`.
 
 ```yaml
 # Example: .module.py.sidecar.yaml

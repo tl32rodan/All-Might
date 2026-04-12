@@ -225,6 +225,35 @@ class TestProjectInitializer:
         assert "/enrich" in sos_skill
         assert "enrichment-protocol" in sos_skill
 
+    def test_claude_md_has_standalone_hub_architecture(self, sample_project):
+        """Test that CLAUDE.md describes the standalone hub architecture."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+
+        initializer = ProjectInitializer()
+        initializer.initialize(manifest, smak_path=None)
+
+        claude_md = sample_project / ".claude" / "CLAUDE.md"
+        content = claude_md.read_text()
+        assert "standalone" in content.lower()
+        assert "workspace_config.yaml" in content
+        assert "smak/" in content or "FAISS" in content
+
+    def test_sos_skill_has_standalone_hub_and_config_management(self, sample_project):
+        """Test that SOS skill includes standalone hub and workspace_config guidance."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        manifest.has_path_env = True
+
+        initializer = ProjectInitializer()
+        initializer.initialize(manifest, smak_path=None)
+
+        sos_skill = (sample_project / ".claude" / "skills" / "sos-smak" / "SKILL.md").read_text()
+        assert "STANDALONE HUB" in sos_skill
+        assert "WORKSPACE_CONFIG" in sos_skill
+        assert "add-index" in sos_skill
+        assert "frozen" in sos_skill.lower() or "snapshot" in sos_skill.lower()
+
     def test_idempotent(self, sample_project):
         """Running init twice should not break anything."""
         scanner = ProjectScanner()

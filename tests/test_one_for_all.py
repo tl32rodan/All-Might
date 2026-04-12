@@ -168,6 +168,15 @@ class TestOneForAllGenerator:
         assert "Semantic Mesh Augmented Kernel" in content
         assert "hand-edit" in content.lower() or "hand-edit sidecar" in content.lower()
 
+    def test_one_for_all_has_standalone_hub_note(self, initialized_project):
+        """Test that one-for-all notes the standalone hub architecture."""
+        config_path = initialized_project / "all-might" / "config.yaml"
+        generator = OneForAllGenerator()
+        content = generator.generate(config_path)
+
+        assert "standalone hub" in content.lower()
+        assert "Sidecar files live beside the source files" in content
+
 
 class TestQuirks:
     def test_get_known_quirk(self):
