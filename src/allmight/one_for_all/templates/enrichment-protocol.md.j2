@@ -18,7 +18,7 @@ description: >-
 
 ### On reading and understanding code
 When you read a symbol (function, class, module) and understand its purpose:
-- If the sidecar has no `intent` for this symbol → use `/enrich` to set it
+- If the sidecar has no `intent` for this symbol → use `/enrich` to set it (do not edit the sidecar file directly)
 - Write intent as a **human-readable description** of what the code does and why
 
 ### On discovering relationships
@@ -33,7 +33,7 @@ Use `/search` or `/explain` to find and verify UIDs before linking.
 
 ### On modifying code
 After changing code:
-- Check if the sidecar intent is still accurate
+- Check if the sidecar intent is still accurate — use `/explain` to review, `/enrich` to update (do not edit the sidecar file directly)
 - Update intent if the purpose changed
 - Add relations to any new dependencies you introduced
 
@@ -54,6 +54,40 @@ allmight enrich --file src/module.py --symbol "ClassName.method_name" \
 allmight enrich --file src/module.py --symbol "ClassName.method_name" \
     --relation "src/other.py::OtherClass" --bidirectional
 ```
+
+## Sidecar File Schema (Reference Only)
+
+> **Do NOT edit sidecar files by hand.** This schema is shown for understanding only.
+> All modifications MUST go through `/enrich` or `allmight enrich`.
+
+Sidecar files are named `.{source_filename}.sidecar.yaml` and sit beside their source file
+at the **source code path** (not in the All-Might workspace folder).
+In SOS environments, sidecars are created in the SOS workspace (Layer 3) and checked in
+to the canonical path (Layer 1/2) via `sos check-in`.
+
+```yaml
+# Example: .module.py.sidecar.yaml
+symbols:
+  - name: "ClassName.method_name"      # Symbol identifier
+    intent: "Human-readable purpose"    # What this code does and WHY
+    relations:                          # Links to other symbols (by UID)
+      - "src/other.py::OtherClass"
+      - "./tests/test_module.py::test_method"
+```
+
+### UID Format
+
+A symbol UID is: `<relative_file_path>::<symbol_name>`
+
+- File path is relative to the project root (or uses `$ENV_VAR/...` in SOS environments)
+- Symbol name uses dot notation for nested symbols: `ClassName.method_name`
+- The wildcard `*` refers to the entire file: `path/to/file.py::*`
+
+**Common mistakes** (all handled automatically by `/enrich`):
+- Wrong nesting (putting `intent` outside `symbols` array)
+- Missing `name` field
+- Using absolute paths instead of relative paths in UIDs
+- Inventing UIDs that don't correspond to actual symbols
 
 ## Useful Commands
 

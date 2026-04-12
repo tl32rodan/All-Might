@@ -8,8 +8,11 @@ description: >-
 
 # One For All — {{ project_name }}
 
-> All knowledge graph operations go through **All-Might commands**.
-> You do NOT call SMAK MCP tools directly.
+> **SMAK** (Semantic Mesh Augmented Kernel) is the vector search engine that indexes this codebase.
+> **All-Might** is the active layer you interact with — it wraps SMAK with commands, enrichment, and graph intelligence.
+>
+> All knowledge graph operations go through **All-Might commands** (`/search`, `/enrich`, `/explain`, etc.).
+> You do NOT call SMAK MCP tools directly, and you do NOT hand-edit sidecar or config YAML files.
 >
 > Generated at: {{ generated_at }}
 
@@ -32,6 +35,12 @@ description: >-
 {% endfor %}
 
 Use `/list-indices` to verify indices are active.
+
+> **Note:** This workspace is a standalone hub — source code is at external paths
+> listed in the "Paths" column above. FAISS databases are stored locally in `./smak/`.
+> Sidecar files live beside the source files at those external paths, not here.
+> **Indices are built from online (Layer 1) only.** To verify features in version control
+> releases, use SOS revision log matching (see `sos-smak` skill).
 
 ### Choosing the right index
 

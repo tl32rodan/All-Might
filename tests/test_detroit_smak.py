@@ -185,6 +185,103 @@ class TestProjectInitializer:
         assert "CliosoftSOS" in content
         assert "DDI_ROOT_PATH" in content
 
+    def test_claude_md_has_guardrails(self, sample_project):
+        """Test that CLAUDE.md contains guardrails against hand-editing."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+
+        initializer = ProjectInitializer()
+        initializer.initialize(manifest, smak_path=None)
+
+        claude_md = sample_project / ".claude" / "CLAUDE.md"
+        content = claude_md.read_text()
+        assert "NEVER" in content
+        assert "sidecar" in content.lower()
+        assert "workspace_config" in content
+
+    def test_claude_md_explains_smak(self, sample_project):
+        """Test that CLAUDE.md explains what SMAK is."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+
+        initializer = ProjectInitializer()
+        initializer.initialize(manifest, smak_path=None)
+
+        claude_md = sample_project / ".claude" / "CLAUDE.md"
+        content = claude_md.read_text()
+        assert "What is SMAK" in content
+        assert "semantic search" in content.lower() or "vector store" in content.lower()
+
+    def test_sos_skill_enrichment_crossref(self, sample_project):
+        """Test that SOS skill cross-references the enrichment protocol."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        manifest.has_path_env = True  # Simulate SOS environment
+
+        initializer = ProjectInitializer()
+        initializer.initialize(manifest, smak_path=None)
+
+        sos_skill = (sample_project / ".claude" / "skills" / "sos-smak" / "SKILL.md").read_text()
+        assert "/enrich" in sos_skill
+        assert "enrichment-protocol" in sos_skill
+
+    def test_claude_md_has_standalone_hub_architecture(self, sample_project):
+        """Test that CLAUDE.md describes the standalone hub architecture."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+
+        initializer = ProjectInitializer()
+        initializer.initialize(manifest, smak_path=None)
+
+        claude_md = sample_project / ".claude" / "CLAUDE.md"
+        content = claude_md.read_text()
+        assert "standalone" in content.lower()
+        assert "workspace_config.yaml" in content
+        assert "smak/" in content or "FAISS" in content
+
+    def test_sos_skill_has_standalone_hub_and_config_management(self, sample_project):
+        """Test that SOS skill includes standalone hub and workspace_config guidance."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        manifest.has_path_env = True
+
+        initializer = ProjectInitializer()
+        initializer.initialize(manifest, smak_path=None)
+
+        sos_skill = (sample_project / ".claude" / "skills" / "sos-smak" / "SKILL.md").read_text()
+        assert "STANDALONE HUB" in sos_skill
+        assert "WORKSPACE_CONFIG" in sos_skill
+        assert "add-index" in sos_skill
+        assert "frozen" in sos_skill.lower() or "snapshot" in sos_skill.lower()
+
+    def test_claude_md_has_online_vs_vc_awareness(self, sample_project):
+        """Test that CLAUDE.md explains online-only indexing and VC log verification."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+
+        initializer = ProjectInitializer()
+        initializer.initialize(manifest, smak_path=None)
+
+        claude_md = sample_project / ".claude" / "CLAUDE.md"
+        content = claude_md.read_text()
+        assert "online" in content.lower()
+        assert "sos log" in content.lower() or "revision log" in content.lower()
+
+    def test_sos_skill_has_online_first_workflow(self, sample_project):
+        """Test that SOS skill documents the online-first + log verification pattern."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        manifest.has_path_env = True
+
+        initializer = ProjectInitializer()
+        initializer.initialize(manifest, smak_path=None)
+
+        sos_skill = (sample_project / ".claude" / "skills" / "sos-smak" / "SKILL.md").read_text()
+        assert "online" in sos_skill.lower()
+        assert "sos log" in sos_skill.lower()
+        assert "revision log" in sos_skill.lower()
+        assert "ONLINE-FIRST" in sos_skill
+
     def test_idempotent(self, sample_project):
         """Running init twice should not break anything."""
         scanner = ProjectScanner()

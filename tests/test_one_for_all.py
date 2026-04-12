@@ -147,6 +147,36 @@ class TestOneForAllGenerator:
         assert "One For All" in content1
         assert "One For All" in content2
 
+    def test_enrichment_skill_has_schema_reference(self, initialized_project):
+        """Test that enrichment skill contains sidecar schema docs and anti-edit warning."""
+        config_path = initialized_project / "all-might" / "config.yaml"
+        generator = OneForAllGenerator()
+        generator.generate(config_path)
+
+        skill_path = initialized_project / ".claude" / "skills" / "enrichment" / "SKILL.md"
+        content = skill_path.read_text()
+        assert "Sidecar File Schema" in content
+        assert "Do NOT edit" in content
+        assert "UID Format" in content
+
+    def test_one_for_all_explains_smak(self, initialized_project):
+        """Test that one-for-all skill explains SMAK philosophy."""
+        config_path = initialized_project / "all-might" / "config.yaml"
+        generator = OneForAllGenerator()
+        content = generator.generate(config_path)
+
+        assert "Semantic Mesh Augmented Kernel" in content
+        assert "hand-edit" in content.lower() or "hand-edit sidecar" in content.lower()
+
+    def test_one_for_all_has_standalone_hub_note(self, initialized_project):
+        """Test that one-for-all notes the standalone hub architecture."""
+        config_path = initialized_project / "all-might" / "config.yaml"
+        generator = OneForAllGenerator()
+        content = generator.generate(config_path)
+
+        assert "standalone hub" in content.lower()
+        assert "Sidecar files live beside the source files" in content
+
 
 class TestQuirks:
     def test_get_known_quirk(self):

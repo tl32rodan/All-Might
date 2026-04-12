@@ -323,6 +323,44 @@ class ProjectInitializer:
 This project uses **All-Might** as the single interface for knowledge graph operations.
 Agents interact with SMAK through All-Might commands — not SMAK MCP tools directly.
 
+### What is SMAK
+
+**SMAK** (Semantic Mesh Augmented Kernel) is a semantic search engine and vector store for code.
+It indexes source files into FAISS vector indices, enables natural-language search over code,
+and stores per-symbol metadata in **sidecar YAML files** (`.{{filename}}.sidecar.yaml`).
+
+**All-Might** sits on top of SMAK as the **active knowledge graph layer**:
+- **SMAK** handles indexing, vector search, and sidecar file I/O
+- **All-Might** provides the agent-facing commands, enrichment protocol, and graph intelligence
+
+Mental model: `init → ingest → search → enrich → knowledge graph`
+
+### Workspace Architecture
+
+This folder is a **standalone All-Might workspace hub** — it is decoupled from source code.
+
+```
+<this folder>/                        ← Claude Code project root
+├── workspace_config.yaml             ← Index definitions (points to source paths)
+├── smak/                             ← FAISS vector databases (built by smak ingest)
+├── .claude/                          ← Skills, commands, CLAUDE.md
+└── all-might/                        ← Workspace metadata, enrichment tracker
+```
+
+**Source code is NOT in this folder.** It lives at external paths managed by the project's
+version control system. Indices in `workspace_config.yaml` reference these external paths
+(e.g., via `$DDI_ROOT_PATH` in SOS/EDA environments).
+
+| What | Location |
+|------|----------|
+| FAISS databases | `./smak/<index_name>/` (local, built by `smak ingest`) |
+| Index config | `./workspace_config.yaml` (local) |
+| Source code | External paths defined in `workspace_config.yaml` |
+| Sidecar files | Beside source files at the external path (not in this folder) |
+
+**Key implication for agents**: When you need to read or modify source files, you must
+navigate to the paths listed in `workspace_config.yaml` — they are outside this folder.
+
 - **Skills**: `.claude/skills/` — `one-for-all` (project map), `enrichment` (protocol)
 - **Workspace**: `all-might/` — config, enrichment tracker, panorama exports
 - **SMAK config**: `workspace_config.yaml` — semantic index definitions
@@ -342,6 +380,30 @@ Agents interact with SMAK through All-Might commands — not SMAK MCP tools dire
 | `/add-index` | Add a new SMAK index |
 | `/remove-index` | Remove an existing index |
 | `/list-indices` | List all configured indices |
+
+### Guardrails — Critical Rules
+
+- **NEVER** directly edit `.sidecar.yaml` files. Always use `/enrich` to modify sidecar content.
+  Sidecar files have a strict schema that hand-editing will break.
+- **NEVER** directly edit `workspace_config.yaml`. Use `/add-index`, `/remove-index`,
+  or `allmight config update-index` to modify index configuration.
+- **NEVER** invent symbol UIDs. UIDs follow the format `<file_path>::<symbol_name>`
+  (e.g., `src/module.py::ClassName.method_name`). Use `/search` or `/explain` to discover valid UIDs.
+- **ALWAYS** use All-Might commands for knowledge graph operations.
+  SMAK MCP tools exist but are internal plumbing — agents must not call them directly.
+
+### Online vs. Version Control
+
+**SMAK indexes online (Layer 1) only.** All `/search` and `/explain` results come from online.
+Version control (VC) releases are frozen snapshots — they do NOT have separate FAISS indices.
+
+To check whether a feature exists in a specific VC release:
+1. `/search` on online to find the relevant files/symbols
+2. Use `sos log` / `sos history` on the file to find the revision log entry
+3. Check if the **same revision log string** exists in the target VC
+4. Same log → same code → feature is present in that VC
+
+See the `sos-smak` skill for the full SOS workflow and version control details.
 
 ### Quick Start
 1. The `one-for-all` skill auto-loads with project context
@@ -431,8 +493,11 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 
         return f"""# One For All — {manifest.name}
 
-> All knowledge graph operations go through **All-Might commands**.
-> You do NOT call SMAK MCP tools directly.
+> **SMAK** (Semantic Mesh Augmented Kernel) is the vector search engine that indexes this codebase.
+> **All-Might** is the active layer you interact with — it wraps SMAK with commands, enrichment, and graph intelligence.
+>
+> All knowledge graph operations go through **All-Might commands** (`/search`, `/enrich`, `/explain`, etc.).
+> You do NOT call SMAK MCP tools directly, and you do NOT hand-edit sidecar or config YAML files.
 
 ## Project Overview
 
@@ -447,6 +512,12 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 {index_table}
 
 Use `/list-indices` to verify indices are active.
+
+> **Note:** This workspace is a standalone hub — source code is at external paths
+> listed in the "Paths" column above. FAISS databases are stored locally in `./smak/`.
+> Sidecar files live beside the source files at those external paths, not here.
+> **Indices are built from online (Layer 1) only.** To verify features in version control
+> releases, use SOS revision log matching (see `sos-smak` skill).
 
 ## Key Symbols
 
@@ -499,7 +570,7 @@ Run `/power-level` to get current metrics, or `/regenerate` to update this skill
 
 ### On reading and understanding code
 When you read a symbol (function, class, module) and understand its purpose:
-- If the sidecar has no `intent` for this symbol → use `/enrich` to set it
+- If the sidecar has no `intent` for this symbol → use `/enrich` to set it (do not edit the sidecar file directly)
 - Write intent as a **human-readable description** of what the code does and why
 
 ### On discovering relationships
@@ -514,7 +585,7 @@ Use `/search` or `/explain` to find and verify UIDs before linking.
 
 ### On modifying code
 After changing code:
-- Check if the sidecar intent is still accurate
+- Check if the sidecar intent is still accurate — use `/explain` to review, `/enrich` to update (do not edit the sidecar file directly)
 - Update intent if the purpose changed
 - Add relations to any new dependencies you introduced
 
@@ -535,6 +606,40 @@ allmight enrich --file src/module.py --symbol "ClassName.method_name" \\
 allmight enrich --file src/module.py --symbol "ClassName.method_name" \\
     --relation "src/other.py::OtherClass" --bidirectional
 ```
+
+## Sidecar File Schema (Reference Only)
+
+> **Do NOT edit sidecar files by hand.** This schema is shown for understanding only.
+> All modifications MUST go through `/enrich` or `allmight enrich`.
+
+Sidecar files are named `.{source_filename}.sidecar.yaml` and sit beside their source file
+at the **source code path** (not in the All-Might workspace folder).
+In SOS environments, sidecars are created in the SOS workspace (Layer 3) and checked in
+to the canonical path (Layer 1/2) via `sos check-in`.
+
+```yaml
+# Example: .module.py.sidecar.yaml
+symbols:
+  - name: "ClassName.method_name"      # Symbol identifier
+    intent: "Human-readable purpose"    # What this code does and WHY
+    relations:                          # Links to other symbols (by UID)
+      - "src/other.py::OtherClass"
+      - "./tests/test_module.py::test_method"
+```
+
+### UID Format
+
+A symbol UID is: `<relative_file_path>::<symbol_name>`
+
+- File path is relative to the project root (or uses `$ENV_VAR/...` in SOS environments)
+- Symbol name uses dot notation for nested symbols: `ClassName.method_name`
+- The wildcard `*` refers to the entire file: `path/to/file.py::*`
+
+**Common mistakes** (all handled automatically by `/enrich`):
+- Wrong nesting (putting `intent` outside `symbols` array)
+- Missing `name` field
+- Using absolute paths instead of relative paths in UIDs
+- Inventing UIDs that don't correspond to actual symbols
 
 ## Useful Commands
 
