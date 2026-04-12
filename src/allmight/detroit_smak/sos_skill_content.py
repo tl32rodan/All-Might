@@ -140,12 +140,40 @@ When editing sidecars in a workspace, SMAK may emit path mismatch warnings. **Th
 
 ## 6. WHICH LAYER TO TARGET
 
+**SMAK indexes online (Layer 1) only.** VC releases do NOT have separate FAISS indices.
+
 | Task | Target Layer | $DDI_ROOT_PATH |
 |---|---|---|
-| Build FAISS for latest code | Online (Layer 1) | `/CAD/stdcell` |
-| Build FAISS for a frozen release | Version Control (Layer 2) | `/CAD/stdcell_production/{version}/` |
+| Build FAISS index | Online (Layer 1) only | `/CAD/stdcell` |
+| Semantic search (`/search`) | Online (via FAISS) | `/CAD/stdcell` |
+| Verify feature in VC | SOS revision log query | N/A (see section 6a) |
 | Edit sidecars | Workspace (Layer 3) | Set to the target layer (1 or 2) |
-| Search/query | Any (reads FAISS) | Set to match the FAISS you want to query |
+
+### 6a. ONLINE-FIRST SEARCH + VC LOG VERIFICATION
+
+Since SMAK only indexes online, use SOS revision logs to verify features in VC releases:
+
+```
+Step 1: /search on online ──→ find relevant files/symbols
+Step 2: sos log <file>    ──→ find the revision log entry for the feature
+Step 3: sos log <file>    ──→ (in VC workspace) check for the SAME log string
+Step 4: Agent decides:
+        ├─ Same log exists   → feature is present in that VC (same code)
+        ├─ Log not found     → feature is NOT in that VC
+        └─ Need details?     → read the VC file directly to confirm
+```
+
+**Why this works**: By internal convention, the same feature uses the **same revision log
+string** across online and all VC releases. Same log = same code change = feature is present.
+
+**When to actually read VC code**:
+- The revision log match is ambiguous (partial match, similar but not identical)
+- The user explicitly asks to compare online vs VC implementation
+- The feature involves multiple files and you need to verify all of them
+
+**When NOT to read VC code**:
+- Log string matches exactly → just report "VC X has this feature"
+- Log string is absent → just report "VC X does not have this feature"
 
 ## 7. STRICT RULES FOR SOS ENVIRONMENTS
 

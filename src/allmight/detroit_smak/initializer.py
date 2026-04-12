@@ -392,6 +392,19 @@ navigate to the paths listed in `workspace_config.yaml` — they are outside thi
 - **ALWAYS** use All-Might commands for knowledge graph operations.
   SMAK MCP tools exist but are internal plumbing — agents must not call them directly.
 
+### Online vs. Version Control
+
+**SMAK indexes online (Layer 1) only.** All `/search` and `/explain` results come from online.
+Version control (VC) releases are frozen snapshots — they do NOT have separate FAISS indices.
+
+To check whether a feature exists in a specific VC release:
+1. `/search` on online to find the relevant files/symbols
+2. Use `sos log` / `sos history` on the file to find the revision log entry
+3. Check if the **same revision log string** exists in the target VC
+4. Same log → same code → feature is present in that VC
+
+See the `sos-smak` skill for the full SOS workflow and version control details.
+
 ### Quick Start
 1. The `one-for-all` skill auto-loads with project context
 2. Use `/search` to explore, `/explain` for deep context
@@ -503,6 +516,8 @@ Use `/list-indices` to verify indices are active.
 > **Note:** This workspace is a standalone hub — source code is at external paths
 > listed in the "Paths" column above. FAISS databases are stored locally in `./smak/`.
 > Sidecar files live beside the source files at those external paths, not here.
+> **Indices are built from online (Layer 1) only.** To verify features in version control
+> releases, use SOS revision log matching (see `sos-smak` skill).
 
 ## Key Symbols
 
