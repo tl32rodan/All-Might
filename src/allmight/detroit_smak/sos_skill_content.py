@@ -116,10 +116,24 @@ When editing sidecars in a workspace, SMAK may emit path mismatch warnings. **Th
 ## 7. STRICT RULES FOR SOS ENVIRONMENTS
 
 1. **Never hardcode absolute paths in relations.** Always use `$DDI_ROOT_PATH/...` format.
-2. **Never edit sidecars directly in online or version control.** Always use an SOS workspace.
+2. **Never edit sidecar files by hand** — not in online, not in version control, not even in a workspace. Always use `/enrich` from All-Might.
 3. **Always set `path_env: DDI_ROOT_PATH`** in config for indices on the shared disk.
 4. **Set `$DDI_ROOT_PATH` before running SMAK** — it determines which layer you're operating on.
 5. **Path mismatch warnings in workspaces are normal.** Don't suppress or work around them.
 6. **Re-ingest after cutting a version control release** to build FAISS for the new version.
 7. **One FAISS index per `$DDI_ROOT_PATH` value.** Don't share indices across online and version control.
+
+## 8. SOS + ENRICHMENT WORKFLOW
+
+All sidecar modifications in SOS workspaces go through **All-Might commands**:
+
+1. Use `/enrich --file <relative_path> --symbol <name> --intent "..."` to annotate symbols
+2. Use `/enrich ... --relation <uid>` to add cross-references
+3. **Never** edit `.sidecar.yaml` files by hand — the `/enrich` command handles:
+   - Correct YAML schema and nesting
+   - Proper UID format with `$DDI_ROOT_PATH` prefix where needed
+   - Bidirectional relation management
+4. After `sos check-in`, sidecars land at the canonical path and are ready for ingestion
+
+For the full enrichment protocol, see the `enrichment-protocol` skill.
 """

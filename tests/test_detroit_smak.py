@@ -185,6 +185,46 @@ class TestProjectInitializer:
         assert "CliosoftSOS" in content
         assert "DDI_ROOT_PATH" in content
 
+    def test_claude_md_has_guardrails(self, sample_project):
+        """Test that CLAUDE.md contains guardrails against hand-editing."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+
+        initializer = ProjectInitializer()
+        initializer.initialize(manifest, smak_path=None)
+
+        claude_md = sample_project / ".claude" / "CLAUDE.md"
+        content = claude_md.read_text()
+        assert "NEVER" in content
+        assert "sidecar" in content.lower()
+        assert "workspace_config" in content
+
+    def test_claude_md_explains_smak(self, sample_project):
+        """Test that CLAUDE.md explains what SMAK is."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+
+        initializer = ProjectInitializer()
+        initializer.initialize(manifest, smak_path=None)
+
+        claude_md = sample_project / ".claude" / "CLAUDE.md"
+        content = claude_md.read_text()
+        assert "What is SMAK" in content
+        assert "semantic search" in content.lower() or "vector store" in content.lower()
+
+    def test_sos_skill_enrichment_crossref(self, sample_project):
+        """Test that SOS skill cross-references the enrichment protocol."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        manifest.has_path_env = True  # Simulate SOS environment
+
+        initializer = ProjectInitializer()
+        initializer.initialize(manifest, smak_path=None)
+
+        sos_skill = (sample_project / ".claude" / "skills" / "sos-smak" / "SKILL.md").read_text()
+        assert "/enrich" in sos_skill
+        assert "enrichment-protocol" in sos_skill
+
     def test_idempotent(self, sample_project):
         """Running init twice should not break anything."""
         scanner = ProjectScanner()
