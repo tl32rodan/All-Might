@@ -20,6 +20,7 @@ def build_hub_claude_md(
     hub_name: str,
     workspace_count: int,
     workspace_table: str,
+    user_preferences: str = "",
 ) -> str:
     """Render the hub CLAUDE.md from the Jinja2 template.
 
@@ -31,6 +32,9 @@ def build_hub_claude_md(
         Number of managed workspaces.
     workspace_table:
         Markdown table of workspaces (``| Name | Path | Description |`` ...).
+    user_preferences:
+        Optional markdown block for user preferences (autonomy, language, etc.).
+        Omitted from the output when empty.
     """
     env = Environment(
         loader=FileSystemLoader(str(_TEMPLATE_DIR)),
@@ -42,4 +46,5 @@ def build_hub_claude_md(
         hub_name=hub_name,
         workspace_count=workspace_count,
         workspace_table=workspace_table,
+        user_preferences=user_preferences,
     )

@@ -13,6 +13,7 @@ reads the template file and returns its content.
 from allmight.hub.claude_md_content import build_hub_claude_md
 from allmight.hub.skill_detroit_smak import build_detroit_smak_skill_md
 from allmight.hub.skill_enrich import build_enrich_skill_md
+from allmight.hub.skill_onboard import build_onboard_skill_md
 from allmight.hub.skill_self_improving import build_self_improving_skill_md
 from allmight.hub.skill_sidecar_handling import build_sidecar_handling_skill_md
 
@@ -20,6 +21,7 @@ __all__ = [
     "build_hub_claude_md",
     "build_detroit_smak_skill_md",
     "build_enrich_skill_md",
+    "build_onboard_skill_md",
     "build_self_improving_skill_md",
     "build_sidecar_handling_skill_md",
 ]

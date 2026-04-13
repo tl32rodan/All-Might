@@ -114,7 +114,14 @@ need to know about online/VC/SOS — it just works with "source code at these pa
 
 | Skill | Purpose | Scope |
 |-------|---------|-------|
+| `onboard` | Hub identity discovery — casual conversation to set up hub, workspaces, preferences | Hub-level (run once) |
 | `detroit-smak` | Precision strike: spawn sub-agent in a workspace, semantic search, return results | Single or multi-workspace |
 | `enrich` | Inject domain knowledge into a workspace's `.claude/` layer | Per-workspace |
 | `self-improving` | Scan all workspaces, propose hub-level improvements, propagate knowledge | Cross-workspace |
 | `sidecar-handling` | Full SOP for updating sidecar files through SOS | Global (any workspace) |
+{% if user_preferences %}
+
+## User Preferences
+
+{{ user_preferences }}
+{% endif %}
