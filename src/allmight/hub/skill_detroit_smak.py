@@ -6,6 +6,27 @@ The sub-agent runs with the workspace directory as cwd, which triggers
 Claude Code's native ``.claude/`` loading for domain-specific context.
 """
 
+DETROIT_SMAK_SKILL_NAME = "detroit-smak"
+
+DETROIT_SMAK_SKILL_DESCRIPTION = (
+    "Precision workspace strike. Spawn a sub-agent inside a SMAK workspace to "
+    "perform semantic search, enrichment lookup, or graph queries. Supports "
+    "single-target and multi-target (parallel) modes. Use when you need to "
+    "query indexed knowledge in one or more workspaces."
+)
+
+DETROIT_SMAK_SKILL_FRONTMATTER = """\
+---
+name: detroit-smak
+description: >-
+  Precision workspace strike. Spawn a sub-agent inside a SMAK workspace to
+  perform semantic search, enrichment lookup, or graph queries. Supports
+  single-target and multi-target (parallel) modes. Use when you need to
+  query indexed knowledge in one or more workspaces.
+disable-model-invocation: true
+argument-hint: "<workspace> <query>"
+---"""
+
 DETROIT_SMAK_SKILL_BODY = """\
 # Detroit SMAK — Precision Strike
 
@@ -124,3 +145,8 @@ When returning results to the user, always include:
 - For multi-target queries, issue sub-agents **in parallel** for efficiency.
 - If a sub-agent returns no results, report that — don't silently skip it.
 """
+
+
+def build_detroit_smak_skill_md() -> str:
+    """Return the complete SKILL.md content for detroit-smak."""
+    return DETROIT_SMAK_SKILL_FRONTMATTER + "\n\n" + DETROIT_SMAK_SKILL_BODY

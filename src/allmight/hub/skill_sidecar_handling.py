@@ -5,6 +5,26 @@ sidecar files through CliosoftSOS.  It is a global SOP that applies to any
 workspace managed by the hub.
 """
 
+SIDECAR_HANDLING_SKILL_NAME = "sidecar-handling"
+
+SIDECAR_HANDLING_SKILL_DESCRIPTION = (
+    "SOS-based sidecar update SOP. The complete standard operating procedure "
+    "for updating sidecar enrichment files through CliosoftSOS — three-layer "
+    "model, schema reference, step-by-step workflow, and strict rules. Use "
+    "when you need to modify sidecar YAML files in any workspace."
+)
+
+SIDECAR_HANDLING_SKILL_FRONTMATTER = """\
+---
+name: sidecar-handling
+description: >-
+  SOS-based sidecar update SOP. The complete standard operating procedure
+  for updating sidecar enrichment files through CliosoftSOS — three-layer
+  model, schema reference, step-by-step workflow, and strict rules. Use
+  when you need to modify sidecar YAML files in any workspace.
+disable-model-invocation: true
+---"""
+
 SIDECAR_HANDLING_SKILL_BODY = """\
 # Sidecar Handling — SOS-Based Update SOP
 
@@ -168,3 +188,8 @@ Do NOT:
 | `enrich` | `.claude/` enrichment teaches patterns; sidecar enrichment annotates symbols. Different layers, complementary |
 | `self-improving` | After a batch of sidecar enrichment, self-improving can assess coverage improvements |
 """
+
+
+def build_sidecar_handling_skill_md() -> str:
+    """Return the complete SKILL.md content for sidecar-handling."""
+    return SIDECAR_HANDLING_SKILL_FRONTMATTER + "\n\n" + SIDECAR_HANDLING_SKILL_BODY

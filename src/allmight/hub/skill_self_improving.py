@@ -5,6 +5,25 @@ identify patterns worth promoting to global level, detect gaps, and propose
 improvements to the hub CLAUDE.md and global skills.
 """
 
+SELF_IMPROVING_SKILL_NAME = "self-improving"
+
+SELF_IMPROVING_SKILL_DESCRIPTION = (
+    "Hub-level audit and evolution. Scan all workspaces' .claude/ layers, "
+    "identify cross-workspace patterns worth promoting, detect gaps and stale "
+    "knowledge, and propose improvements to the hub CLAUDE.md and global skills."
+)
+
+SELF_IMPROVING_SKILL_FRONTMATTER = """\
+---
+name: self-improving
+description: >-
+  Hub-level audit and evolution. Scan all workspaces' .claude/ layers,
+  identify cross-workspace patterns worth promoting, detect gaps and stale
+  knowledge, and propose improvements to the hub CLAUDE.md and global skills.
+  Also provides aggregate power tracking across workspaces.
+disable-model-invocation: true
+---"""
+
 SELF_IMPROVING_SKILL_BODY = """\
 # Self-Improving — Hub-Level Audit & Evolution
 
@@ -138,3 +157,8 @@ Aggregate power level across all workspaces:
 - Does NOT make changes without user approval
 - Does NOT touch online/VC/SOS concerns (global, already in hub CLAUDE.md)
 """
+
+
+def build_self_improving_skill_md() -> str:
+    """Return the complete SKILL.md content for self-improving."""
+    return SELF_IMPROVING_SKILL_FRONTMATTER + "\n\n" + SELF_IMPROVING_SKILL_BODY

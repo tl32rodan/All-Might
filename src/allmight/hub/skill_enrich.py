@@ -5,6 +5,27 @@ workspace's ``.claude/`` directory — updating the workspace's CLAUDE.md and
 skills with structured know-how that makes future sub-agent queries smarter.
 """
 
+ENRICH_SKILL_NAME = "enrich"
+
+ENRICH_SKILL_DESCRIPTION = (
+    "Know-how injection. Persist domain knowledge into a workspace's .claude/ "
+    "layer — symbol patterns, terminology, relationships, gotchas. Use when "
+    "you learn something about a flow that should be remembered across sessions."
+)
+
+ENRICH_SKILL_FRONTMATTER = """\
+---
+name: enrich
+description: >-
+  Know-how injection. Persist domain knowledge into a workspace's .claude/
+  layer — symbol patterns, terminology, relationships, gotchas. Use when
+  you learn something about a flow that should be remembered across sessions.
+  Distinct from sidecar enrichment (which annotates individual symbols via
+  /enrich command and sidecar-handling skill).
+disable-model-invocation: true
+argument-hint: "<workspace> <knowledge>"
+---"""
+
 ENRICH_SKILL_BODY = """\
 # Enrich — Know-How Injection
 
@@ -124,3 +145,8 @@ Action:
 | `self-improving` | Self-improving reads enriched workspaces to find patterns worth promoting |
 | `sidecar-handling` | Sidecar enrichment annotates individual symbols; `.claude/` enrichment teaches patterns |
 """
+
+
+def build_enrich_skill_md() -> str:
+    """Return the complete SKILL.md content for enrich."""
+    return ENRICH_SKILL_FRONTMATTER + "\n\n" + ENRICH_SKILL_BODY
