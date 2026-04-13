@@ -1,15 +1,13 @@
 """Hub-level content for multi-workspace All-Might instances.
 
 An All-Might hub manages N SMAK workspaces of the same type.
-This package holds the CLAUDE.md and skill content that defines
-the hub agent's worldview, delegation patterns, and self-improvement loop.
 
-Each skill module provides:
-- ``*_SKILL_NAME``: skill identifier (used as /slash-command name)
-- ``*_SKILL_DESCRIPTION``: agent-facing description (for auto-invocation)
-- ``*_SKILL_FRONTMATTER``: complete YAML frontmatter block (``--- ... ---``)
-- ``*_SKILL_BODY``: markdown body content
-- ``build_*_skill_md()``: assembles frontmatter + body into a complete SKILL.md
+Templates live in ``templates/`` as actual ``.md`` and ``.md.j2`` files:
+- ``CLAUDE.md.j2`` — Jinja2 template for the hub constitution
+- ``skills/*/SKILL.md`` — static SKILL.md files, ready to copy into ``.claude/skills/``
+
+Each ``skill_*.py`` module provides a ``build_*_skill_md()`` function that
+reads the template file and returns its content.
 """
 
 from allmight.hub.claude_md_content import build_hub_claude_md
