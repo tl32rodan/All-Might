@@ -1,17 +1,18 @@
-"""All-Might CLI — the command-line interface for non-Claude-Code environments.
+"""All-Might CLI — thin bootstrapping surface.
 
-Commands:
-    allmight init [path]        — Detroit SMAK: bootstrap a project
-    allmight generate [--config] — Regenerate One For All SKILL.md
-    allmight power-level        — Show knowledge graph coverage
-    allmight panorama           — Export knowledge graph visualization
-    allmight search             — Semantic search with graph context
-    allmight lookup             — Look up a symbol by UID
-    allmight enrich             — Enrich a symbol with intent/relations
-    allmight ingest             — Trigger SMAK ingest
-    allmight explain            — Show full graph context for a symbol
-    allmight report             — Generate graph intelligence report
-    allmight config             — Manage indices (add/remove/list/update)
+All-Might is an **agent harness**, not a CLI tool.  The CLI exists only for
+operations that cannot be agent-driven:
+
+    allmight init [path]                — Bootstrap a workspace
+    allmight power-level [--config]     — Show knowledge graph coverage
+    allmight config add-index           — Add a SMAK index
+    allmight config remove-index        — Remove a SMAK index
+    allmight config list-indices        — List configured indices
+    allmight config update-index        — Update an existing index
+
+Everything else (search, enrich, explain, panorama, report, generate) is
+agent-driven through .claude/ skills.  See the hub's CLAUDE.md and
+.claude/skills/ for the full skill architecture.
 """
 
 from __future__ import annotations
@@ -26,10 +27,14 @@ from . import __version__
 def main():
     """All-Might: Active Knowledge Graph Framework.
 
-    The active layer on top of SMAK — transforms agents from passive
-    queriers into active knowledge curators.
+    Agent harness for multi-workspace SMAK orchestration.
+    Use 'init' to bootstrap, then let the agent drive via skills.
     """
 
+
+# ------------------------------------------------------------------
+# Bootstrapping
+# ------------------------------------------------------------------
 
 @main.command()
 @click.argument("path", default=".", type=click.Path(exists=True))
@@ -63,20 +68,9 @@ def init(path: str, smak_path: str | None, sos: bool):
     click.echo(f"  Workspace: {root / 'all-might'}")
 
 
-@main.command()
-@click.option("--config", "config_path", default="all-might/config.yaml", type=click.Path())
-def generate(config_path: str):
-    """Regenerate One For All — update SKILL.md with current project state."""
-    from pathlib import Path as P
-
-    from .one_for_all.generator import OneForAllGenerator
-
-    generator = OneForAllGenerator()
-    skill_content = generator.generate(P(config_path))
-    click.echo("One For All regenerated.")
-    click.echo(f"  Output: .claude/skills/one-for-all/SKILL.md")
-    click.echo(f"  Length: {len(skill_content)} characters")
-
+# ------------------------------------------------------------------
+# Metrics
+# ------------------------------------------------------------------
 
 @main.command("power-level")
 @click.option("--config", "config_path", default="all-might/config.yaml", type=click.Path())
@@ -93,7 +87,7 @@ def power_level(config_path: str):
     tracker = PowerTracker()
     level = tracker.calculate(P(config_path))
 
-    console.print(f"\n[bold]⚡ Power Level: {level.coverage_pct:.1f}%[/bold]\n")
+    console.print(f"\n[bold]Power Level: {level.coverage_pct:.1f}%[/bold]\n")
 
     table = Table(title="Coverage by Index")
     table.add_column("Index", style="cyan")
@@ -107,223 +101,6 @@ def power_level(config_path: str):
     console.print(f"\nSymbols: {level.enriched_symbols}/{level.total_symbols}")
     console.print(f"Files with sidecars: {level.files_with_sidecars}/{level.total_files}")
     console.print(f"Total relations: {level.total_relations}")
-
-
-@main.command()
-@click.option("--config", "config_path", default="all-might/config.yaml", type=click.Path())
-@click.option("--format", "fmt", type=click.Choice(["json", "mermaid", "obsidian"]), default="json")
-@click.option("--output", "output_dir", default="all-might/panorama", type=click.Path())
-def panorama(config_path: str, fmt: str, output_dir: str):
-    """Export the knowledge graph as a panoramic visualization."""
-    from pathlib import Path as P
-
-    from .panorama.exporter import PanoramaExporter
-
-    exporter = PanoramaExporter()
-    output = exporter.export(P(config_path), fmt=fmt, output_dir=P(output_dir))
-    click.echo(f"Panorama exported: {output}")
-
-
-# ------------------------------------------------------------------
-# Search & Lookup (via SmakBridge)
-# ------------------------------------------------------------------
-
-def _workspace_config(config_path: str) -> str:
-    """Resolve workspace_config.yaml path from all-might/config.yaml."""
-    from pathlib import Path as P
-
-    from .utils.yaml_io import load_config
-
-    config = load_config(P(config_path))
-    root = P(config.get("project", {}).get("root", P(config_path).parent.parent))
-    rel = config.get("smak", {}).get("config_path", "workspace_config.yaml")
-    return str(root / rel)
-
-
-@main.command()
-@click.argument("query")
-@click.option("--index", default="source_code", help="SMAK index to search")
-@click.option("--top-k", default=5, type=int, help="Number of results")
-@click.option("--config", "config_path", default="all-might/config.yaml", type=click.Path())
-@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def search(query: str, index: str, top_k: int, config_path: str, as_json: bool):
-    """Semantic search with graph context."""
-    import json
-
-    from .bridge import SmakBridge
-
-    ws = _workspace_config(config_path)
-    bridge = SmakBridge(workspace_config=ws)
-    result = bridge.search(query, index=index, top_k=top_k)
-
-    if as_json:
-        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
-        return
-
-    hits = result.get("hits", [])
-    if not hits:
-        click.echo("No results found.")
-        return
-
-    for i, hit in enumerate(hits, 1):
-        uid = hit.get("uid", "?")
-        score = hit.get("score", 0)
-        click.echo(f"  {i}. {uid}  (score: {score:.4f})")
-
-
-@main.command()
-@click.argument("uid")
-@click.option("--index", default="source_code", help="SMAK index")
-@click.option("--config", "config_path", default="all-might/config.yaml", type=click.Path())
-@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def lookup(uid: str, index: str, config_path: str, as_json: bool):
-    """Look up a symbol by UID in the vector store."""
-    import json
-
-    from .bridge import SmakBridge
-
-    ws = _workspace_config(config_path)
-    bridge = SmakBridge(workspace_config=ws)
-    result = bridge.lookup(uid, index=index)
-
-    if as_json:
-        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
-        return
-
-    if result.get("found"):
-        click.echo(f"UID: {result.get('uid')}")
-        click.echo(f"Content preview: {str(result.get('content', ''))[:200]}")
-    else:
-        click.echo(f"UID '{uid}' not found.")
-
-
-# ------------------------------------------------------------------
-# Enrichment (via SmakBridge)
-# ------------------------------------------------------------------
-
-@main.command()
-@click.option("--file", "file_path", required=True, help="Source file path")
-@click.option("--symbol", required=True, help="Symbol name")
-@click.option("--intent", default=None, help="Intent description")
-@click.option("--relation", "relations", multiple=True, help="Related UIDs (repeatable)")
-@click.option("--index", default="source_code", help="SMAK index")
-@click.option("--bidirectional", is_flag=True, help="Create bidirectional relations")
-@click.option("--config", "config_path", default="all-might/config.yaml", type=click.Path())
-@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def enrich(file_path: str, symbol: str, intent: str | None, relations: tuple,
-           index: str, bidirectional: bool, config_path: str, as_json: bool):
-    """Enrich a symbol with intent and/or relations."""
-    import json
-
-    from .bridge import SmakBridge
-
-    ws = _workspace_config(config_path)
-    bridge = SmakBridge(workspace_config=ws)
-    result = bridge.enrich_symbol(
-        file_path, symbol,
-        intent=intent,
-        relations=list(relations) or None,
-        index=index,
-        bidirectional=bidirectional,
-    )
-
-    if as_json:
-        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
-        return
-
-    click.echo(f"Enriched {file_path}::{symbol}")
-    if intent:
-        click.echo(f"  Intent: {intent}")
-    if relations:
-        click.echo(f"  Relations: {', '.join(relations)}")
-
-
-@main.command()
-@click.option("--index", default=None, help="SMAK index (all if omitted)")
-@click.option("--config", "config_path", default="all-might/config.yaml", type=click.Path())
-@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def ingest(index: str | None, config_path: str, as_json: bool):
-    """Trigger SMAK ingest for one or all indices."""
-    import json
-
-    from .bridge import SmakBridge
-
-    ws = _workspace_config(config_path)
-    bridge = SmakBridge(workspace_config=ws)
-    result = bridge.ingest(index=index)
-
-    if as_json:
-        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
-        return
-
-    click.echo(f"Ingest complete: {result.get('files', '?')} files, {result.get('vectors', '?')} vectors")
-
-
-# ------------------------------------------------------------------
-# Graph Intelligence
-# ------------------------------------------------------------------
-
-@main.command()
-@click.argument("uid")
-@click.option("--config", "config_path", default="all-might/config.yaml", type=click.Path())
-@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def explain(uid: str, config_path: str, as_json: bool):
-    """Show full graph context for a symbol."""
-    import json
-    from pathlib import Path as P
-
-    from .panorama.analyzer import PanoramaAnalyzer
-    from .panorama.graph_intel import GraphIntel
-
-    analyzer = PanoramaAnalyzer()
-    graph = analyzer.analyze(P(config_path))
-    intel = GraphIntel(graph)
-    result = intel.explain(uid)
-
-    if as_json:
-        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
-        return
-
-    if "error" in result:
-        click.echo(result["error"])
-        return
-
-    click.echo(f"Symbol: {result['uid']}")
-    click.echo(f"  Name:     {result['name']}")
-    click.echo(f"  File:     {result['file_path']}")
-    click.echo(f"  Index:    {result['index']}")
-    click.echo(f"  Intent:   {result['intent'] or '(none)'}")
-    click.echo(f"  Degree:   {result['degree']}")
-    click.echo(f"  God Node: {'yes' if result['is_god_node'] else 'no'}")
-    click.echo(f"  Cluster:  {result['cluster_id']}")
-    if result["outgoing"]:
-        click.echo(f"  Outgoing: {', '.join(result['outgoing'])}")
-    if result["incoming"]:
-        click.echo(f"  Incoming: {', '.join(result['incoming'])}")
-
-
-@main.command()
-@click.option("--config", "config_path", default="all-might/config.yaml", type=click.Path())
-@click.option("--output", default=None, type=click.Path(), help="Output file path")
-def report(config_path: str, output: str | None):
-    """Generate a graph intelligence report (Markdown)."""
-    from pathlib import Path as P
-
-    from .panorama.analyzer import PanoramaAnalyzer
-    from .panorama.graph_intel import GraphIntel
-
-    analyzer = PanoramaAnalyzer()
-    graph = analyzer.analyze(P(config_path))
-    intel = GraphIntel(graph)
-    md = intel.report()
-
-    if output:
-        out = P(output)
-    else:
-        out = P(config_path).parent / "panorama" / "GRAPH_REPORT.md"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(md)
-    click.echo(f"Graph report written to {out}")
 
 
 # ------------------------------------------------------------------
