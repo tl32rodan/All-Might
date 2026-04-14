@@ -43,8 +43,8 @@ def main():
 def init(path: str, smak_path: str | None, sos: bool):
     """Detroit SMAK — one punch to bootstrap the entire workspace.
 
-    Scans the project, creates all-might/ workspace, generates
-    workspace_config.yaml, and injects .claude/skills and commands.
+    Scans the project, creates config.yaml with project metadata and
+    SMAK indices, and injects .claude/skills and commands.
     """
     from pathlib import Path as P
 
@@ -65,7 +65,7 @@ def init(path: str, smak_path: str | None, sos: bool):
     click.echo(f"Detroit SMAK! Project '{manifest.name}' initialized.")
     click.echo(f"  Languages: {', '.join(manifest.languages) or 'none detected'}")
     click.echo(f"  Indices:   {len(manifest.indices)}")
-    click.echo(f"  Workspace: {root / 'all-might'}")
+    click.echo(f"  Config:    {root / 'config.yaml'}")
 
 
 # ------------------------------------------------------------------
@@ -73,7 +73,7 @@ def init(path: str, smak_path: str | None, sos: bool):
 # ------------------------------------------------------------------
 
 @main.command("power-level")
-@click.option("--config", "config_path", default="all-might/config.yaml", type=click.Path())
+@click.option("--config", "config_path", default="config.yaml", type=click.Path())
 def power_level(config_path: str):
     """Show the project's Power Level — knowledge graph coverage metrics."""
     from pathlib import Path as P

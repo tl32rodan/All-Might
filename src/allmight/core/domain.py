@@ -14,7 +14,7 @@ from pathlib import Path
 class IndexSpec:
     """A proposed SMAK index specification.
 
-    Maps directly to an entry in workspace_config.yaml.
+    Maps directly to an entry in config.yaml.
     """
 
     name: str

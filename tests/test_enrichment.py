@@ -69,7 +69,7 @@ class TestEnrichmentPolicy:
 class TestEnrichmentPlanner:
     def test_plan_empty_project(self, initialized_project):
         """No sidecars → all files get no_sidecar tasks."""
-        config_path = initialized_project / "all-might" / "config.yaml"
+        config_path = initialized_project / "config.yaml"
         planner = EnrichmentPlanner()
         tasks = planner.plan(config_path)
 
@@ -79,7 +79,7 @@ class TestEnrichmentPlanner:
 
     def test_plan_partial_enrichment(self, project_with_partial_sidecars):
         """Partial sidecars → mix of missing_intent and no_sidecar tasks."""
-        config_path = project_with_partial_sidecars / "all-might" / "config.yaml"
+        config_path = project_with_partial_sidecars / "config.yaml"
         planner = EnrichmentPlanner()
         tasks = planner.plan(config_path)
 
@@ -89,7 +89,7 @@ class TestEnrichmentPlanner:
 
     def test_plan_sorted_by_priority(self, project_with_partial_sidecars):
         """Tasks should be sorted highest priority first."""
-        config_path = project_with_partial_sidecars / "all-might" / "config.yaml"
+        config_path = project_with_partial_sidecars / "config.yaml"
         planner = EnrichmentPlanner()
         tasks = planner.plan(config_path)
 
@@ -106,14 +106,14 @@ class TestEnrichmentPlanner:
 
 class TestPowerTracker:
     def test_empty_project_zero_coverage(self, initialized_project):
-        config_path = initialized_project / "all-might" / "config.yaml"
+        config_path = initialized_project / "config.yaml"
         tracker = PowerTracker()
         level = tracker.calculate(config_path)
         assert level.coverage_pct == 0.0
         assert level.total_symbols == 0
 
     def test_partial_enrichment_coverage(self, project_with_partial_sidecars):
-        config_path = project_with_partial_sidecars / "all-might" / "config.yaml"
+        config_path = project_with_partial_sidecars / "config.yaml"
         tracker = PowerTracker()
         level = tracker.calculate(config_path)
 
@@ -123,11 +123,11 @@ class TestPowerTracker:
         assert level.coverage_pct == 50.0
 
     def test_persists_to_tracker_yaml(self, project_with_partial_sidecars):
-        config_path = project_with_partial_sidecars / "all-might" / "config.yaml"
+        config_path = project_with_partial_sidecars / "config.yaml"
         tracker = PowerTracker()
         tracker.calculate(config_path)
 
-        tracker_path = project_with_partial_sidecars / "all-might" / "enrichment" / "tracker.yaml"
+        tracker_path = project_with_partial_sidecars / "enrichment" / "tracker.yaml"
         assert tracker_path.exists()
 
         with open(tracker_path) as f:
@@ -137,20 +137,20 @@ class TestPowerTracker:
         assert len(data["history"]) >= 1
 
     def test_history_accumulates(self, project_with_partial_sidecars):
-        config_path = project_with_partial_sidecars / "all-might" / "config.yaml"
+        config_path = project_with_partial_sidecars / "config.yaml"
         tracker = PowerTracker()
 
         tracker.calculate(config_path)
         tracker.calculate(config_path)
 
-        tracker_path = project_with_partial_sidecars / "all-might" / "enrichment" / "tracker.yaml"
+        tracker_path = project_with_partial_sidecars / "enrichment" / "tracker.yaml"
         with open(tracker_path) as f:
             data = yaml.safe_load(f)
 
         assert len(data["history"]) >= 2
 
     def test_coverage_by_index(self, project_with_partial_sidecars):
-        config_path = project_with_partial_sidecars / "all-might" / "config.yaml"
+        config_path = project_with_partial_sidecars / "config.yaml"
         tracker = PowerTracker()
         level = tracker.calculate(config_path)
 

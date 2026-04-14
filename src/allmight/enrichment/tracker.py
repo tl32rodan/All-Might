@@ -22,15 +22,14 @@ class PowerTracker:
         """Calculate current Power Level and update tracker.yaml.
 
         Args:
-            config_path: Path to all-might/config.yaml
+            config_path: Path to config.yaml
 
         Returns:
             The calculated PowerLevel.
         """
         config = load_config(config_path)
-        root = Path(config.get("project", {}).get("root", config_path.parent.parent))
-        smak_config_path = config.get("smak", {}).get("config_path", "workspace_config.yaml")
-        indices = load_indices(root / smak_config_path)
+        root = Path(config.get("project", {}).get("root", config_path.parent))
+        indices = load_indices(config_path)
 
         total_symbols = 0
         enriched_symbols = 0

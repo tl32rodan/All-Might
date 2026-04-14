@@ -53,13 +53,12 @@ class TestCliConfigGroup(unittest.TestCase):
 
     def _setup_project(self, tmp_dir: str) -> Path:
         root = Path(tmp_dir)
-        (root / "all-might").mkdir()
-        config = {"indices": [{"name": "src", "description": "Source", "paths": ["./src"]}]}
-        with open(root / "workspace_config.yaml", "w") as f:
+        config = {
+            "project": {"name": "test"},
+            "indices": [{"name": "src", "description": "Source", "paths": ["./src"]}],
+        }
+        with open(root / "config.yaml", "w") as f:
             yaml.dump(config, f)
-        am_config = {"project": {"name": "test"}}
-        with open(root / "all-might" / "config.yaml", "w") as f:
-            yaml.dump(am_config, f)
         return root
 
     def test_list_indices(self) -> None:

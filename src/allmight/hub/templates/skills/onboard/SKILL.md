@@ -90,7 +90,7 @@ For sections where you have no info yet, use `(TBD — run /onboard again to fil
 
 ### 2. Hub Config
 
-Write to `all-might/config.yaml`:
+Write to `config.yaml`:
 
 ```yaml
 hub:

@@ -21,9 +21,9 @@ class PanoramaExporter:
         """Export the knowledge graph.
 
         Args:
-            config_path: Path to all-might/config.yaml
+            config_path: Path to config.yaml
             fmt: Export format — "json", "mermaid", or "obsidian"
-            output_dir: Output directory (defaults to all-might/panorama/)
+            output_dir: Output directory (defaults to panorama/)
 
         Returns:
             Path to the primary output file.

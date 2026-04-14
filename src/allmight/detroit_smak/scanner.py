@@ -158,7 +158,7 @@ class ProjectScanner:
     def _detect_path_env(self, root: Path) -> bool:
         """Check if the project uses environment-variable-based paths.
 
-        Looks for existing workspace_config.yaml with path_env entries,
+        Looks for existing config.yaml with path_env entries,
         or the presence of $DDI_ROOT_PATH in the environment.
         """
         import os
@@ -166,7 +166,7 @@ class ProjectScanner:
         if os.environ.get("DDI_ROOT_PATH"):
             return True
 
-        config_path = root / "workspace_config.yaml"
+        config_path = root / "config.yaml"
         if config_path.exists():
             try:
                 import yaml

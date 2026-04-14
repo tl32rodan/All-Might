@@ -1,4 +1,4 @@
-"""Config Manager — manages workspace_config.yaml for SMAK."""
+"""Config Manager — manages config.yaml for SMAK."""
 
 from allmight.config.manager import ConfigManager
 

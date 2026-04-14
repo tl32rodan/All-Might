@@ -33,11 +33,11 @@ class SmakBridge:
 
     def __init__(
         self,
-        workspace_config: Path | str,
+        config: Path | str,
         smak_cmd: str = "smak",
         timeout: int = 300,
     ) -> None:
-        self.workspace_config = str(Path(workspace_config).resolve())
+        self.config = str(Path(config).resolve())
         self.smak_cmd = smak_cmd
         self.timeout = timeout
 
@@ -51,7 +51,7 @@ class SmakBridge:
         """Semantic search within a single index."""
         return self._run([
             "search", query,
-            "--config", self.workspace_config,
+            "--config", self.config,
             "--index", index,
             "--top-k", str(top_k),
         ])
@@ -62,7 +62,7 @@ class SmakBridge:
         """Search across all indices."""
         return self._run([
             "search-all", query,
-            "--config", self.workspace_config,
+            "--config", self.config,
             "--top-k", str(top_k),
         ])
 
@@ -72,7 +72,7 @@ class SmakBridge:
         """Look up a UID in the vector store."""
         return self._run([
             "lookup", uid,
-            "--config", self.workspace_config,
+            "--config", self.config,
             "--index", index,
         ])
 
@@ -90,7 +90,7 @@ class SmakBridge:
         """Annotate a symbol with intent and/or relations."""
         args = [
             "enrich",
-            "--config", self.workspace_config,
+            "--config", self.config,
             "--index", index,
             "--file", file_path,
             "--symbol", symbol,
@@ -110,7 +110,7 @@ class SmakBridge:
         """Sync a file's sidecar."""
         return self._run([
             "enrich-file",
-            "--config", self.workspace_config,
+            "--config", self.config,
             "--index", index,
             "--file", file_path,
         ])
@@ -123,7 +123,7 @@ class SmakBridge:
         """Re-ingest files into a vector store index."""
         args = [
             "ingest",
-            "--config", self.workspace_config,
+            "--config", self.config,
         ]
         if index:
             args.extend(["--index", index])
@@ -133,21 +133,21 @@ class SmakBridge:
         """Describe workspace indices."""
         return self._run([
             "describe",
-            "--config", self.workspace_config,
+            "--config", self.config,
         ])
 
     def health(self) -> dict[str, Any]:
         """Run health checks."""
         return self._run([
             "health",
-            "--config", self.workspace_config,
+            "--config", self.config,
         ])
 
     def graph_stats(self) -> dict[str, Any]:
         """Knowledge graph coverage statistics."""
         return self._run([
             "stats",
-            "--config", self.workspace_config,
+            "--config", self.config,
         ])
 
     # ------------------------------------------------------------------

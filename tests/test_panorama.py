@@ -70,7 +70,7 @@ class TestPanoramaAnalyzer:
         initializer = ProjectInitializer()
         initializer.initialize(manifest)
 
-        config_path = tmp_path / "all-might" / "config.yaml"
+        config_path = tmp_path / "config.yaml"
         analyzer = PanoramaAnalyzer()
         graph = analyzer.analyze(config_path)
 
@@ -78,7 +78,7 @@ class TestPanoramaAnalyzer:
         assert graph.metrics.total_edges == 0
 
     def test_graph_with_relations(self, project_with_graph):
-        config_path = project_with_graph / "all-might" / "config.yaml"
+        config_path = project_with_graph / "config.yaml"
         analyzer = PanoramaAnalyzer()
         graph = analyzer.analyze(config_path)
 
@@ -87,7 +87,7 @@ class TestPanoramaAnalyzer:
         assert graph.metrics.nodes_with_intent == 3
 
     def test_orphan_detection(self, project_with_graph):
-        config_path = project_with_graph / "all-might" / "config.yaml"
+        config_path = project_with_graph / "config.yaml"
         analyzer = PanoramaAnalyzer()
         graph = analyzer.analyze(config_path)
 
@@ -96,7 +96,7 @@ class TestPanoramaAnalyzer:
         assert graph.metrics.orphan_nodes >= 0
 
     def test_cluster_count(self, project_with_graph):
-        config_path = project_with_graph / "all-might" / "config.yaml"
+        config_path = project_with_graph / "config.yaml"
         analyzer = PanoramaAnalyzer()
         graph = analyzer.analyze(config_path)
 
@@ -106,7 +106,7 @@ class TestPanoramaAnalyzer:
 
 class TestPanoramaExporter:
     def test_export_json(self, project_with_graph):
-        config_path = project_with_graph / "all-might" / "config.yaml"
+        config_path = project_with_graph / "config.yaml"
         exporter = PanoramaExporter()
         output = exporter.export(config_path, fmt="json")
 
@@ -121,7 +121,7 @@ class TestPanoramaExporter:
         assert data["metrics"]["total_edges"] == 3
 
     def test_export_mermaid(self, project_with_graph):
-        config_path = project_with_graph / "all-might" / "config.yaml"
+        config_path = project_with_graph / "config.yaml"
         exporter = PanoramaExporter()
         output = exporter.export(config_path, fmt="mermaid")
 
@@ -131,7 +131,7 @@ class TestPanoramaExporter:
         assert "-->" in content
 
     def test_export_obsidian(self, project_with_graph):
-        config_path = project_with_graph / "all-might" / "config.yaml"
+        config_path = project_with_graph / "config.yaml"
         exporter = PanoramaExporter()
         output = exporter.export(config_path, fmt="obsidian")
 
@@ -140,7 +140,7 @@ class TestPanoramaExporter:
         assert len(md_files) >= 3  # hello, App, helper
 
     def test_obsidian_has_backlinks(self, project_with_graph):
-        config_path = project_with_graph / "all-might" / "config.yaml"
+        config_path = project_with_graph / "config.yaml"
         exporter = PanoramaExporter()
         output = exporter.export(config_path, fmt="obsidian")
 
@@ -151,7 +151,7 @@ class TestPanoramaExporter:
         assert "Referenced by" in content
 
     def test_custom_output_dir(self, project_with_graph, tmp_path):
-        config_path = project_with_graph / "all-might" / "config.yaml"
+        config_path = project_with_graph / "config.yaml"
         custom_dir = tmp_path / "custom_output"
         exporter = PanoramaExporter()
         output = exporter.export(config_path, fmt="json", output_dir=custom_dir)
@@ -160,7 +160,7 @@ class TestPanoramaExporter:
         assert str(output).startswith(str(custom_dir))
 
     def test_invalid_format_raises(self, project_with_graph):
-        config_path = project_with_graph / "all-might" / "config.yaml"
+        config_path = project_with_graph / "config.yaml"
         exporter = PanoramaExporter()
         with pytest.raises(ValueError, match="Unknown format"):
             exporter.export(config_path, fmt="invalid")

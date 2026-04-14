@@ -14,21 +14,16 @@ from allmight.config import ConfigManager
 class TestConfigManager(unittest.TestCase):
 
     def _setup_project(self, tmp_dir: str) -> Path:
-        """Create a minimal project structure with workspace_config.yaml."""
+        """Create a minimal project structure with config.yaml."""
         root = Path(tmp_dir)
-        (root / "all-might").mkdir()
-        # Write initial workspace_config.yaml
         config = {
+            "project": {"name": "test"},
             "indices": [
                 {"name": "source_code", "uri": "./smak/source_code", "description": "Source code", "paths": ["./src"]},
             ],
         }
-        with open(root / "workspace_config.yaml", "w") as f:
+        with open(root / "config.yaml", "w") as f:
             yaml.dump(config, f)
-        # Write initial all-might/config.yaml
-        am_config = {"project": {"name": "test"}}
-        with open(root / "all-might" / "config.yaml", "w") as f:
-            yaml.dump(am_config, f)
         return root
 
     def test_list_indices(self) -> None:
@@ -55,17 +50,11 @@ class TestConfigManager(unittest.TestCase):
             new = mgr.add_index("tests", "Test files", ["./tests"])
             self.assertEqual(new.name, "tests")
 
-            # Verify workspace_config.yaml updated
-            with open(root / "workspace_config.yaml") as f:
+            # Verify config.yaml updated
+            with open(root / "config.yaml") as f:
                 data = yaml.safe_load(f)
             names = [idx["name"] for idx in data["indices"]]
             self.assertIn("tests", names)
-
-            # Verify all-might/config.yaml synced
-            with open(root / "all-might" / "config.yaml") as f:
-                am_data = yaml.safe_load(f)
-            am_names = [idx["name"] for idx in am_data["indices"]]
-            self.assertIn("tests", am_names)
 
     def test_add_duplicate_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -116,7 +105,7 @@ class TestConfigManager(unittest.TestCase):
                                 path_env="DDI_ROOT_PATH")
             self.assertEqual(new.path_env, "DDI_ROOT_PATH")
 
-            with open(root / "workspace_config.yaml") as f:
+            with open(root / "config.yaml") as f:
                 data = yaml.safe_load(f)
             sos = next(idx for idx in data["indices"] if idx["name"] == "sos")
             self.assertEqual(sos["path_env"], "DDI_ROOT_PATH")
@@ -140,8 +129,8 @@ class TestConfigManager(unittest.TestCase):
             new = mgr.add_index("tests", "Test files", ["./tests"])
             self.assertEqual(new.uri, "./smak/tests")
 
-            # Verify persisted in workspace_config.yaml
-            with open(root / "workspace_config.yaml") as f:
+            # Verify persisted in config.yaml
+            with open(root / "config.yaml") as f:
                 data = yaml.safe_load(f)
             tests_idx = next(idx for idx in data["indices"] if idx["name"] == "tests")
             self.assertEqual(tests_idx["uri"], "./smak/tests")
