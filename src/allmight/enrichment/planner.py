@@ -22,15 +22,14 @@ class EnrichmentPlanner:
         """Generate an enrichment plan from current project state.
 
         Args:
-            config_path: Path to all-might/config.yaml
+            config_path: Path to config.yaml
 
         Returns:
             List of EnrichmentTasks sorted by priority (highest first).
         """
         config = load_config(config_path)
-        root = Path(config.get("project", {}).get("root", config_path.parent.parent))
-        smak_config_path = config.get("smak", {}).get("config_path", "workspace_config.yaml")
-        indices = load_indices(root / smak_config_path)
+        root = Path(config.get("project", {}).get("root", config_path.parent))
+        indices = load_indices(config_path)
 
         tasks: list[EnrichmentTask] = []
         use_git = is_git_repo(root)

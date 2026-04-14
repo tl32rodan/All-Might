@@ -35,18 +35,15 @@ class OneForAllGenerator:
         """Generate the One For All SKILL.md content.
 
         Args:
-            config_path: Path to all-might/config.yaml
+            config_path: Path to config.yaml
 
         Returns:
             The generated SKILL.md content as a string.
             Also writes the file to .claude/skills/one-for-all/SKILL.md.
         """
         config = load_config(config_path)
-        root = Path(config.get("project", {}).get("root", config_path.parent.parent))
-
-        # Load SMAK workspace config
-        smak_config_path = config.get("smak", {}).get("config_path", "workspace_config.yaml")
-        indices = load_indices(root / smak_config_path)
+        root = Path(config.get("project", {}).get("root", config_path.parent))
+        indices = load_indices(config_path)
 
         # Scan sidecar files for enriched symbols
         symbols = self._scan_sidecars(root, indices)
@@ -66,7 +63,7 @@ class OneForAllGenerator:
             indices=indices,
             key_symbols=key_symbols,
             power_level=power_level,
-            smak_config_path=smak_config_path,
+            smak_config_path="config.yaml",
             generated_at=datetime.now(timezone.utc).isoformat(),
         )
 
@@ -79,7 +76,7 @@ class OneForAllGenerator:
         self._generate_enrichment_skill(root, indices, power_level)
 
         # Generate commands
-        self._generate_commands(root, smak_config_path)
+        self._generate_commands(root, "config.yaml")
 
         return content
 

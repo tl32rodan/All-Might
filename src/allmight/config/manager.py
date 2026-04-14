@@ -1,4 +1,4 @@
-"""ConfigManager — manages workspace_config.yaml and all-might/config.yaml.
+"""ConfigManager — manages config.yaml.
 
 All-Might owns the workspace configuration. Developers modify indices
 through All-Might commands, not by hand-editing YAML.
@@ -13,16 +13,15 @@ from ..utils.yaml_io import load_config, write_yaml
 
 
 class ConfigManager:
-    """Manages workspace_config.yaml — the single source of truth for SMAK indices.
+    """Manages config.yaml — the single source of truth for SMAK indices.
 
-    Every mutation syncs both ``workspace_config.yaml`` (SMAK reads this)
-    and ``all-might/config.yaml`` (All-Might's own metadata).
+    Every mutation updates ``config.yaml`` which holds both project
+    metadata and the full index definitions.
     """
 
     def __init__(self, root: Path) -> None:
         self.root = root
-        self.workspace_config_path = root / "workspace_config.yaml"
-        self.allmight_config_path = root / "all-might" / "config.yaml"
+        self.config_path = root / "config.yaml"
         self._indices: list[IndexSpec] | None = None
 
     # ------------------------------------------------------------------
@@ -50,7 +49,7 @@ class ConfigManager:
         )
         indices.append(new_index)
         self._indices = indices
-        self._write_all()
+        self._write_config()
         return new_index
 
     def remove_index(self, name: str) -> None:
@@ -61,7 +60,7 @@ class ConfigManager:
         if len(indices) == before:
             raise ValueError(f"Index '{name}' not found.")
         self._indices = indices
-        self._write_all()
+        self._write_config()
 
     def update_index(self, name: str, **kwargs: object) -> IndexSpec:
         """Update fields of an existing index. Raises ValueError if not found."""
@@ -77,7 +76,7 @@ class ConfigManager:
                 )
                 indices[i] = updated
                 self._indices = indices
-                self._write_all()
+                self._write_config()
                 return updated
         raise ValueError(f"Index '{name}' not found.")
 
@@ -96,8 +95,8 @@ class ConfigManager:
     # ------------------------------------------------------------------
 
     def _load_indices(self) -> list[IndexSpec]:
-        """Load indices from workspace_config.yaml."""
-        config = load_config(self.workspace_config_path)
+        """Load indices from config.yaml."""
+        config = load_config(self.config_path)
         return [
             IndexSpec(
                 name=idx["name"],
@@ -109,33 +108,17 @@ class ConfigManager:
             for idx in config.get("indices", [])
         ]
 
-    def _write_all(self) -> None:
-        """Write workspace_config.yaml and sync all-might/config.yaml."""
-        self._write_workspace_config()
-        self._sync_allmight_config()
-
-    def _write_workspace_config(self) -> None:
-        """Write indices to workspace_config.yaml in SMAK format."""
-        indices = self._indices or []
-        data = {
-            "indices": [
-                self._index_to_dict(idx) for idx in indices
-            ],
-        }
-        write_yaml(self.workspace_config_path, data)
-
-    def _sync_allmight_config(self) -> None:
-        """Update index list in all-might/config.yaml."""
-        config = load_config(self.allmight_config_path)
+    def _write_config(self) -> None:
+        """Update indices in config.yaml, preserving other keys."""
+        config = load_config(self.config_path)
         config["indices"] = [
-            {"name": idx.name, "description": idx.description}
-            for idx in (self._indices or [])
+            self._index_to_dict(idx) for idx in (self._indices or [])
         ]
-        write_yaml(self.allmight_config_path, config)
+        write_yaml(self.config_path, config)
 
     @staticmethod
     def _index_to_dict(idx: IndexSpec) -> dict:
-        """Convert IndexSpec to SMAK workspace_config format."""
+        """Convert IndexSpec to config.yaml dict format."""
         d: dict = {
             "name": idx.name,
             "uri": idx.uri or f"./smak/{idx.name}",

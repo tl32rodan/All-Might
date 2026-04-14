@@ -1,11 +1,11 @@
 """Detroit SMAK Initializer — one punch creates the entire workspace.
 
 Takes a ProjectManifest from the Scanner and generates:
-- all-might/ workspace directory
-- workspace_config.yaml (SMAK configuration)
+- config.yaml (merged project metadata + SMAK indices)
+- enrichment/ and panorama/ directories
 - .claude/skills/ (layered skill composition)
 - .claude/commands/ (slash commands)
-- Updates .claude/CLAUDE.md
+- Updates CLAUDE.md at project root
 """
 
 from __future__ import annotations
@@ -34,11 +34,8 @@ class ProjectInitializer:
         """
         root = manifest.root_path
 
-        # 1. Create all-might/ workspace directory
-        self._create_workspace(root, manifest)
-
-        # 2. Generate workspace_config.yaml for SMAK
-        self._create_workspace_config(root, manifest)
+        # 1. Create config.yaml, enrichment/, panorama/
+        self._create_metadata(root, manifest)
 
         # 3. Install SMAK skills (layered composition — HOW layer)
         self._install_smak_skills(root, manifest, smak_path)
@@ -52,12 +49,22 @@ class ProjectInitializer:
         # 6. Update CLAUDE.md
         self._update_claude_md(root, manifest)
 
-    def _create_workspace(self, root: Path, manifest: ProjectManifest) -> None:
-        """Create the all-might/ workspace directory structure."""
-        workspace = root / "all-might"
-        workspace.mkdir(exist_ok=True)
+    def _create_metadata(self, root: Path, manifest: ProjectManifest) -> None:
+        """Create config.yaml, enrichment/, and panorama/ at the project root."""
+        # Build index dicts
+        indices = []
+        for idx in manifest.indices:
+            entry: dict = {
+                "name": idx.name,
+                "uri": idx.uri or f"./smak/{idx.name}",
+                "description": idx.description,
+                "paths": idx.paths,
+            }
+            if idx.path_env:
+                entry["path_env"] = idx.path_env
+            indices.append(entry)
 
-        # config.yaml
+        # Merged config.yaml
         config = {
             "project": {
                 "name": manifest.name,
@@ -65,18 +72,16 @@ class ProjectInitializer:
                 "languages": manifest.languages,
                 "frameworks": manifest.frameworks,
             },
-            "smak": {
-                "config_path": "workspace_config.yaml",
-            },
             "enrichment": {
                 "strategy": "advisory",
             },
+            "indices": indices,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
-        _write_yaml(workspace / "config.yaml", config)
+        _write_yaml(root / "config.yaml", config)
 
         # enrichment/tracker.yaml — initial Power Level (all 0%)
-        enrichment_dir = workspace / "enrichment"
+        enrichment_dir = root / "enrichment"
         enrichment_dir.mkdir(exist_ok=True)
         tracker = {
             "power_level": {
@@ -94,24 +99,7 @@ class ProjectInitializer:
         _write_yaml(enrichment_dir / "tracker.yaml", tracker)
 
         # panorama/ — output directory
-        (workspace / "panorama").mkdir(exist_ok=True)
-
-    def _create_workspace_config(self, root: Path, manifest: ProjectManifest) -> None:
-        """Generate workspace_config.yaml for SMAK."""
-        indices = []
-        for idx in manifest.indices:
-            entry: dict = {
-                "name": idx.name,
-                "uri": idx.uri or f"./smak/{idx.name}",
-                "description": idx.description,
-                "paths": idx.paths,
-            }
-            if idx.path_env:
-                entry["path_env"] = idx.path_env
-            indices.append(entry)
-
-        config = {"indices": indices}
-        _write_yaml(root / "workspace_config.yaml", config)
+        (root / "panorama").mkdir(exist_ok=True)
 
     def _install_smak_skills(
         self,
@@ -201,29 +189,28 @@ class ProjectInitializer:
         # /power-level
         (commands_dir / "power-level.md").write_text(
             "Analyze the project's knowledge graph coverage (Power Level).\n\n"
-            "1. Read `all-might/enrichment/tracker.yaml` for the last known Power Level.\n"
+            "1. Read `enrichment/tracker.yaml` for the last known Power Level.\n"
             "2. Scan all sidecar YAML files (`.*.sidecar.yaml`) across all SMAK indices.\n"
             "3. For each sidecar, count total symbols vs symbols with non-empty `intent`.\n"
             "4. Count total relations across all sidecars.\n"
             "5. Report the overall coverage percentage and per-index breakdown.\n"
-            "6. Update `all-might/enrichment/tracker.yaml` with the new metrics.\n\n"
+            "6. Update `enrichment/tracker.yaml` with the new metrics.\n\n"
             "Display results in a clear table format with coverage bars.\n"
         )
 
         # /regenerate
         (commands_dir / "regenerate.md").write_text(
             "Regenerate the One For All skill with the latest project state.\n\n"
-            "1. Read `all-might/config.yaml` for project configuration.\n"
-            "2. Read `workspace_config.yaml` for SMAK index definitions.\n"
-            "3. Scan all sidecar YAML files to find enriched symbols.\n"
-            "4. Calculate current Power Level.\n"
-            "5. Regenerate `.claude/skills/one-for-all/SKILL.md` with:\n"
+            "1. Read `config.yaml` for project configuration and SMAK index definitions.\n"
+            "2. Scan all sidecar YAML files to find enriched symbols.\n"
+            "3. Calculate current Power Level.\n"
+            "4. Regenerate `.claude/skills/one-for-all/SKILL.md` with:\n"
             "   - Updated project overview\n"
             "   - Current index reference with descriptions\n"
             "   - Key enriched symbols summary (top symbols by relation count)\n"
             "   - Current Power Level metrics\n"
             "   - Updated architecture notes from high-coverage areas\n"
-            "6. Update `all-might/enrichment/tracker.yaml` with new metrics.\n\n"
+            "5. Update `enrichment/tracker.yaml` with new metrics.\n\n"
             "Report what changed in the regenerated skill.\n"
         )
 
@@ -233,8 +220,8 @@ class ProjectInitializer:
             "1. Scan all sidecar YAML files across all SMAK indices.\n"
             "2. Build a graph of symbols (nodes) and relations (edges).\n"
             "3. Generate a Mermaid diagram showing the key relationships.\n"
-            "4. Write output to `all-might/panorama/overview.mermaid`.\n"
-            "5. Also write `all-might/panorama/graph.json` with the full graph data.\n"
+            "4. Write output to `panorama/overview.mermaid`.\n"
+            "5. Also write `panorama/graph.json` with the full graph data.\n"
             "6. Report summary statistics: node count, edge count, clusters, orphans.\n\n"
             "Focus on the most connected symbols — omit isolated nodes with no relations.\n"
         )
@@ -277,7 +264,7 @@ class ProjectInitializer:
         # /graph-report
         (commands_dir / "graph-report.md").write_text(
             "Generate a graph intelligence report.\n\n"
-            "Run `allmight report` to produce `all-might/panorama/GRAPH_REPORT.md`.\n"
+            "Run `allmight report` to produce `panorama/GRAPH_REPORT.md`.\n"
             "The report includes:\n"
             "- Overview metrics (nodes, edges, density)\n"
             "- God nodes (most connected symbols)\n"
@@ -291,7 +278,7 @@ class ProjectInitializer:
             "Add a new SMAK index to the workspace configuration.\n\n"
             "Usage: `/add-index --name <name> --description \"desc\" --paths <path>`\n\n"
             "Run `allmight config add-index --name <name> --description \"...\" --paths <path>`.\n"
-            "This updates both `workspace_config.yaml` and `all-might/config.yaml`.\n"
+            "This updates `config.yaml`.\n"
             "After adding, run `/ingest --index <name>` to populate the vector store.\n"
         )
 
@@ -300,7 +287,7 @@ class ProjectInitializer:
             "Remove a SMAK index from the workspace configuration.\n\n"
             "Usage: `/remove-index --name <name>`\n\n"
             "Run `allmight config remove-index --name <name>`.\n"
-            "This updates both `workspace_config.yaml` and `all-might/config.yaml`.\n"
+            "This updates `config.yaml`.\n"
         )
 
         # /list-indices
@@ -311,10 +298,8 @@ class ProjectInitializer:
         )
 
     def _update_claude_md(self, root: Path, manifest: ProjectManifest) -> None:
-        """Append All-Might baseline instructions to .claude/CLAUDE.md."""
-        claude_dir = root / ".claude"
-        claude_dir.mkdir(exist_ok=True)
-        claude_md = claude_dir / "CLAUDE.md"
+        """Append All-Might baseline instructions to CLAUDE.md at project root."""
+        claude_md = root / "CLAUDE.md"
 
         marker = "<!-- ALL-MIGHT -->"
         allmight_section = f"""{marker}
@@ -341,29 +326,32 @@ This folder is a **standalone All-Might workspace hub** — it is decoupled from
 
 ```
 <this folder>/                        ← Claude Code project root
-├── workspace_config.yaml             ← Index definitions (points to source paths)
+├── config.yaml                       ← Project metadata + index definitions
+├── CLAUDE.md                         ← This file (agent constitution)
+├── enrichment/tracker.yaml           ← Power tracker
+├── panorama/                         ← Graph exports
 ├── smak/                             ← FAISS vector databases (built by smak ingest)
-├── .claude/                          ← Skills, commands, CLAUDE.md
-└── all-might/                        ← Workspace metadata, enrichment tracker
+└── .claude/                          ← Skills, commands
 ```
 
 **Source code is NOT in this folder.** It lives at external paths managed by the project's
-version control system. Indices in `workspace_config.yaml` reference these external paths
+version control system. Indices in `config.yaml` reference these external paths
 (e.g., via `$DDI_ROOT_PATH` in SOS/EDA environments).
 
 | What | Location |
 |------|----------|
 | FAISS databases | `./smak/<index_name>/` (local, built by `smak ingest`) |
-| Index config | `./workspace_config.yaml` (local) |
-| Source code | External paths defined in `workspace_config.yaml` |
+| Index config | `./config.yaml` (local) |
+| Source code | External paths defined in `config.yaml` |
 | Sidecar files | Beside source files at the external path (not in this folder) |
 
 **Key implication for agents**: When you need to read or modify source files, you must
-navigate to the paths listed in `workspace_config.yaml` — they are outside this folder.
+navigate to the paths listed in `config.yaml` — they are outside this folder.
 
 - **Skills**: `.claude/skills/` — `one-for-all` (project map), `enrichment` (protocol)
-- **Workspace**: `all-might/` — config, enrichment tracker, panorama exports
-- **SMAK config**: `workspace_config.yaml` — semantic index definitions
+- **Config**: `config.yaml` — project metadata, semantic index definitions, enrichment settings
+- **Enrichment**: `enrichment/` — Power Level tracker
+- **Panorama**: `panorama/` — graph exports
 
 ### Commands
 
@@ -385,7 +373,7 @@ navigate to the paths listed in `workspace_config.yaml` — they are outside thi
 
 - **NEVER** directly edit `.sidecar.yaml` files. Always use `/enrich` to modify sidecar content.
   Sidecar files have a strict schema that hand-editing will break.
-- **NEVER** directly edit `workspace_config.yaml`. Use `/add-index`, `/remove-index`,
+- **NEVER** directly edit `config.yaml`. Use `/add-index`, `/remove-index`,
   or `allmight config update-index` to modify index configuration.
 - **NEVER** invent symbol UIDs. UIDs follow the format `<file_path>::<symbol_name>`
   (e.g., `src/module.py::ClassName.method_name`). Use `/search` or `/explain` to discover valid UIDs.
@@ -456,10 +444,9 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 ## What this does
 
 1. Re-scan the project directory for structural changes
-2. Update `workspace_config.yaml` with new/changed directories
-3. Regenerate `all-might/config.yaml`
-4. Regenerate all All-Might skills (one-for-all, enrichment)
-5. Optionally trigger SMAK `ingest` for new indices
+2. Update `config.yaml` with new/changed directories and indices
+3. Regenerate all All-Might skills (one-for-all, enrichment)
+4. Optionally trigger SMAK `ingest` for new indices
 
 ## When to use
 
@@ -471,8 +458,8 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 
 1. Run `allmight init {manifest.root_path}` OR manually:
    - Scan the project directory structure
-   - Compare with existing `all-might/config.yaml`
-   - Update `workspace_config.yaml` indices
+   - Compare with existing `config.yaml`
+   - Update indices in `config.yaml`
    - Regenerate `.claude/skills/one-for-all/SKILL.md`
    - Regenerate `.claude/skills/enrichment/SKILL.md`
 2. If new indices were added, run SMAK `ingest` for each new index

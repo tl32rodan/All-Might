@@ -22,7 +22,7 @@ def _mock_run(stdout: str = "{}", returncode: int = 0, stderr: str = ""):
 class TestSmakBridge(unittest.TestCase):
 
     def setUp(self) -> None:
-        self.bridge = SmakBridge(workspace_config="/tmp/workspace_config.yaml")
+        self.bridge = SmakBridge(config="/tmp/config.yaml")
 
     @patch("allmight.bridge.smak_bridge.subprocess.run")
     def test_search_calls_smak_cli(self, mock_run) -> None:
@@ -125,9 +125,9 @@ class TestSmakBridge(unittest.TestCase):
             self.bridge.describe()
         self.assertIn("not found", str(ctx.exception))
 
-    def test_workspace_config_resolved(self) -> None:
-        bridge = SmakBridge(workspace_config="./relative/config.yaml")
-        self.assertTrue(bridge.workspace_config.startswith("/"))
+    def test_config_path_resolved(self) -> None:
+        bridge = SmakBridge(config="./relative/config.yaml")
+        self.assertTrue(bridge.config.startswith("/"))
 
     @patch("allmight.bridge.smak_bridge.subprocess.run")
     def test_all_commands_append_json_flag(self, mock_run) -> None:

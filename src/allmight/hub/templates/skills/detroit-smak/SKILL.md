@@ -38,7 +38,7 @@ The sub-agent launches with **workspace directory as cwd**.  Claude Code's nativ
 `.claude/` loading picks up the workspace's domain context automatically.
 
 What the sub-agent sees:
-- `workspace_config.yaml` — the SMAK index configuration for this domain
+- `config.yaml` — the SMAK index configuration for this domain
 - `smak/` — FAISS databases for semantic search
 - `.claude/CLAUDE.md` — domain-specific knowledge (symbol memory, patterns)
 - `.claude/skills/` — domain-specific skills (if any)

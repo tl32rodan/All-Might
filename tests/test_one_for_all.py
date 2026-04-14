@@ -61,7 +61,7 @@ def project_with_sidecars(initialized_project):
 class TestOneForAllGenerator:
     def test_generate_fresh_project(self, initialized_project):
         """Test generating SKILL.md for a project with no enrichment."""
-        config_path = initialized_project / "all-might" / "config.yaml"
+        config_path = initialized_project / "config.yaml"
         generator = OneForAllGenerator()
         content = generator.generate(config_path)
 
@@ -72,7 +72,7 @@ class TestOneForAllGenerator:
 
     def test_generate_with_sidecars(self, project_with_sidecars):
         """Test that enriched symbols appear in generated SKILL.md."""
-        config_path = project_with_sidecars / "all-might" / "config.yaml"
+        config_path = project_with_sidecars / "config.yaml"
         generator = OneForAllGenerator()
         content = generator.generate(config_path)
 
@@ -82,7 +82,7 @@ class TestOneForAllGenerator:
 
     def test_generate_updates_skill_file(self, initialized_project):
         """Test that the generator writes the SKILL.md file."""
-        config_path = initialized_project / "all-might" / "config.yaml"
+        config_path = initialized_project / "config.yaml"
         generator = OneForAllGenerator()
         generator.generate(config_path)
 
@@ -93,7 +93,7 @@ class TestOneForAllGenerator:
 
     def test_generate_updates_enrichment_skill(self, initialized_project):
         """Test that enrichment protocol is also regenerated."""
-        config_path = initialized_project / "all-might" / "config.yaml"
+        config_path = initialized_project / "config.yaml"
         generator = OneForAllGenerator()
         generator.generate(config_path)
 
@@ -104,7 +104,7 @@ class TestOneForAllGenerator:
 
     def test_generate_updates_commands(self, initialized_project):
         """Test that command files are regenerated."""
-        config_path = initialized_project / "all-might" / "config.yaml"
+        config_path = initialized_project / "config.yaml"
         generator = OneForAllGenerator()
         generator.generate(config_path)
 
@@ -115,7 +115,7 @@ class TestOneForAllGenerator:
 
     def test_power_level_calculation(self, project_with_sidecars):
         """Test that power level is correctly calculated from sidecars."""
-        config_path = project_with_sidecars / "all-might" / "config.yaml"
+        config_path = project_with_sidecars / "config.yaml"
         generator = OneForAllGenerator()
         content = generator.generate(config_path)
 
@@ -124,7 +124,7 @@ class TestOneForAllGenerator:
 
     def test_uses_allmight_commands(self, initialized_project):
         """Test that One For All references All-Might commands, not SMAK MCP."""
-        config_path = initialized_project / "all-might" / "config.yaml"
+        config_path = initialized_project / "config.yaml"
         generator = OneForAllGenerator()
         content = generator.generate(config_path)
 
@@ -138,7 +138,7 @@ class TestOneForAllGenerator:
 
     def test_idempotent_regeneration(self, initialized_project):
         """Test that regenerating twice produces consistent results."""
-        config_path = initialized_project / "all-might" / "config.yaml"
+        config_path = initialized_project / "config.yaml"
         generator = OneForAllGenerator()
         content1 = generator.generate(config_path)
         content2 = generator.generate(config_path)
@@ -149,7 +149,7 @@ class TestOneForAllGenerator:
 
     def test_enrichment_skill_has_schema_reference(self, initialized_project):
         """Test that enrichment skill contains sidecar schema docs and anti-edit warning."""
-        config_path = initialized_project / "all-might" / "config.yaml"
+        config_path = initialized_project / "config.yaml"
         generator = OneForAllGenerator()
         generator.generate(config_path)
 
@@ -161,7 +161,7 @@ class TestOneForAllGenerator:
 
     def test_one_for_all_explains_smak(self, initialized_project):
         """Test that one-for-all skill explains SMAK philosophy."""
-        config_path = initialized_project / "all-might" / "config.yaml"
+        config_path = initialized_project / "config.yaml"
         generator = OneForAllGenerator()
         content = generator.generate(config_path)
 
@@ -170,7 +170,7 @@ class TestOneForAllGenerator:
 
     def test_one_for_all_has_standalone_hub_note(self, initialized_project):
         """Test that one-for-all notes the standalone hub architecture."""
-        config_path = initialized_project / "all-might" / "config.yaml"
+        config_path = initialized_project / "config.yaml"
         generator = OneForAllGenerator()
         content = generator.generate(config_path)
 

@@ -26,7 +26,7 @@ def load_config(path: Path) -> dict:
 
 
 def load_indices(config_path: Path) -> list[IndexSpec]:
-    """Load SMAK indices from a ``workspace_config.yaml`` file."""
+    """Load SMAK indices from a config YAML file."""
     if not config_path.exists():
         return []
     with open(config_path) as f:

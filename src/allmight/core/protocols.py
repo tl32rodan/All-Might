@@ -19,7 +19,7 @@ class Scanner(Protocol):
 
 
 class Initializer(Protocol):
-    """Creates the all-might/ workspace and .claude/ skills from a manifest."""
+    """Creates config.yaml, enrichment/, panorama/, and .claude/ skills from a manifest."""
 
     def initialize(self, manifest: ProjectManifest, smak_path: Path | None = None) -> None: ...
 

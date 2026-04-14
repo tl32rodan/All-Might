@@ -72,11 +72,11 @@ sub-agents do not need to know about online/VC — they just see "source code".
 |   |   +-- sidecar-handling/SKILL.md     <- SOS-based sidecar update SOP
 |   +-- commands/                          <- Agent-invocable commands
 |
-|-- all-might/config.yaml                  <- Workspace registry
+|-- config.yaml                            <- Workspace registry
 |
 +-- workspaces/
     |-- <name>/                            <- One workspace per domain/flow
-    |   |-- workspace_config.yaml          <- SMAK index config for this domain
+    |   |-- config.yaml                    <- SMAK index config for this domain
     |   |-- smak/                          <- FAISS databases (local)
     |   |-- .claude/                       <- Domain-specific context (loaded by sub-agent)
     |   |   |-- CLAUDE.md                  <- Domain knowledge, symbol memory
@@ -101,7 +101,7 @@ need to know about online/VC/SOS — it just works with "source code at these pa
 
 - **NEVER** directly edit `.sidecar.yaml` files.  Use the `sidecar-handling` skill
   (which goes through SOS) or `/enrich` to modify sidecar content.
-- **NEVER** directly edit `workspace_config.yaml`.  Use `allmight init` or
+- **NEVER** directly edit `config.yaml`.  Use `allmight init` or
   `allmight config` CLI commands to manage index configuration.
 - **NEVER** invent symbol UIDs.  UIDs follow the format `<file_path>::<symbol_name>`.
   Use `/search` or `/explain` to discover valid UIDs.

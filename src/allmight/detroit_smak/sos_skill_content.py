@@ -13,10 +13,11 @@ This All-Might folder is a **standalone workspace hub** — it is NOT inside the
 
 ```
 <this folder>/                        ← All-Might hub (Claude Code project root)
-├── workspace_config.yaml             ← Index definitions → point to $DDI_ROOT_PATH/...
+├── config.yaml                       ← Project metadata + index definitions
+├── enrichment/tracker.yaml           ← Power tracker
+├── panorama/                         ← Graph exports
 ├── smak/                             ← FAISS databases (local, built by smak ingest)
-├── .claude/skills/                   ← Skills loaded by agent
-└── all-might/                        ← Enrichment tracker, panorama exports
+└── .claude/skills/                   ← Skills loaded by agent
 
 $DDI_ROOT_PATH (e.g. /CAD/stdcell)    ← Source code (read-only, SOS online)
 /users/you/ws_xxx/                    ← SOS workspace (read-write, personal checkout)
@@ -27,7 +28,7 @@ $DDI_ROOT_PATH (e.g. /CAD/stdcell)    ← Source code (read-only, SOS online)
 - Source code and sidecars are **outside this folder** — at SOS-managed paths
 - FAISS databases and config are **inside this folder**
 - When reading/modifying source or sidecars, navigate to the SOS path — not here
-- `workspace_config.yaml` is the bridge between this local hub and remote source paths
+- `config.yaml` is the bridge between this local hub and remote source paths
 
 ## 1. WHAT CLIOSOFT SOS IS
 
@@ -91,7 +92,7 @@ SMAK's `path_env` feature bridges the gap between SOS's multi-path model and SMA
 ### Config setup
 
 ```yaml
-# workspace_config.yaml
+# config.yaml (indices section)
 indices:
   - name: rtl_code
     uri: ./smak/rtl_code
@@ -200,13 +201,13 @@ All sidecar modifications in SOS workspaces go through **All-Might commands**:
 
 For the full enrichment protocol, see the `enrichment-protocol` skill.
 
-## 9. WORKSPACE_CONFIG.YAML MANAGEMENT
+## 9. CONFIG.YAML MANAGEMENT
 
-`workspace_config.yaml` defines which source paths to index. It lives in the All-Might hub folder.
+`config.yaml` defines project metadata and which source paths to index. It lives in the All-Might hub folder.
 
 ### Adding or modifying indices
 
-**Always use All-Might commands** to modify `workspace_config.yaml`:
+**Always use All-Might commands** to modify `config.yaml`:
 
 ```bash
 # Add a new index
@@ -227,10 +228,9 @@ allmight config remove-index --name rtl_code
 allmight config list-indices
 ```
 
-**NEVER** edit `workspace_config.yaml` by hand. The commands ensure:
+**NEVER** edit `config.yaml` by hand. The commands ensure:
 - Correct YAML structure and field names
 - Consistent `uri` generation (`./smak/<index_name>`)
-- Sync between `workspace_config.yaml` and `all-might/config.yaml`
 
 ### Required fields per index
 

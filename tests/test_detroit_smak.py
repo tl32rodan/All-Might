@@ -63,19 +63,18 @@ class TestProjectInitializer:
         initializer = ProjectInitializer()
         initializer.initialize(manifest, smak_path=None)
 
-        assert (sample_project / "all-might").is_dir()
-        assert (sample_project / "all-might" / "config.yaml").exists()
-        assert (sample_project / "all-might" / "enrichment" / "tracker.yaml").exists()
-        assert (sample_project / "all-might" / "panorama").is_dir()
+        assert (sample_project / "config.yaml").exists()
+        assert (sample_project / "enrichment" / "tracker.yaml").exists()
+        assert (sample_project / "panorama").is_dir()
 
-    def test_creates_workspace_config(self, sample_project):
+    def test_creates_config_yaml(self, sample_project):
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
         initializer.initialize(manifest, smak_path=None)
 
-        assert (sample_project / "workspace_config.yaml").exists()
+        assert (sample_project / "config.yaml").exists()
 
     def test_creates_skills(self, sample_project):
         scanner = ProjectScanner()
@@ -130,7 +129,7 @@ class TestProjectInitializer:
         initializer = ProjectInitializer()
         initializer.initialize(manifest, smak_path=None)
 
-        claude_md = sample_project / ".claude" / "CLAUDE.md"
+        claude_md = sample_project / "CLAUDE.md"
         assert claude_md.exists()
         content = claude_md.read_text()
         assert "ALL-MIGHT" in content
@@ -153,8 +152,8 @@ class TestProjectInitializer:
         assert "enrich_symbol(" not in one_for_all
         assert "describe_workspace(" not in one_for_all
 
-    def test_workspace_config_has_uri(self, sample_project):
-        """Test that generated workspace_config.yaml includes uri for each index."""
+    def test_config_yaml_has_uri(self, sample_project):
+        """Test that generated config.yaml includes uri for each index."""
         import yaml
 
         scanner = ProjectScanner()
@@ -163,7 +162,7 @@ class TestProjectInitializer:
         initializer = ProjectInitializer()
         initializer.initialize(manifest, smak_path=None)
 
-        with open(sample_project / "workspace_config.yaml") as f:
+        with open(sample_project / "config.yaml") as f:
             config = yaml.safe_load(f)
 
         for idx in config["indices"]:
@@ -193,11 +192,11 @@ class TestProjectInitializer:
         initializer = ProjectInitializer()
         initializer.initialize(manifest, smak_path=None)
 
-        claude_md = sample_project / ".claude" / "CLAUDE.md"
+        claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
         assert "NEVER" in content
         assert "sidecar" in content.lower()
-        assert "workspace_config" in content
+        assert "config.yaml" in content
 
     def test_claude_md_explains_smak(self, sample_project):
         """Test that CLAUDE.md explains what SMAK is."""
@@ -207,7 +206,7 @@ class TestProjectInitializer:
         initializer = ProjectInitializer()
         initializer.initialize(manifest, smak_path=None)
 
-        claude_md = sample_project / ".claude" / "CLAUDE.md"
+        claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
         assert "What is SMAK" in content
         assert "semantic search" in content.lower() or "vector store" in content.lower()
@@ -233,14 +232,14 @@ class TestProjectInitializer:
         initializer = ProjectInitializer()
         initializer.initialize(manifest, smak_path=None)
 
-        claude_md = sample_project / ".claude" / "CLAUDE.md"
+        claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
         assert "standalone" in content.lower()
-        assert "workspace_config.yaml" in content
+        assert "config.yaml" in content
         assert "smak/" in content or "FAISS" in content
 
     def test_sos_skill_has_standalone_hub_and_config_management(self, sample_project):
-        """Test that SOS skill includes standalone hub and workspace_config guidance."""
+        """Test that SOS skill includes standalone hub and config.yaml guidance."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
         manifest.has_path_env = True
@@ -250,7 +249,7 @@ class TestProjectInitializer:
 
         sos_skill = (sample_project / ".claude" / "skills" / "sos-smak" / "SKILL.md").read_text()
         assert "STANDALONE HUB" in sos_skill
-        assert "WORKSPACE_CONFIG" in sos_skill
+        assert "CONFIG.YAML" in sos_skill
         assert "add-index" in sos_skill
         assert "frozen" in sos_skill.lower() or "snapshot" in sos_skill.lower()
 
@@ -262,7 +261,7 @@ class TestProjectInitializer:
         initializer = ProjectInitializer()
         initializer.initialize(manifest, smak_path=None)
 
-        claude_md = sample_project / ".claude" / "CLAUDE.md"
+        claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
         assert "online" in content.lower()
         assert "sos log" in content.lower() or "revision log" in content.lower()
@@ -292,5 +291,5 @@ class TestProjectInitializer:
         initializer.initialize(manifest, smak_path=None)
 
         # Should still work — no errors, files still exist
-        assert (sample_project / "all-might" / "config.yaml").exists()
+        assert (sample_project / "config.yaml").exists()
         assert (sample_project / ".claude" / "skills" / "one-for-all" / "SKILL.md").exists()

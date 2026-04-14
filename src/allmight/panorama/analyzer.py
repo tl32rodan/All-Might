@@ -43,15 +43,14 @@ class PanoramaAnalyzer:
         """Build the knowledge graph and compute metrics.
 
         Args:
-            config_path: Path to all-might/config.yaml
+            config_path: Path to config.yaml
 
         Returns:
             A KnowledgeGraph with nodes, edges, and metrics.
         """
         config = load_config(config_path)
-        root = Path(config.get("project", {}).get("root", config_path.parent.parent))
-        smak_config_path = config.get("smak", {}).get("config_path", "workspace_config.yaml")
-        indices = load_indices(root / smak_config_path)
+        root = Path(config.get("project", {}).get("root", config_path.parent))
+        indices = load_indices(config_path)
 
         nodes: list[GraphNode] = []
         edges: list[GraphEdge] = []
