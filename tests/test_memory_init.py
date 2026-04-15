@@ -9,7 +9,7 @@ from allmight.memory.initializer import MemoryInitializer
 
 @pytest.fixture
 def project_root(tmp_path):
-    """A minimal project root with config.yaml."""
+    """A minimal project root with config.yaml and one-for-all SKILL.md."""
     config = {
         "project": {"name": "test-project", "root": str(tmp_path)},
         "indices": [
@@ -18,6 +18,10 @@ def project_root(tmp_path):
     }
     with open(tmp_path / "config.yaml", "w") as f:
         yaml.dump(config, f)
+    # Create the one-for-all SKILL.md that memory init appends to
+    skill_dir = tmp_path / ".claude" / "skills" / "one-for-all"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: one-for-all\n---\n\n# One For All\n")
     return tmp_path
 
 
@@ -30,34 +34,50 @@ class TestMemoryInitializer:
         assert (project_root / "memory" / "episodes").is_dir()
         assert (project_root / "memory" / "semantic").is_dir()
 
-    def test_adds_smak_indices(self, project_root):
+    def test_stores_in_memory_config(self, project_root):
+        """Memory stores should be in memory/config.yaml, NOT in workspace config.yaml."""
         MemoryInitializer().initialize(project_root)
 
+        # Memory stores must be in memory/config.yaml
+        with open(project_root / "memory" / "config.yaml") as f:
+            mem_config = yaml.safe_load(f)
+        assert "episodes" in mem_config.get("stores", {})
+        assert "semantic_facts" in mem_config.get("stores", {})
+
+        # Memory stores must NOT be in workspace config.yaml
         with open(project_root / "config.yaml") as f:
-            config = yaml.safe_load(f)
+            ws_config = yaml.safe_load(f)
+        index_names = [idx["name"] for idx in ws_config.get("indices", [])]
+        assert "episodes" not in index_names
+        assert "semantic_facts" not in index_names
 
-        index_names = [idx["name"] for idx in config["indices"]]
-        assert "episodes" in index_names
-        assert "semantic_facts" in index_names
-
-    def test_generates_memory_skill(self, project_root):
+    def test_smak_config_generated(self, project_root):
+        """Internal smak_config.yaml should be generated for search engine."""
         MemoryInitializer().initialize(project_root)
-        skill_path = project_root / ".claude" / "skills" / "memory" / "SKILL.md"
+        assert (project_root / "memory" / "smak_config.yaml").exists()
+
+    def test_memory_store_directory_created(self, project_root):
+        """The memory/store/ directory should be created."""
+        MemoryInitializer().initialize(project_root)
+        assert (project_root / "memory" / "store").is_dir()
+
+    def test_memory_appended_to_one_for_all(self, project_root):
+        """Memory section should be appended to one-for-all SKILL.md."""
+        MemoryInitializer().initialize(project_root)
+        skill_path = project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md"
         assert skill_path.exists()
         content = skill_path.read_text()
-        assert "agent-memory" in content
-        assert "Working Memory" in content
-        assert "Episodic Memory" in content
-        assert "Semantic Memory" in content
+        assert "Agent Memory" in content
+        assert "/remember" in content
+        assert "/recall" in content
+        assert "/consolidate" in content
 
     def test_generates_commands(self, project_root):
         MemoryInitializer().initialize(project_root)
         commands_dir = project_root / ".claude" / "commands"
-        assert (commands_dir / "memory-observe.md").exists()
-        assert (commands_dir / "memory-recall.md").exists()
-        assert (commands_dir / "memory-update.md").exists()
-        assert (commands_dir / "memory-consolidate.md").exists()
-        assert (commands_dir / "memory-status.md").exists()
+        assert (commands_dir / "remember.md").exists()
+        assert (commands_dir / "recall.md").exists()
+        assert (commands_dir / "consolidate.md").exists()
 
     def test_updates_claude_md(self, project_root):
         # Create existing CLAUDE.md
@@ -75,17 +95,18 @@ class TestMemoryInitializer:
         content = (project_root / "CLAUDE.md").read_text()
         assert "Agent Memory System" in content
 
-    def test_idempotent_indices(self, project_root):
-        """Running init twice should not duplicate indices."""
+    def test_idempotent_stores(self, project_root):
+        """Running init twice should not duplicate store definitions."""
         init = MemoryInitializer()
         init.initialize(project_root)
         init.initialize(project_root)
 
-        with open(project_root / "config.yaml") as f:
-            config = yaml.safe_load(f)
+        with open(project_root / "memory" / "config.yaml") as f:
+            mem_config = yaml.safe_load(f)
 
-        episode_indices = [i for i in config["indices"] if i["name"] == "episodes"]
-        assert len(episode_indices) == 1
+        stores = mem_config.get("stores", {})
+        assert "episodes" in stores
+        assert "semantic_facts" in stores
 
     def test_opencode_agents_md_symlink(self, project_root):
         """Memory init should create AGENTS.md → CLAUDE.md symlink."""

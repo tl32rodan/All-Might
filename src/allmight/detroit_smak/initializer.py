@@ -1,7 +1,7 @@
 """Detroit SMAK Initializer — one punch creates the entire workspace.
 
 Takes a ProjectManifest from the Scanner and generates:
-- config.yaml (merged project metadata + SMAK indices)
+- config.yaml (merged project metadata + corpus definitions)
 - enrichment/ and panorama/ directories
 - .claude/skills/ (layered skill composition)
 - .claude/commands/ (slash commands)
@@ -110,15 +110,14 @@ class ProjectInitializer:
         manifest: ProjectManifest,
         smak_path: Path | None,
     ) -> None:
-        """Install SMAK environment skills into .claude/skills/.
+        """Install environment skills into .claude/skills/.
 
-        Phase 7: Agents no longer call SMAK MCP tools directly — they use
-        All-Might commands instead. So we do NOT install smak/SKILL.md
-        (the HOW layer). We only install sos-smak/SKILL.md for SOS
-        environments, since it provides path resolution rules.
+        Agents use All-Might commands for all operations. We only install
+        sos-smak/SKILL.md for SOS environments, since it provides path
+        resolution rules.
 
         SOS skill content is bundled in All-Might — no runtime dependency
-        on SMAK skill files being present on disk.
+        on external skill files being present on disk.
         """
         if not manifest.has_path_env:
             return
@@ -132,9 +131,9 @@ class ProjectInitializer:
             skills_dir / "sos-smak" / "SKILL.md",
             name="sos-smak-skill",
             description=(
-                "CliosoftSOS environment guide for SMAK. Teaches agents the "
+                "CliosoftSOS environment guide. Teaches agents the "
                 "internal EDA version control workflow — online vs. version "
-                "control vs. SOS workspace — and how to correctly use SMAK "
+                "control vs. SOS workspace — and how to correctly use All-Might "
                 "(path_env, sidecar editing, ingestion) within this environment. "
                 "Load this skill when working in projects that use CliosoftSOS "
                 "and $DDI_ROOT_PATH."
@@ -143,162 +142,188 @@ class ProjectInitializer:
         )
 
     def _generate_allmight_skills(self, root: Path, manifest: ProjectManifest) -> None:
-        """Generate All-Might skills (WHAT + WHEN/WHY + bootstrap layers)."""
+        """Generate All-Might skill — one unified skill that covers everything."""
         skills_dir = root / ".claude" / "skills"
         skills_dir.mkdir(parents=True, exist_ok=True)
 
-        # detroit-smak/SKILL.md — bootstrap (user-triggered)
-        self._write_skill(
-            skills_dir / "detroit-smak" / "SKILL.md",
-            name="detroit-smak",
-            description=(
-                "Project knowledge graph initialization. Re-scan project structure, "
-                "regenerate SMAK config and All-Might workspace. "
-                "Use when the project structure has significantly changed."
-            ),
-            disable_model_invocation=True,
-            body=self._detroit_smak_skill_body(manifest),
-        )
-
-        # one-for-all/SKILL.md — project knowledge map (auto-loaded)
+        # one-for-all/SKILL.md — the single unified skill (auto-loaded)
         self._write_skill(
             skills_dir / "one-for-all" / "SKILL.md",
             name="one-for-all",
             description=(
-                "Project knowledge graph guide. Provides project structure, "
-                "SMAK index reference, key symbols, and current Power Level. "
+                "All-Might knowledge guide. Project structure, corpus reference, "
+                "enrichment protocol, key symbols, and Power Level. "
                 "Auto-loaded when agent needs to understand the project."
             ),
             body=self._one_for_all_skill_body(manifest),
         )
 
-        # enrichment/SKILL.md — enrichment protocol (auto-loaded)
-        self._write_skill(
-            skills_dir / "enrichment" / "SKILL.md",
-            name="enrichment-protocol",
-            description=(
-                "Knowledge enrichment protocol. Guides agents on when and how "
-                "to contribute to the knowledge graph while working. "
-                "Auto-loaded when agent reads or modifies code."
-            ),
-            body=self._enrichment_skill_body(),
-        )
-
     def _generate_commands(self, root: Path, manifest: ProjectManifest) -> None:
-        """Generate .claude/commands/ for slash-command operations."""
+        """Generate .claude/commands/ — thick operational guides."""
         commands_dir = root / ".claude" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
 
-        # /power-level
-        (commands_dir / "power-level.md").write_text(
-            "Analyze the project's knowledge graph coverage (Power Level).\n\n"
-            "1. Read `enrichment/tracker.yaml` for the last known Power Level.\n"
-            "2. Scan all sidecar YAML files (`.*.sidecar.yaml`) across all SMAK indices.\n"
-            "3. For each sidecar, count total symbols vs symbols with non-empty `intent`.\n"
-            "4. Count total relations across all sidecars.\n"
-            "5. Report the overall coverage percentage and per-index breakdown.\n"
-            "6. Update `enrichment/tracker.yaml` with the new metrics.\n\n"
-            "Display results in a clear table format with coverage bars.\n"
-        )
+        (commands_dir / "search.md").write_text("""\
+Search the codebase by semantic meaning.
 
-        # /regenerate
-        (commands_dir / "regenerate.md").write_text(
-            "Regenerate the One For All skill with the latest project state.\n\n"
-            "1. Read `config.yaml` for project configuration and SMAK index definitions.\n"
-            "2. Scan all sidecar YAML files to find enriched symbols.\n"
-            "3. Calculate current Power Level.\n"
-            "4. Regenerate `.claude/skills/one-for-all/SKILL.md` with:\n"
-            "   - Updated project overview\n"
-            "   - Current index reference with descriptions\n"
-            "   - Key enriched symbols summary (top symbols by relation count)\n"
-            "   - Current Power Level metrics\n"
-            "   - Updated architecture notes from high-coverage areas\n"
-            "5. Update `enrichment/tracker.yaml` with new metrics.\n\n"
-            "Report what changed in the regenerated skill.\n"
-        )
+## How to execute
 
-        # /panorama
-        (commands_dir / "panorama.md").write_text(
-            "Export the knowledge graph as a panoramic visualization.\n\n"
-            "1. Scan all sidecar YAML files across all SMAK indices.\n"
-            "2. Build a graph of symbols (nodes) and relations (edges).\n"
-            "3. Generate a Mermaid diagram showing the key relationships.\n"
-            "4. Write output to `panorama/overview.mermaid`.\n"
-            "5. Also write `panorama/graph.json` with the full graph data.\n"
-            "6. Report summary statistics: node count, edge count, clusters, orphans.\n\n"
-            "Focus on the most connected symbols — omit isolated nodes with no relations.\n"
-        )
+```bash
+smak search "<query>" --config config.yaml --index source_code --top-k 5 --json
+```
 
-        # /search
-        (commands_dir / "search.md").write_text(
-            "Search the knowledge graph via All-Might.\n\n"
-            "Usage: `/search <query>` or `/search <query> --index <index>`\n\n"
-            "Run `allmight search \"<query>\" --index source_code` to perform semantic search.\n"
-            "Results include SMAK hits. Use `allmight explain <uid>` for graph context on any result.\n"
-        )
+To search across all corpora at once:
+```bash
+smak search-all "<query>" --config config.yaml --top-k 3 --json
+```
 
-        # /enrich
-        (commands_dir / "enrich.md").write_text(
-            "Enrich a symbol with intent and/or relations via All-Might.\n\n"
-            "Usage: `/enrich --file <path> --symbol <name> --intent \"description\"`\n\n"
-            "Run `allmight enrich --file <path> --symbol <name> --intent \"...\"` to annotate.\n"
-            "Add `--relation <uid>` (repeatable) to link to other symbols.\n"
-            "Add `--bidirectional` to create the reverse link too.\n"
-        )
+To look up a specific symbol by UID:
+```bash
+smak lookup "<file_path>::<symbol_name>" --config config.yaml --index source_code --json
+```
 
-        # /ingest
-        (commands_dir / "ingest.md").write_text(
-            "Trigger SMAK ingest to update the vector store.\n\n"
-            "Usage: `/ingest` or `/ingest --index <index>`\n\n"
-            "Run `allmight ingest` to re-ingest all indices, or\n"
-            "`allmight ingest --index source_code` for a specific index.\n"
-        )
+## What to expect
 
-        # /explain
-        (commands_dir / "explain.md").write_text(
-            "Show full graph context for a symbol.\n\n"
-            "Usage: `/explain <uid>`\n\n"
-            "Run `allmight explain \"<path>::<symbol>\"` to see:\n"
-            "- Intent, outgoing/incoming relations, degree\n"
-            "- Whether it's a god node (highly connected)\n"
-            "- Which community/cluster it belongs to\n"
-        )
+JSON output with a `results` array. Each result contains:
+- `id` — the matched chunk/symbol identifier
+- `text` or `content` — the matched source code
+- `score` — relevance score (0–1)
+- `metadata` — file path, symbol name, etc.
 
-        # /graph-report
-        (commands_dir / "graph-report.md").write_text(
-            "Generate a graph intelligence report.\n\n"
-            "Run `allmight report` to produce `panorama/GRAPH_REPORT.md`.\n"
-            "The report includes:\n"
-            "- Overview metrics (nodes, edges, density)\n"
-            "- God nodes (most connected symbols)\n"
-            "- Communities (connected components)\n"
-            "- Orphan nodes (symbols with no relations)\n"
-            "- Cross-index relations\n"
-        )
+## After searching
 
-        # /add-index
-        (commands_dir / "add-index.md").write_text(
-            "Add a new SMAK index to the workspace configuration.\n\n"
-            "Usage: `/add-index --name <name> --description \"desc\" --paths <path>`\n\n"
-            "Run `allmight config add-index --name <name> --description \"...\" --paths <path>`.\n"
-            "This updates `config.yaml`.\n"
-            "After adding, run `/ingest --index <name>` to populate the vector store.\n"
-        )
+- If a result has a sidecar (`.{filename}.sidecar.yaml` beside it), read the
+  sidecar to see its enriched intent and relations.
+- If a result has NO sidecar or missing intent, consider enriching it with `/enrich`.
+- Present results to the user in terms of "knowledge graph" — do not mention SMAK.
+""")
 
-        # /remove-index
-        (commands_dir / "remove-index.md").write_text(
-            "Remove a SMAK index from the workspace configuration.\n\n"
-            "Usage: `/remove-index --name <name>`\n\n"
-            "Run `allmight config remove-index --name <name>`.\n"
-            "This updates `config.yaml`.\n"
-        )
+        (commands_dir / "enrich.md").write_text("""\
+Annotate a code symbol with intent and/or relations.
 
-        # /list-indices
-        (commands_dir / "list-indices.md").write_text(
-            "List all SMAK indices in the workspace configuration.\n\n"
-            "Run `allmight config list-indices` to see all configured indices.\n"
-            "Add `--json` for machine-readable output.\n"
-        )
+## How to execute
+
+Set intent (what the symbol does and why):
+```bash
+smak enrich --config config.yaml --index source_code \\
+    --file <relative_path> --symbol "<SymbolName>" \\
+    --intent "Human-readable description of purpose"
+```
+
+Add a relation to another symbol:
+```bash
+smak enrich --config config.yaml --index source_code \\
+    --file <relative_path> --symbol "<SymbolName>" \\
+    --relation "<other_file>::<OtherSymbol>" --bidirectional
+```
+
+## When to enrich
+
+- **Reading code**: symbol has no intent → add one
+- **Discovering relationships**: two entities are related → link them
+- **After modifying code**: existing intent may be stale → update it
+
+## Priority
+
+1. Entry points — main functions, API handlers, CLI commands
+2. Complex logic — algorithms, state machines, non-obvious flow
+3. Cross-cutting concerns — error handling, auth, logging
+4. Frequently modified files (high git activity)
+
+Skip auto-generated code, simple getters, and obvious boilerplate.
+
+## What to expect
+
+- A `.{filename}.sidecar.yaml` file is created/updated beside the source file
+- The sidecar contains structured YAML with `symbols[].intent` and `symbols[].relations`
+- Do NOT edit sidecar files by hand — always use `smak enrich`
+
+## UID format
+
+`<file_path>::<symbol_name>` — e.g., `src/auth.py::AuthHandler.validate`
+- File path is relative to project root
+- Dot notation for nested symbols: `ClassName.method_name`
+- Wildcard `*` for entire file: `path/to/file.py::*`
+- Never invent UIDs — use `/search` to discover valid ones
+""")
+
+        (commands_dir / "ingest.md").write_text("""\
+Rebuild the search corpus from source files.
+
+## When to run
+
+- **First time**: after `allmight init` to build the initial index
+- **After significant changes**: new files added, major refactoring
+- **After adding a corpus**: to populate the new index
+
+You do NOT need to re-ingest after enrichment — sidecars are separate
+from the search index.
+
+## How to execute
+
+Rebuild all corpora:
+```bash
+smak ingest --config config.yaml --json
+```
+
+Rebuild a specific corpus:
+```bash
+smak ingest --config config.yaml --index source_code --json
+```
+
+## What to expect
+
+- The `./smak/<corpus_name>/` directory is populated with search index data
+- `/search` will return results from the newly ingested files
+- Ingestion may take a few minutes for large codebases
+
+## Troubleshooting
+
+- If `smak` is not found, ensure SMAK is installed and on PATH
+- Check `smak health --config config.yaml --json` for diagnostics
+- List available corpora: `smak describe --config config.yaml --json`
+""")
+
+        (commands_dir / "status.md").write_text("""\
+Show the knowledge graph coverage and system health.
+
+## How to execute
+
+1. Scan all sidecar YAML files (`.*.sidecar.yaml`) across all paths
+   defined in `config.yaml` indices.
+2. For each sidecar, count symbols and check which have non-empty `intent`.
+3. Calculate coverage: `enriched_symbols / total_symbols * 100`.
+4. Read `enrichment/tracker.yaml` for historical data.
+5. If `memory/config.yaml` exists (memory system enabled), also report:
+   - Working memory: count words in `memory/working/MEMORY.md`
+   - Episodic memory: count files in `memory/episodes/`
+   - Semantic memory: count files in `memory/semantic/`
+
+## What to report
+
+```
+Power Level: XX.X%
+  source_code: XX.X% (N/M symbols enriched)
+  tests:       XX.X% (N/M symbols enriched)
+  Total relations: N
+
+Memory (if enabled):
+  Episodes: N total, M unconsolidated
+  Facts: N total, avg confidence X.XX
+```
+
+## When to run
+
+- After enrichment work to see progress
+- Periodically to track coverage trends
+- When the user asks "how healthy is the knowledge graph?"
+
+## After checking status
+
+- If coverage is low, prioritize `/enrich` on entry points
+- If many episodes are unconsolidated, suggest `/consolidate`
+- Update `enrichment/tracker.yaml` with the new snapshot
+""")
 
     def _update_claude_md(self, root: Path, manifest: ProjectManifest) -> None:
         """Append All-Might baseline instructions to CLAUDE.md at project root."""
@@ -308,99 +333,30 @@ class ProjectInitializer:
         allmight_section = f"""{marker}
 ## All-Might: Active Knowledge Graph
 
-This project uses **All-Might** as the single interface for knowledge graph operations.
-Agents interact with SMAK through All-Might commands — not SMAK MCP tools directly.
+This project has an **All-Might knowledge graph** — semantic search,
+symbol enrichment, and graph intelligence across the codebase.
 
-### What is SMAK
+### What you can do
 
-**SMAK** (Semantic Mesh Augmented Kernel) is a semantic search engine and vector store for code.
-It indexes source files into FAISS vector indices, enables natural-language search over code,
-and stores per-symbol metadata in **sidecar YAML files** (`.{{filename}}.sidecar.yaml`).
+| Command | What it does |
+|---------|-------------|
+| `/search <query>` | Search the codebase by meaning |
+| `/enrich` | Annotate a symbol with intent and relations |
+| `/ingest` | Rebuild the search corpus |
+| `/status` | Check enrichment coverage and health |
 
-**All-Might** sits on top of SMAK as the **active knowledge graph layer**:
-- **SMAK** handles indexing, vector search, and sidecar file I/O
-- **All-Might** provides the agent-facing commands, enrichment protocol, and graph intelligence
+### How to learn more
 
-Mental model: `init → ingest → search → enrich → knowledge graph`
+The `one-for-all` skill (auto-loaded in `.claude/skills/`) contains the
+complete operational guide: how the search engine works, how to enrich
+symbols, sidecar file format, and all CLI commands.
 
-### Workspace Architecture
+### Getting Started
 
-This folder is a **standalone All-Might workspace hub** — it is decoupled from source code.
-
-```
-<this folder>/                        ← Claude Code project root
-├── config.yaml                       ← Project metadata + index definitions
-├── CLAUDE.md                         ← This file (agent constitution)
-├── enrichment/tracker.yaml           ← Power tracker
-├── panorama/                         ← Graph exports
-├── smak/                             ← FAISS vector databases (built by smak ingest)
-└── .claude/                          ← Skills, commands
-```
-
-**Source code is NOT in this folder.** It lives at external paths managed by the project's
-version control system. Indices in `config.yaml` reference these external paths
-(e.g., via `$DDI_ROOT_PATH` in SOS/EDA environments).
-
-| What | Location |
-|------|----------|
-| FAISS databases | `./smak/<index_name>/` (local, built by `smak ingest`) |
-| Index config | `./config.yaml` (local) |
-| Source code | External paths defined in `config.yaml` |
-| Sidecar files | Beside source files at the external path (not in this folder) |
-
-**Key implication for agents**: When you need to read or modify source files, you must
-navigate to the paths listed in `config.yaml` — they are outside this folder.
-
-- **Skills**: `.claude/skills/` — `one-for-all` (project map), `enrichment` (protocol)
-- **Config**: `config.yaml` — project metadata, semantic index definitions, enrichment settings
-- **Enrichment**: `enrichment/` — Power Level tracker
-- **Panorama**: `panorama/` — graph exports
-
-### Commands
-
-| Command | Purpose |
-|---------|---------|
-| `/search <query>` | Semantic search with graph context |
-| `/enrich` | Annotate a symbol with intent/relations |
-| `/explain <uid>` | Full graph context for a symbol |
-| `/ingest` | Trigger SMAK vector store ingest |
-| `/power-level` | Knowledge graph coverage metrics |
-| `/regenerate` | Regenerate One For All skill |
-| `/panorama` | Export knowledge graph visualization |
-| `/graph-report` | Generate graph intelligence report |
-| `/add-index` | Add a new SMAK index |
-| `/remove-index` | Remove an existing index |
-| `/list-indices` | List all configured indices |
-
-### Guardrails — Critical Rules
-
-- **NEVER** directly edit `.sidecar.yaml` files. Always use `/enrich` to modify sidecar content.
-  Sidecar files have a strict schema that hand-editing will break.
-- **NEVER** directly edit `config.yaml`. Use `/add-index`, `/remove-index`,
-  or `allmight config update-index` to modify index configuration.
-- **NEVER** invent symbol UIDs. UIDs follow the format `<file_path>::<symbol_name>`
-  (e.g., `src/module.py::ClassName.method_name`). Use `/search` or `/explain` to discover valid UIDs.
-- **ALWAYS** use All-Might commands for knowledge graph operations.
-  SMAK MCP tools exist but are internal plumbing — agents must not call them directly.
-
-### Online vs. Version Control
-
-**SMAK indexes online (Layer 1) only.** All `/search` and `/explain` results come from online.
-Version control (VC) releases are frozen snapshots — they do NOT have separate FAISS indices.
-
-To check whether a feature exists in a specific VC release:
-1. `/search` on online to find the relevant files/symbols
-2. Use `sos log` / `sos history` on the file to find the revision log entry
-3. Check if the **same revision log string** exists in the target VC
-4. Same log → same code → feature is present in that VC
-
-See the `sos-smak` skill for the full SOS workflow and version control details.
-
-### Quick Start
-1. The `one-for-all` skill auto-loads with project context
-2. Use `/search` to explore, `/explain` for deep context
-3. Follow the `enrichment-protocol` skill to contribute knowledge as you work
-4. Run `/power-level` to check coverage, `/regenerate` to update skills
+1. `/ingest` — build the search corpus (first time)
+2. `/search "query"` — explore the codebase
+3. `/enrich` — annotate symbols as you learn them
+4. `/status` — track progress
 """
 
         if claude_md.exists():
@@ -418,46 +374,27 @@ See the `sos-smak` skill for the full SOS workflow and version control details.
     def _create_opencode_compat(self, root: Path) -> None:
         """Create OpenCode-compatible symlinks.
 
-        OpenCode prefers ``AGENTS.md`` over ``CLAUDE.md`` and looks in
-        ``.opencode/`` alongside ``.claude/``.  We create symlinks so
-        that a single set of files serves both tools.
+        OpenCode prefers ``AGENTS.md`` over ``CLAUDE.md`` as its rules
+        file.  We create a single symlink so both tools read the same
+        content.
 
-        Symlinks created::
+        We do **NOT** create a ``.opencode/`` directory — that is
+        OpenCode's own runtime directory (node_modules, plugins, etc.)
+        and pre-creating it interferes with OpenCode's initialisation.
+        OpenCode already reads ``.claude/skills/`` and ``.claude/CLAUDE.md``
+        natively as a compatibility fallback, so no directory-level
+        symlinks are needed.
 
-            AGENTS.md            → CLAUDE.md
-            .opencode/skills/    → .claude/skills/
-            .opencode/commands/  → .claude/commands/
+        Symlink created::
 
-        OpenCode also reads ``.claude/`` natively as a compatibility
-        fallback, so the symlinks are an optimisation, not a hard
-        requirement.
+            AGENTS.md → CLAUDE.md
         """
         import os
 
-        # --- AGENTS.md → CLAUDE.md ---
         agents_md = root / "AGENTS.md"
         claude_md = root / "CLAUDE.md"
         if claude_md.exists() and not agents_md.exists():
             os.symlink("CLAUDE.md", str(agents_md))
-
-        # --- .opencode/ directory with symlinks into .claude/ ---
-        opencode_dir = root / ".opencode"
-        claude_dir = root / ".claude"
-
-        if not claude_dir.is_dir():
-            return  # Nothing to link to
-
-        opencode_dir.mkdir(exist_ok=True)
-
-        for subdir in ("skills", "commands"):
-            source = claude_dir / subdir
-            target = opencode_dir / subdir
-            if source.is_dir() and not target.exists():
-                # Relative symlink: .opencode/skills → ../.claude/skills
-                os.symlink(
-                    os.path.relpath(str(source), str(opencode_dir)),
-                    str(target),
-                )
 
     def _write_skill(
         self,
@@ -484,7 +421,7 @@ See the `sos-smak` skill for the full SOS workflow and version control details.
 
     def _detroit_smak_skill_body(self, manifest: ProjectManifest) -> str:
         """Generate the body for detroit-smak/SKILL.md."""
-        return f"""# Detroit SMAK — Project Bootstrap
+        return f"""# Detroit — Project Bootstrap
 
 Re-initialize the All-Might workspace for **{manifest.name}**.
 
@@ -493,7 +430,7 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 1. Re-scan the project directory for structural changes
 2. Update `config.yaml` with new/changed directories and indices
 3. Regenerate all All-Might skills (one-for-all, enrichment)
-4. Optionally trigger SMAK `ingest` for new indices
+4. Optionally trigger `/ingest` for new indices
 
 ## When to use
 
@@ -509,7 +446,7 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
    - Update indices in `config.yaml`
    - Regenerate `.claude/skills/one-for-all/SKILL.md`
    - Regenerate `.claude/skills/enrichment/SKILL.md`
-2. If new indices were added, run SMAK `ingest` for each new index
+2. If new indices were added, run `/ingest` for each new index
 """
 
     def _one_for_all_skill_body(self, manifest: ProjectManifest) -> str:
@@ -527,11 +464,11 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 
         return f"""# One For All — {manifest.name}
 
-> **SMAK** (Semantic Mesh Augmented Kernel) is the vector search engine that indexes this codebase.
-> **All-Might** is the active layer you interact with — it wraps SMAK with commands, enrichment, and graph intelligence.
+> **All-Might** is the active knowledge graph layer that indexes this codebase,
+> providing commands, enrichment, and graph intelligence.
 >
 > All knowledge graph operations go through **All-Might commands** (`/search`, `/enrich`, `/explain`, etc.).
-> You do NOT call SMAK MCP tools directly, and you do NOT hand-edit sidecar or config YAML files.
+> Do NOT hand-edit sidecar or config YAML files.
 
 ## Project Overview
 
@@ -541,14 +478,14 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 
 {dir_map}
 
-## SMAK Index Reference
+## Corpus Reference
 
 {index_table}
 
 Use `/list-indices` to verify indices are active.
 
 > **Note:** This workspace is a standalone hub — source code is at external paths
-> listed in the "Paths" column above. FAISS databases are stored locally in `./smak/`.
+> listed in the "Paths" column above. Search data is stored locally in `./smak/`.
 > Sidecar files live beside the source files at those external paths, not here.
 > **Indices are built from online (Layer 1) only.** To verify features in version control
 > releases, use SOS revision log matching (see `sos-smak` skill).
@@ -574,12 +511,12 @@ Run `/power-level` to get current metrics, or `/regenerate` to update this skill
 | `/search <query>` | Semantic search with graph context |
 | `/explain <uid>` | Full graph context for a symbol |
 | `/enrich` | Annotate a symbol with intent/relations |
-| `/ingest` | Trigger SMAK vector store ingest |
+| `/ingest` | Rebuild corpus |
 | `/power-level` | Check knowledge coverage metrics |
 | `/regenerate` | Update this skill with latest state |
 | `/panorama` | Export knowledge graph visualization |
 | `/graph-report` | Graph intelligence report |
-| `/add-index` | Add a new SMAK index |
+| `/add-index` | Add a new corpus |
 | `/remove-index` | Remove an index |
 | `/list-indices` | List all configured indices |
 
@@ -598,7 +535,7 @@ Run `/power-level` to get current metrics, or `/regenerate` to update this skill
 > This is an **advisory** protocol. Follow it naturally as you work —
 > don't treat it as a mandatory checklist.
 >
-> All enrichment goes through **All-Might commands** — not SMAK MCP tools directly.
+> All enrichment goes through **All-Might commands**.
 
 ## When to Enrich
 

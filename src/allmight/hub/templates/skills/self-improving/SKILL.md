@@ -136,6 +136,6 @@ Aggregate power level across all workspaces:
 ## What This Skill Does NOT Do
 
 - Does NOT perform sidecar enrichment (that's `/enrich` + `sidecar-handling`)
-- Does NOT query workspace SMAK indices (that's `detroit-smak`)
+- Does NOT query workspace corpora (that's `detroit-smak`)
 - Does NOT make changes without user approval
 - Does NOT touch online/VC/SOS concerns (global, already in hub CLAUDE.md)

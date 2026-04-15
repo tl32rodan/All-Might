@@ -6,7 +6,7 @@ and cognitive science (Ebbinghaus, ACT-R):
 - **Working Memory** (Layer 1): Always in context via ``MEMORY.md``.
   User model, environment facts, pinned memories.  Token-budgeted.
 - **Episodic Memory** (Layer 2): Append-only session records in
-  ``memory/episodes/``.  SMAK-indexed for semantic search.
+  ``memory/episodes/``.  Indexed for semantic search.
 - **Semantic Memory** (Layer 3): Consolidated facts in
   ``memory/semantic/``.  Versioned with supersession chains,
   conflict resolution, and Ebbinghaus decay scoring.

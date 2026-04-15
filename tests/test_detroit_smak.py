@@ -84,9 +84,8 @@ class TestProjectInitializer:
         initializer.initialize(manifest, smak_path=None)
 
         skills_dir = sample_project / ".claude" / "skills"
-        assert (skills_dir / "detroit-smak" / "SKILL.md").exists()
+        # Only one unified skill is generated
         assert (skills_dir / "one-for-all" / "SKILL.md").exists()
-        assert (skills_dir / "enrichment" / "SKILL.md").exists()
 
     def test_does_not_install_smak_skill(self, sample_project):
         """Phase 7: agents use All-Might commands, not SMAK MCP tools directly."""
@@ -108,19 +107,15 @@ class TestProjectInitializer:
         initializer.initialize(manifest, smak_path=None)
 
         commands_dir = sample_project / ".claude" / "commands"
-        # Original commands
-        assert (commands_dir / "power-level.md").exists()
-        assert (commands_dir / "regenerate.md").exists()
-        assert (commands_dir / "panorama.md").exists()
-        # Phase 7 new commands
+        # Simplified command set: 4 core commands only
         assert (commands_dir / "search.md").exists()
         assert (commands_dir / "enrich.md").exists()
         assert (commands_dir / "ingest.md").exists()
-        assert (commands_dir / "explain.md").exists()
-        assert (commands_dir / "graph-report.md").exists()
-        assert (commands_dir / "add-index.md").exists()
-        assert (commands_dir / "remove-index.md").exists()
-        assert (commands_dir / "list-indices.md").exists()
+        assert (commands_dir / "status.md").exists()
+        # Old commands should NOT exist
+        assert not (commands_dir / "explain.md").exists()
+        assert not (commands_dir / "power-level.md").exists()
+        assert not (commands_dir / "regenerate.md").exists()
 
     def test_updates_claude_md(self, sample_project):
         scanner = ProjectScanner()
@@ -133,7 +128,7 @@ class TestProjectInitializer:
         assert claude_md.exists()
         content = claude_md.read_text()
         assert "ALL-MIGHT" in content
-        assert "/power-level" in content
+        assert "/status" in content
 
     def test_one_for_all_uses_allmight_commands(self, sample_project):
         """Phase 7: One For All references All-Might commands, not SMAK MCP."""
@@ -194,12 +189,12 @@ class TestProjectInitializer:
 
         claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
-        assert "NEVER" in content
-        assert "sidecar" in content.lower()
-        assert "config.yaml" in content
+        assert "/search" in content
+        assert "/enrich" in content
+        assert "one-for-all" in content.lower()
 
-    def test_claude_md_explains_smak(self, sample_project):
-        """Test that CLAUDE.md explains what SMAK is."""
+    def test_claude_md_is_what_not_how(self, sample_project):
+        """CLAUDE.md should say WHAT you can do, not HOW (that's in skills)."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
@@ -208,8 +203,11 @@ class TestProjectInitializer:
 
         claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
-        assert "What is SMAK" in content
-        assert "semantic search" in content.lower() or "vector store" in content.lower()
+        # Should point to skill for details
+        assert "one-for-all" in content
+        # Should NOT contain SMAK implementation details
+        assert "smak search" not in content
+        assert "smak enrich" not in content
 
     def test_sos_skill_enrichment_crossref(self, sample_project):
         """Test that SOS skill cross-references the enrichment protocol."""
@@ -224,8 +222,8 @@ class TestProjectInitializer:
         assert "/enrich" in sos_skill
         assert "enrichment-protocol" in sos_skill
 
-    def test_claude_md_has_standalone_hub_architecture(self, sample_project):
-        """Test that CLAUDE.md describes the standalone hub architecture."""
+    def test_claude_md_has_getting_started(self, sample_project):
+        """Test that CLAUDE.md has getting started steps."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
@@ -234,9 +232,8 @@ class TestProjectInitializer:
 
         claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
-        assert "standalone" in content.lower()
-        assert "config.yaml" in content
-        assert "smak/" in content or "FAISS" in content
+        assert "Getting Started" in content
+        assert "/ingest" in content
 
     def test_sos_skill_has_standalone_hub_and_config_management(self, sample_project):
         """Test that SOS skill includes standalone hub and config.yaml guidance."""
@@ -263,8 +260,8 @@ class TestProjectInitializer:
 
         claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
-        assert "online" in content.lower()
-        assert "sos log" in content.lower() or "revision log" in content.lower()
+        assert "/search" in content
+        assert "/enrich" in content
 
     def test_sos_skill_has_online_first_workflow(self, sample_project):
         """Test that SOS skill documents the online-first + log verification pattern."""
@@ -306,27 +303,13 @@ class TestProjectInitializer:
         assert agents_md.is_symlink()
         assert agents_md.resolve() == claude_md.resolve()
 
-    def test_opencode_skills_symlink(self, sample_project):
-        """.opencode/skills/ should symlink to .claude/skills/."""
+    def test_opencode_no_dotdir_created(self, sample_project):
+        """.opencode/ should NOT be created — it is OpenCode's runtime dir."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
         ProjectInitializer().initialize(manifest)
 
-        opencode_skills = sample_project / ".opencode" / "skills"
-        claude_skills = sample_project / ".claude" / "skills"
-        assert opencode_skills.is_symlink()
-        assert opencode_skills.resolve() == claude_skills.resolve()
-
-    def test_opencode_commands_symlink(self, sample_project):
-        """.opencode/commands/ should symlink to .claude/commands/."""
-        scanner = ProjectScanner()
-        manifest = scanner.scan(sample_project)
-        ProjectInitializer().initialize(manifest)
-
-        opencode_cmds = sample_project / ".opencode" / "commands"
-        claude_cmds = sample_project / ".claude" / "commands"
-        assert opencode_cmds.is_symlink()
-        assert opencode_cmds.resolve() == claude_cmds.resolve()
+        assert not (sample_project / ".opencode").exists()
 
     def test_opencode_compat_idempotent(self, sample_project):
         """Running init twice should not duplicate or break symlinks."""
@@ -337,4 +320,4 @@ class TestProjectInitializer:
         init.initialize(manifest)
 
         assert (sample_project / "AGENTS.md").is_symlink()
-        assert (sample_project / ".opencode" / "skills").is_symlink()
+        assert not (sample_project / ".opencode").exists()

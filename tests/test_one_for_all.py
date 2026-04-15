@@ -67,7 +67,7 @@ class TestOneForAllGenerator:
 
         assert "One For All" in content
         assert "source_code" in content
-        assert "No symbols have been enriched yet" in content
+        assert "No symbols enriched yet" in content
         assert "0.0%" in content
 
     def test_generate_with_sidecars(self, project_with_sidecars):
@@ -91,27 +91,25 @@ class TestOneForAllGenerator:
         content = skill_path.read_text()
         assert "one-for-all" in content
 
-    def test_generate_updates_enrichment_skill(self, initialized_project):
-        """Test that enrichment protocol is also regenerated."""
+    def test_one_for_all_includes_enrichment_guide(self, initialized_project):
+        """Test that enrichment guidance is included in one-for-all."""
+        config_path = initialized_project / "config.yaml"
+        generator = OneForAllGenerator()
+        content = generator.generate(config_path)
+
+        assert "When to Enrich" in content
+        assert "smak enrich" in content
+        assert "sidecar" in content.lower()
+
+    def test_generate_writes_skill_only(self, initialized_project):
+        """Test that regeneration updates the skill file (commands are init-only)."""
         config_path = initialized_project / "config.yaml"
         generator = OneForAllGenerator()
         generator.generate(config_path)
 
-        skill_path = initialized_project / ".claude" / "skills" / "enrichment" / "SKILL.md"
+        skill_path = initialized_project / ".claude" / "skills" / "one-for-all" / "SKILL.md"
         assert skill_path.exists()
-        content = skill_path.read_text()
-        assert "enrichment-protocol" in content
-
-    def test_generate_updates_commands(self, initialized_project):
-        """Test that command files are regenerated."""
-        config_path = initialized_project / "config.yaml"
-        generator = OneForAllGenerator()
-        generator.generate(config_path)
-
-        commands_dir = initialized_project / ".claude" / "commands"
-        assert (commands_dir / "power-level.md").exists()
-        assert (commands_dir / "regenerate.md").exists()
-        assert (commands_dir / "panorama.md").exists()
+        assert "one-for-all" in skill_path.read_text()
 
     def test_power_level_calculation(self, project_with_sidecars):
         """Test that power level is correctly calculated from sidecars."""
@@ -131,10 +129,8 @@ class TestOneForAllGenerator:
         # Should reference All-Might commands
         assert "/search" in content
         assert "/enrich" in content
-        assert "/explain" in content
-        # Should NOT reference SMAK MCP tools directly
-        assert "enrich_symbol(" not in content
-        assert "describe_workspace(" not in content
+        assert "/ingest" in content
+        assert "/status" in content
 
     def test_idempotent_regeneration(self, initialized_project):
         """Test that regenerating twice produces consistent results."""
@@ -147,35 +143,18 @@ class TestOneForAllGenerator:
         assert "One For All" in content1
         assert "One For All" in content2
 
-    def test_enrichment_skill_has_schema_reference(self, initialized_project):
-        """Test that enrichment skill contains sidecar schema docs and anti-edit warning."""
-        config_path = initialized_project / "config.yaml"
-        generator = OneForAllGenerator()
-        generator.generate(config_path)
-
-        skill_path = initialized_project / ".claude" / "skills" / "enrichment" / "SKILL.md"
-        content = skill_path.read_text()
-        assert "Sidecar File Schema" in content
-        assert "Do NOT edit" in content
-        assert "UID Format" in content
-
-    def test_one_for_all_explains_smak(self, initialized_project):
-        """Test that one-for-all skill explains SMAK philosophy."""
+    def test_one_for_all_has_smak_reference(self, initialized_project):
+        """Test that one-for-all teaches agent about SMAK operations."""
         config_path = initialized_project / "config.yaml"
         generator = OneForAllGenerator()
         content = generator.generate(config_path)
 
-        assert "Semantic Mesh Augmented Kernel" in content
-        assert "hand-edit" in content.lower() or "hand-edit sidecar" in content.lower()
-
-    def test_one_for_all_has_standalone_hub_note(self, initialized_project):
-        """Test that one-for-all notes the standalone hub architecture."""
-        config_path = initialized_project / "config.yaml"
-        generator = OneForAllGenerator()
-        content = generator.generate(config_path)
-
-        assert "standalone hub" in content.lower()
-        assert "Sidecar files live beside the source files" in content
+        assert "SMAK" in content  # Agent should know about SMAK
+        assert "smak search" in content
+        assert "smak enrich" in content
+        assert "smak ingest" in content
+        assert "Do NOT" in content or "NEVER" in content  # Guardrails
+        assert "sidecar" in content.lower()
 
 
 class TestQuirks:

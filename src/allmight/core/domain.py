@@ -177,6 +177,34 @@ class SemanticFact:
 
 
 @dataclass
+class MemoryStoreSpec:
+    """A memory store definition — lives in ``memory/config.yaml``.
+
+    Memory stores use the search engine under the hood but are surfaced
+    as abstract "stores" to keep implementation details hidden from users.
+    """
+
+    name: str  # "episodes" or "semantic_facts"
+    path: str  # e.g. "./memory/episodes"
+    store_uri: str  # e.g. "./memory/store/episodes"
+
+
+def _default_stores() -> dict[str, MemoryStoreSpec]:
+    return {
+        "episodes": MemoryStoreSpec(
+            name="episodes",
+            path="./memory/episodes",
+            store_uri="./memory/store/episodes",
+        ),
+        "semantic_facts": MemoryStoreSpec(
+            name="semantic_facts",
+            path="./memory/semantic",
+            store_uri="./memory/store/semantic_facts",
+        ),
+    }
+
+
+@dataclass
 class MemoryConfig:
     """Configuration for the agent memory subsystem."""
 
@@ -189,6 +217,7 @@ class MemoryConfig:
         "importance": 0.3,
         "relevance": 0.4,
     })
+    stores: dict[str, MemoryStoreSpec] = field(default_factory=_default_stores)
 
 
 @dataclass

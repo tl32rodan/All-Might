@@ -1,22 +1,16 @@
 ---
 name: one-for-all
 description: >-
-  Project knowledge graph guide for {{ project_name }}.
-  Provides project structure, SMAK index reference, key enriched symbols,
-  and current Power Level. Auto-loaded when agent needs to understand the project.
+  All-Might knowledge guide for {{ project_name }}.
+  Teaches how to search, enrich, and maintain the knowledge graph.
+  Auto-loaded when agent needs to understand the project.
 ---
 
 # One For All — {{ project_name }}
 
-> **SMAK** (Semantic Mesh Augmented Kernel) is the vector search engine that indexes this codebase.
-> **All-Might** is the active layer you interact with — it wraps SMAK with commands, enrichment, and graph intelligence.
->
-> All knowledge graph operations go through **All-Might commands** (`/search`, `/enrich`, `/explain`, etc.).
-> You do NOT call SMAK MCP tools directly, and you do NOT hand-edit sidecar or config YAML files.
->
 > Generated at: {{ generated_at }}
 
-## 1. Project Overview
+## Project
 
 - **Name**: {{ project_name }}
 {% if languages %}
@@ -26,87 +20,151 @@ description: >-
 - **Frameworks**: {{ frameworks | join(', ') }}
 {% endif %}
 
-## 2. SMAK Index Reference
+## Corpora
 
-| Index | Description | Paths |
-|-------|-------------|-------|
+| Corpus | Description | Paths |
+|--------|-------------|-------|
 {% for idx in indices %}
 | `{{ idx.name }}` | {{ idx.description }} | `{{ idx.paths | join(', ') }}` |
 {% endfor %}
 
-Use `/list-indices` to verify indices are active.
-
-> **Note:** This workspace is a standalone hub — source code is at external paths
-> listed in the "Paths" column above. FAISS databases are stored locally in `./smak/`.
-> Sidecar files live beside the source files at those external paths, not here.
-> **Indices are built from online (Layer 1) only.** To verify features in version control
-> releases, use SOS revision log matching (see `sos-smak` skill).
-
-### Choosing the right index
-
-{% for idx in indices %}
-- **`{{ idx.name }}`** — {{ idx.description }}
-{% endfor %}
-
-When unsure which index, use `/search "<query>"` to search the default index.
-
-## 3. Key Symbols
+## Key Symbols
 
 {% if key_symbols %}
-The following symbols have been enriched with intent and/or relations:
-
 | Symbol | File | Intent | Relations |
 |--------|------|--------|-----------|
 {% for sym in key_symbols %}
 | `{{ sym.name }}` | `{{ sym.file_path }}` | {{ sym.intent[:80] }}{% if sym.intent|length > 80 %}...{% endif %} | {{ sym.relation_count }} |
 {% endfor %}
-
-These are your best starting points for understanding the codebase.
-Use `/explain "<uid>"` to see full graph context for any symbol.
 {% else %}
-> No symbols have been enriched yet. As you work with this project and use
-> `/enrich` to annotate code, this section will be populated when you
-> run `/regenerate`.
+> No symbols enriched yet. Use `/enrich` as you work to grow the knowledge graph.
 {% endif %}
 
-## 4. Power Level
+## Power Level
 
 - **Coverage**: {{ "%.1f" | format(power_level.coverage_pct) }}%
-- **Enriched symbols**: {{ power_level.enriched_symbols }} / {{ power_level.total_symbols }}
-- **Total relations**: {{ power_level.total_relations }}
+- **Enriched**: {{ power_level.enriched_symbols }} / {{ power_level.total_symbols }} symbols
+- **Relations**: {{ power_level.total_relations }}
 
 {% if power_level.by_index %}
-### Coverage by Index
-
-| Index | Coverage |
-|-------|----------|
+| Corpus | Coverage |
+|--------|----------|
 {% for name, pct in power_level.by_index.items() %}
 | `{{ name }}` | {{ "%.1f" | format(pct) }}% |
 {% endfor %}
 {% endif %}
 
-Run `/power-level` to get fresh metrics, or `/regenerate` to update this skill.
+---
 
-## 5. All-Might Commands
+## How the Knowledge Graph Works
+
+All-Might uses **SMAK** (Semantic Mesh Augmented Kernel) as the underlying
+search engine.  SMAK indexes source files into vector databases for
+semantic search, and stores per-symbol metadata in **sidecar YAML files**.
+
+You, the agent, interact with SMAK directly via its CLI.  The human user
+does not need to know about SMAK — present results in terms of
+"knowledge graph", "corpus", and "enrichment".
+
+### Architecture
+
+```
+Source code  →  smak ingest  →  Vector index (./smak/)
+                                      ↓
+                              smak search → results
+                                      ↓
+               smak enrich  →  Sidecar files (.*.sidecar.yaml)
+                                      ↓
+                              Knowledge graph (nodes + edges)
+```
+
+### SMAK CLI Reference
+
+All commands use `--config config.yaml` to locate corpus definitions.
+Add `--json` for machine-readable output.
+
+**Search** — find code by semantic meaning:
+```bash
+smak search "authentication handler" --config config.yaml --index source_code --top-k 5 --json
+smak search-all "error handling" --config config.yaml --top-k 3 --json
+smak lookup "src/auth.py::AuthHandler" --config config.yaml --index source_code --json
+```
+
+**Enrich** — annotate a symbol with intent and relations:
+```bash
+smak enrich --config config.yaml --index source_code \
+    --file src/auth.py --symbol "AuthHandler.validate" \
+    --intent "Validates JWT tokens and extracts user claims"
+
+smak enrich --config config.yaml --index source_code \
+    --file src/auth.py --symbol "AuthHandler.validate" \
+    --relation "src/models.py::User" --bidirectional
+```
+
+**Ingest** — rebuild the vector index from source files:
+```bash
+smak ingest --config config.yaml                    # all corpora
+smak ingest --config config.yaml --index source_code  # specific corpus
+```
+
+**Diagnostics**:
+```bash
+smak health --config config.yaml --json    # health check
+smak describe --config config.yaml --json  # list indices
+smak stats --config config.yaml --json     # coverage stats
+```
+
+### Sidecar Files
+
+Sidecar files store enrichment metadata beside the source file they describe.
+They are named `.{source_filename}.sidecar.yaml`.
+
+```yaml
+# Example: .auth.py.sidecar.yaml  (beside src/auth.py)
+symbols:
+  - name: "AuthHandler.validate"
+    intent: "Validates JWT tokens and extracts user claims"
+    relations:
+      - "src/models.py::User"
+      - "tests/test_auth.py::test_validate"
+```
+
+**Important rules:**
+- Do NOT edit sidecar files by hand — use `smak enrich`
+- UIDs follow the format `<file_path>::<symbol_name>`
+- Use dot notation for nested symbols: `ClassName.method_name`
+- The wildcard `*` means the entire file: `path/to/file.py::*`
+- Never invent UIDs — use `smak search` to discover valid ones
+
+### When to Enrich
+
+**On reading code** — if a symbol has no intent, add one describing
+what it does and why.
+
+**On discovering relationships** — link related symbols (code↔test,
+code↔code, code↔doc) via `--relation`.
+
+**On modifying code** — verify existing intents are still accurate.
+
+**Priority**: entry points > complex logic > cross-cutting concerns > hot files.
+Skip auto-generated code, trivial getters, and obvious boilerplate.
+
+### Enrichment Coverage (Power Level)
+
+To compute coverage, scan all sidecar files across corpora:
+1. Count total symbols vs symbols with non-empty `intent`
+2. Calculate percentage: `enriched / total × 100`
+3. Optionally update `enrichment/tracker.yaml` with the snapshot
+
+The `enrichment/tracker.yaml` file stores historical coverage data.
+
+---
+
+## Commands
 
 | Command | Purpose |
 |---------|---------|
-| `/search <query>` | Semantic search with graph context |
-| `/explain <uid>` | Full graph context for a symbol |
-| `/enrich` | Annotate a symbol with intent/relations |
-| `/ingest` | Trigger SMAK vector store ingest |
-| `/power-level` | Check knowledge coverage metrics |
-| `/regenerate` | Update this skill with latest state |
-| `/panorama` | Export knowledge graph visualization |
-| `/graph-report` | Graph intelligence report |
-| `/add-index` | Add a new SMAK index |
-| `/remove-index` | Remove an index |
-| `/list-indices` | List all configured indices |
-
-## 6. Getting Started
-
-1. Use `/search "..."` to explore the codebase semantically
-2. Use `/explain "path::symbol"` for deep context on any symbol
-3. When you understand a symbol's purpose, use `/enrich` (see `enrichment-protocol` skill)
-4. Run `/power-level` periodically to track progress
-5. Run `/regenerate` after significant enrichment to update this skill
+| `/search` | Search the codebase semantically |
+| `/enrich` | Annotate a symbol with intent and relations |
+| `/ingest` | Rebuild the search corpus from source files |
+| `/status` | Show enrichment coverage and system health |

@@ -1,11 +1,11 @@
 """Bundled SOS skill content for CliosoftSOS environments.
 
 All-Might ships its own copy of the SOS skill body so there is no
-runtime dependency on SMAK skill files being present on disk.
+runtime dependency on external skill files being present on disk.
 """
 
 SOS_SKILL_BODY = """\
-# CliosoftSOS + SMAK Workflow
+# CliosoftSOS + All-Might Workflow
 
 ## 0. STANDALONE HUB ARCHITECTURE
 
@@ -16,7 +16,7 @@ This All-Might folder is a **standalone workspace hub** — it is NOT inside the
 ├── config.yaml                       ← Project metadata + index definitions
 ├── enrichment/tracker.yaml           ← Power tracker
 ├── panorama/                         ← Graph exports
-├── smak/                             ← FAISS databases (local, built by smak ingest)
+├── smak/                             ← Search data (local, built by /ingest)
 └── .claude/skills/                   ← Skills loaded by agent
 
 $DDI_ROOT_PATH (e.g. /CAD/stdcell)    ← Source code (read-only, SOS online)
@@ -26,7 +26,7 @@ $DDI_ROOT_PATH (e.g. /CAD/stdcell)    ← Source code (read-only, SOS online)
 
 **Key rules for agents:**
 - Source code and sidecars are **outside this folder** — at SOS-managed paths
-- FAISS databases and config are **inside this folder**
+- Search data and config are **inside this folder**
 - When reading/modifying source or sidecars, navigate to the SOS path — not here
 - `config.yaml` is the bridge between this local hub and remote source paths
 
@@ -52,14 +52,14 @@ Layer 1: Online (latest / main)
   $DDI_ROOT_PATH = /CAD/stdcell
   Access:  READ-ONLY (shared disk, visible to everyone)
   Purpose: The latest codebase — always moving forward, contains all features
-  FAISS:   Primary index is built from this layer
+  Index:   Primary search index is built from this layer
 
 Layer 2: Version Control (frozen releases)
   $DDI_ROOT_PATH = /CAD/stdcell_production/{version_string}/  (e.g. 20260301_xxxxxx)
   Access:  READ-ONLY (shared disk, visible to everyone)
   Purpose: A complete snapshot of online at a specific point in time.
            Production uses a VC release to avoid unexpected side effects from online updates.
-  FAISS:   Each version can have its own FAISS index
+  Index:   Each version can have its own search index
 
 Layer 3: SOS Workspace (personal checkout)
   Path:    /arbitrary/path/created/by/sos/
@@ -83,11 +83,11 @@ of online at that moment, including any sidecars that existed at that time. Over
 version control releases accumulate their own copy of sidecars.
 
 By setting `$DDI_ROOT_PATH` to online or a specific VC release, you control which layer's
-source code and sidecars SMAK reads. Each layer can have its own FAISS index.
+source code and sidecars All-Might reads. Each layer can have its own search index.
 
-## 3. HOW $DDI_ROOT_PATH MAPS TO SMAK
+## 3. HOW $DDI_ROOT_PATH MAPS TO ALL-MIGHT
 
-SMAK's `path_env` feature bridges the gap between SOS's multi-path model and SMAK's UID system.
+The `path_env` feature bridges the gap between SOS's multi-path model and the UID system.
 
 ### Config setup
 
@@ -127,32 +127,32 @@ When DDI_ROOT_PATH=/CAD/stdcell, expands to:
 
 ## 4. WORKFLOW: ENRICH SIDECAR IN A WORKSPACE
 
-You are in an SOS workspace at `/users/john/ws_fix_timing/`. The FAISS index was built from online (`DDI_ROOT_PATH=/CAD/stdcell`).
+You are in an SOS workspace at `/users/john/ws_fix_timing/`. The search index was built from online (`DDI_ROOT_PATH=/CAD/stdcell`).
 
 1. Search: `/search "DQ serializer timing-critical path" --index rtl_code`
 2. Find related issue: `/search "timing closure ECO for DQ path" --index release_notes`
 3. Annotate: `/enrich --file rtl/phy/dq_serdes.v --symbol dq_serializer --intent "8:1 serializer for DQ lane. Timing-critical." --relation "$DDI_ROOT_PATH/doc/releases/eco_042.md::*"`
 4. After `sos check-in`: sidecar is committed to the canonical path (Layer 1 or 2),
-   making it available for future `smak ingest` and team-wide search
+   making it available for future `/ingest` and team-wide search
 
 ## 5. PATH MISMATCH WARNING
 
-When editing sidecars in a workspace, SMAK may emit path mismatch warnings. **This is normal** — it means you're editing in a workspace (Layer 3) while relations correctly point to the canonical path (Layer 1/2). After `sos check-in`, everything aligns.
+When editing sidecars in a workspace, All-Might may emit path mismatch warnings. **This is normal** — it means you're editing in a workspace (Layer 3) while relations correctly point to the canonical path (Layer 1/2). After `sos check-in`, everything aligns.
 
 ## 6. WHICH LAYER TO TARGET
 
-**SMAK indexes online (Layer 1) only.** VC releases do NOT have separate FAISS indices.
+**Corpora index online (Layer 1) only.** VC releases do not have separate search indices.
 
 | Task | Target Layer | $DDI_ROOT_PATH |
 |---|---|---|
-| Build FAISS index | Online (Layer 1) only | `/CAD/stdcell` |
-| Semantic search (`/search`) | Online (via FAISS) | `/CAD/stdcell` |
+| Build search index | Online (Layer 1) only | `/CAD/stdcell` |
+| Semantic search (`/search`) | Online (via search index) | `/CAD/stdcell` |
 | Verify feature in VC | SOS revision log query | N/A (see section 6a) |
 | Edit sidecars | Workspace (Layer 3) | Set to the target layer (1 or 2) |
 
 ### 6a. ONLINE-FIRST SEARCH + VC LOG VERIFICATION
 
-Since SMAK only indexes online, use SOS revision logs to verify features in VC releases:
+Since All-Might only indexes online, use SOS revision logs to verify features in VC releases:
 
 ```
 Step 1: /search on online ──→ find relevant files/symbols
@@ -181,10 +181,10 @@ string** across online and all VC releases. Same log = same code change = featur
 1. **Never hardcode absolute paths in relations.** Always use `$DDI_ROOT_PATH/...` format.
 2. **Never edit sidecar files by hand** — not in online, not in version control, not even in a workspace. Always use `/enrich` from All-Might.
 3. **Always set `path_env: DDI_ROOT_PATH`** in config for indices on the shared disk.
-4. **Set `$DDI_ROOT_PATH` before running SMAK** — it determines which layer you're operating on.
+4. **Set `$DDI_ROOT_PATH` before running All-Might** — it determines which layer you're operating on.
 5. **Path mismatch warnings in workspaces are normal.** Don't suppress or work around them.
-6. **Re-ingest after cutting a version control release** to build FAISS for the new version.
-7. **One FAISS index per `$DDI_ROOT_PATH` value.** Don't share indices across online and version control.
+6. **Re-ingest after cutting a version control release** to build the search index for the new version.
+7. **One search index per `$DDI_ROOT_PATH` value.** Don't share indices across online and version control.
 
 ## 8. SOS + ENRICHMENT WORKFLOW
 
@@ -197,7 +197,7 @@ All sidecar modifications in SOS workspaces go through **All-Might commands**:
    - Proper UID format with `$DDI_ROOT_PATH` prefix where needed
    - Bidirectional relation management
 4. After `sos check-in`, sidecars are committed to the canonical path (Layer 1/2)
-   and become available for `smak ingest` and team-wide search
+   and become available for `/ingest` and team-wide search
 
 For the full enrichment protocol, see the `enrichment-protocol` skill.
 
@@ -239,8 +239,8 @@ allmight config list-indices
 | `name` | Yes | `rtl_code` | Unique identifier |
 | `description` | Yes | `"Verilog RTL modules for DDR5 PHY"` | Human-readable purpose |
 | `paths` | Yes | `["$DDI_ROOT_PATH/rtl/phy"]` | Source directories to index |
-| `uri` | Auto | `./smak/rtl_code` | FAISS database location (auto-generated) |
+| `uri` | Auto | `./smak/rtl_code` | Search index location (auto-generated) |
 | `path_env` | SOS only | `DDI_ROOT_PATH` | Environment variable for path prefix |
 
-After adding/modifying indices, run `/ingest` to rebuild the FAISS database.
+After adding/modifying indices, run `/ingest` to rebuild the search index.
 """
