@@ -65,7 +65,7 @@ def init(path: str, smak_path: str | None, sos: bool, with_memory: bool):
 
     click.echo(f"Detroit! Project '{manifest.name}' initialized.")
     click.echo(f"  Languages: {', '.join(manifest.languages) or 'none detected'}")
-    click.echo(f"  Indices:   {len(manifest.indices)}")
+    click.echo(f"  Corpora:   {len(manifest.indices)}")
     click.echo(f"  Config:    {root / 'config.yaml'}")
 
     if with_memory:
@@ -73,6 +73,15 @@ def init(path: str, smak_path: str | None, sos: bool, with_memory: bool):
 
         MemoryInitializer().initialize(root)
         click.echo("  Memory:    agent memory system enabled")
+
+    click.echo("")
+    click.echo("What's next:")
+    click.echo("  1. Open this folder in Claude Code or OpenCode")
+    click.echo("  2. Run /ingest to build the search index")
+    click.echo("  3. Run /search \"<query>\" to explore your codebase")
+    click.echo("  4. Run /enrich to annotate symbols as you learn")
+    click.echo("")
+    click.echo("All-Might skills auto-load — just start asking questions.")
 
 
 # ------------------------------------------------------------------

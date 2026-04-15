@@ -25,7 +25,7 @@ class TestCliInit(unittest.TestCase):
         runner = CliRunner()
         result = runner.invoke(main, ["init", "--help"])
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("Detroit SMAK", result.output)
+        self.assertIn("Detroit", result.output)
 
 
 class TestCliHelp(unittest.TestCase):

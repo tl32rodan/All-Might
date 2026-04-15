@@ -389,11 +389,32 @@ To check whether a feature exists in a specific VC release:
 
 See the `sos-smak` skill for the full SOS workflow and version control details.
 
-### Quick Start
-1. The `one-for-all` skill auto-loads with project context
-2. Use `/search` to explore, `/explain` for deep context
-3. Follow the `enrichment-protocol` skill to contribute knowledge as you work
-4. Run `/power-level` to check coverage, `/regenerate` to update skills
+### Getting Started — Step by Step
+
+**Phase 1: Build the search index** (one-time setup)
+1. Run `/ingest` to build the corpus from source code
+2. Verify with `/list-indices` — you should see your corpora listed
+3. If `/ingest` isn't available yet, ensure the search engine is installed
+
+**Phase 2: Explore** (start using immediately)
+1. `/search "what does the auth module do"` — semantic search across the codebase
+2. `/explain "src/auth.py::AuthHandler"` — deep graph context for any symbol
+3. The `one-for-all` skill auto-loads with project overview and corpus reference
+
+**Phase 3: Enrich** (as you learn the codebase)
+1. When you understand a symbol's purpose, run `/enrich` to annotate it
+2. Follow the `enrichment-protocol` skill for guidance on when and how
+3. Run `/power-level` to track enrichment progress (aim for key entry points first)
+
+**Phase 4: Maintain** (periodically)
+1. `/regenerate` — update the one-for-all skill with latest enrichment data
+2. `/panorama` — export the knowledge graph as a visualization
+3. `/graph-report` — identify god nodes, orphans, and communities
+
+**Milestone checkpoints:**
+- After `/ingest`: `/search` returns relevant results ✓
+- After first `/enrich`: `/power-level` shows > 0% coverage ✓
+- After 10+ enrichments: `/graph-report` shows meaningful clusters ✓
 """
 
         if claude_md.exists():
