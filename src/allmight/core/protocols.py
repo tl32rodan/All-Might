@@ -9,7 +9,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
-from .domain import EnrichmentTask, PowerLevel, ProjectManifest
+from .domain import (
+    EnrichmentTask,
+    Episode,
+    MemoryHealth,
+    PowerLevel,
+    ProjectManifest,
+    RetrievalResult,
+    SemanticFact,
+)
 
 
 class Scanner(Protocol):
@@ -40,3 +48,38 @@ class PowerTracker(Protocol):
     """Calculates and persists Power Level metrics."""
 
     def calculate(self, config_path: Path) -> PowerLevel: ...
+
+
+# ---------------------------------------------------------------------------
+# Agent Memory System protocols
+# ---------------------------------------------------------------------------
+
+
+class MemoryWriter(Protocol):
+    """Writes memory entries to the appropriate store."""
+
+    def save(self, content: str, memory_type: str, namespace: str = "default", **kwargs: object) -> str: ...
+
+
+class MemoryRetriever(Protocol):
+    """Retrieves memories with composite scoring across layers."""
+
+    def retrieve(self, query: str, top_k: int = 5, namespace: str = "default") -> list[RetrievalResult]: ...
+
+
+class Consolidator(Protocol):
+    """Consolidates episodic memories into semantic facts."""
+
+    def consolidate(self, episodes: list[Episode], namespace: str = "default") -> list[SemanticFact]: ...
+
+
+class DecayManager(Protocol):
+    """Applies Ebbinghaus forgetting curves to memory entries."""
+
+    def apply_decay(self, namespace: str = "default") -> int: ...
+
+
+class MemoryHealthTracker(Protocol):
+    """Calculates memory system health metrics."""
+
+    def calculate(self, config_path: Path) -> MemoryHealth: ...

@@ -1,7 +1,8 @@
 """Core domain objects for All-Might.
 
 These dataclasses represent the fundamental concepts that flow through
-the entire framework — from Detroit SMAK scanning to One For All generation.
+the entire framework — from Detroit SMAK scanning to One For All generation,
+and through the three-layer Agent Memory system.
 """
 
 from __future__ import annotations
@@ -103,3 +104,116 @@ class GraphEdge:
     source_uid: str
     target_uid: str
     source_index: str
+
+
+# ---------------------------------------------------------------------------
+# Agent Memory System — three-layer memory domain objects
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MemoryEntry:
+    """Base unit of agent memory — the atomic record stored in any layer.
+
+    Used as a common envelope for observations, reflections, facts,
+    and any other memory content that flows through the system.
+    """
+
+    id: str
+    content: str
+    memory_type: str  # "observation", "reflection", "fact", "correction"
+    created_at: str  # ISO 8601
+    last_accessed: str  # ISO 8601 — updated on retrieval
+    access_count: int = 0
+    importance: float = 0.5  # 0.0–1.0, assigned at creation or by LLM
+    source_session: str = ""
+    tags: list[str] = field(default_factory=list)
+    namespace: str = "default"
+
+
+@dataclass
+class Episode:
+    """A single agent-session record — Layer 2 (episodic memory).
+
+    Append-only and immutable after creation.  Each session produces
+    exactly one Episode summarising what happened.
+    """
+
+    id: str
+    session_id: str
+    started_at: str
+    ended_at: str
+    summary: str
+    key_decisions: list[str] = field(default_factory=list)
+    observations: list[str] = field(default_factory=list)
+    files_touched: list[str] = field(default_factory=list)
+    topics: list[str] = field(default_factory=list)
+    outcome: str = ""  # "success", "partial", "failure"
+    importance: float = 0.5
+    consolidated: bool = False
+
+
+@dataclass
+class SemanticFact:
+    """A consolidated, versioned knowledge fact — Layer 3 (semantic memory).
+
+    Derived from one or more Episodes through the consolidation process.
+    Supports temporal versioning via the *supersedes* chain.
+    """
+
+    id: str
+    content: str
+    category: str  # "user_preference", "convention", "correction",
+    # "architecture_decision", "domain_knowledge"
+    confidence: float = 1.0
+    created_at: str = ""
+    updated_at: str = ""
+    last_accessed: str = ""
+    access_count: int = 0
+    importance: float = 0.5
+    source_episodes: list[str] = field(default_factory=list)
+    supersedes: str | None = None  # ID of the fact this one replaces
+    namespace: str = "default"
+
+
+@dataclass
+class MemoryConfig:
+    """Configuration for the agent memory subsystem."""
+
+    working_memory_budget: int = 4000  # approximate token limit
+    episode_retention_days: int = 90
+    decay_rate: float = 0.05  # Ebbinghaus λ  (lower = slower decay)
+    consolidation_strategy: str = "async"  # "sync" | "async"
+    retrieval_weights: dict[str, float] = field(default_factory=lambda: {
+        "recency": 0.3,
+        "importance": 0.3,
+        "relevance": 0.4,
+    })
+
+
+@dataclass
+class RetrievalResult:
+    """A scored memory retrieval result returned by UnifiedRetriever."""
+
+    memory_id: str
+    content: str
+    memory_type: str  # "episode" | "fact" | "observation"
+    score: float  # composite
+    recency_score: float = 0.0
+    importance_score: float = 0.0
+    relevance_score: float = 0.0
+    source: str = ""  # which store it came from
+
+
+@dataclass
+class MemoryHealth:
+    """Health metrics for the agent memory system — analogous to PowerLevel."""
+
+    total_episodes: int = 0
+    unconsolidated_episodes: int = 0
+    total_facts: int = 0
+    avg_fact_confidence: float = 0.0
+    dormant_entries: int = 0
+    working_memory_tokens: int = 0
+    working_memory_budget: int = 4000
+    timestamp: str = ""

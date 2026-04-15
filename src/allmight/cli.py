@@ -40,7 +40,8 @@ def main():
 @click.argument("path", default=".", type=click.Path(exists=True))
 @click.option("--smak-path", type=click.Path(exists=True), help="Path to SMAK installation (for skill copying)")
 @click.option("--sos", is_flag=True, help="Enable SOS/EDA environment support")
-def init(path: str, smak_path: str | None, sos: bool):
+@click.option("--with-memory", is_flag=True, help="Also initialize the agent memory subsystem")
+def init(path: str, smak_path: str | None, sos: bool, with_memory: bool):
     """Detroit SMAK — one punch to bootstrap the entire workspace.
 
     Scans the project, creates config.yaml with project metadata and
@@ -66,6 +67,12 @@ def init(path: str, smak_path: str | None, sos: bool):
     click.echo(f"  Languages: {', '.join(manifest.languages) or 'none detected'}")
     click.echo(f"  Indices:   {len(manifest.indices)}")
     click.echo(f"  Config:    {root / 'config.yaml'}")
+
+    if with_memory:
+        from .memory.initializer import MemoryInitializer
+
+        MemoryInitializer().initialize(root)
+        click.echo("  Memory:    agent memory system enabled")
 
 
 # ------------------------------------------------------------------
@@ -194,3 +201,118 @@ def config_update_index(name: str, description: str | None, paths: tuple, root_p
     mgr = ConfigManager(P(root_path).resolve())
     updated = mgr.update_index(name, **kwargs)
     click.echo(f"Updated index '{updated.name}'.")
+
+
+# ------------------------------------------------------------------
+# Agent Memory System
+# ------------------------------------------------------------------
+
+@main.group()
+def memory():
+    """Agent memory system — three-layer persistent memory."""
+
+
+@memory.command("init")
+@click.argument("path", default=".", type=click.Path(exists=True))
+def memory_init(path: str):
+    """Initialize the agent memory subsystem.
+
+    Creates memory/ directory structure, config, SMAK indices for
+    episodes and semantic facts, memory skill, and slash commands.
+    Requires config.yaml to exist (run 'allmight init' first).
+    """
+    from pathlib import Path as P
+
+    from .memory.initializer import MemoryInitializer
+
+    root = P(path).resolve()
+    config_path = root / "config.yaml"
+    if not config_path.exists():
+        click.echo("Error: config.yaml not found. Run 'allmight init' first.")
+        raise SystemExit(1)
+
+    initializer = MemoryInitializer()
+    initializer.initialize(root)
+
+    click.echo("Agent Memory System initialized.")
+    click.echo("  Working memory:  memory/working/MEMORY.md")
+    click.echo("  Episodic store:  memory/episodes/")
+    click.echo("  Semantic store:  memory/semantic/")
+    click.echo("  Memory config:   memory/config.yaml")
+
+
+@memory.command("status")
+@click.option("--config", "config_path", default="config.yaml", type=click.Path())
+def memory_status(config_path: str):
+    """Show memory health: episodes, facts, working memory usage, decay."""
+    from pathlib import Path as P
+
+    from rich.console import Console
+    from rich.table import Table
+
+    from .memory.config import MemoryConfigManager
+    from .memory.episodic import EpisodicMemoryStore
+    from .memory.semantic import SemanticMemoryStore
+    from .memory.working import WorkingMemoryManager
+
+    console = Console()
+    root = P(config_path).resolve().parent
+
+    cfg = MemoryConfigManager(root).load()
+    working = WorkingMemoryManager(root, budget=cfg.working_memory_budget)
+    episodic = EpisodicMemoryStore(root)
+    semantic = SemanticMemoryStore(root)
+
+    console.print("\n[bold]Agent Memory Health[/bold]\n")
+
+    # Working memory
+    budget = working.budget_status()
+    console.print(f"Working Memory: {budget['tokens_used']}/{budget['budget']} tokens"
+                  f" ({'OVER' if budget['over_budget'] else 'OK'})")
+
+    # Episodic
+    ep_total = episodic.count()
+    ep_uncon = episodic.count_unconsolidated()
+    console.print(f"Episodes: {ep_total} total, {ep_uncon} unconsolidated")
+
+    # Semantic
+    fact_total = semantic.count()
+    avg_conf = semantic.avg_confidence()
+    console.print(f"Semantic Facts: {fact_total} total, avg confidence {avg_conf:.2f}")
+
+
+@memory.command("gc")
+@click.option("--config", "config_path", default="config.yaml", type=click.Path())
+@click.option("--dry-run", is_flag=True, help="Show what would be archived without doing it")
+def memory_gc(config_path: str, dry_run: bool):
+    """Run decay sweep and report dormant/archivable entries."""
+    from pathlib import Path as P
+
+    from .memory.decay import DecayEngine
+    from .memory.semantic import SemanticMemoryStore
+
+    root = P(config_path).resolve().parent
+    semantic = SemanticMemoryStore(root)
+    engine = DecayEngine()
+
+    facts = semantic.list_facts(limit=10000)
+    dormant = 0
+    archivable = 0
+
+    for fact in facts:
+        status = engine.classify(
+            fact.last_accessed or fact.updated_at or fact.created_at,
+            fact.access_count,
+        )
+        if status == "dormant":
+            dormant += 1
+        elif status == "archivable":
+            archivable += 1
+
+    action = "Would archive" if dry_run else "Archivable"
+    click.echo(f"Total facts: {len(facts)}")
+    click.echo(f"Dormant: {dormant}")
+    click.echo(f"{action}: {archivable}")
+
+    if not dry_run and archivable > 0:
+        click.echo("(Use --dry-run to preview. Actual archival not yet implemented.)")
