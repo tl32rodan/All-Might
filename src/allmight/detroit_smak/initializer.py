@@ -159,46 +159,171 @@ class ProjectInitializer:
         )
 
     def _generate_commands(self, root: Path, manifest: ProjectManifest) -> None:
-        """Generate .claude/commands/ — minimal set of 4 core commands."""
+        """Generate .claude/commands/ — thick operational guides."""
         commands_dir = root / ".claude" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
 
-        (commands_dir / "search.md").write_text(
-            "Semantic search across the codebase.\n\n"
-            "Usage: `/search <query>` or `/search <query> --index <index>`\n\n"
-            "Perform natural-language search over the indexed corpus.\n"
-            "For deeper context on a result, explain the symbol's graph connections "
-            "(intent, relations, community membership).\n"
-        )
+        (commands_dir / "search.md").write_text("""\
+Search the codebase by semantic meaning.
 
-        (commands_dir / "enrich.md").write_text(
-            "Annotate a symbol with intent and/or relations.\n\n"
-            "Usage: `/enrich --file <path> --symbol <name> --intent \"description\"`\n\n"
-            "Add `--relation <uid>` (repeatable) to link to other symbols.\n"
-            "Add `--bidirectional` to create the reverse link too.\n\n"
-            "See the enrichment protocol in the one-for-all skill for guidance\n"
-            "on when and what to enrich.\n"
-        )
+## How to execute
 
-        (commands_dir / "ingest.md").write_text(
-            "Rebuild the search corpus from source files.\n\n"
-            "Usage: `/ingest` or `/ingest --index <index>`\n\n"
-            "Run after initial setup or when source files have changed significantly.\n"
-            "This updates the search index so `/search` returns current results.\n"
-        )
+```bash
+smak search "<query>" --config config.yaml --index source_code --top-k 5 --json
+```
 
-        (commands_dir / "status.md").write_text(
-            "Show All-Might system health.\n\n"
-            "1. Scan all sidecar files across all corpora.\n"
-            "2. Count total symbols vs enriched symbols (those with intent).\n"
-            "3. Report coverage percentage and per-corpus breakdown.\n"
-            "4. If agent memory is enabled, also report:\n"
-            "   - Working memory: token usage vs budget\n"
-            "   - Episodic memory: total episodes, unconsolidated count\n"
-            "   - Semantic memory: total facts, average confidence\n"
-            "5. Update `enrichment/tracker.yaml` with new metrics.\n\n"
-            "Display results in a clear table format.\n"
-        )
+To search across all corpora at once:
+```bash
+smak search-all "<query>" --config config.yaml --top-k 3 --json
+```
+
+To look up a specific symbol by UID:
+```bash
+smak lookup "<file_path>::<symbol_name>" --config config.yaml --index source_code --json
+```
+
+## What to expect
+
+JSON output with a `results` array. Each result contains:
+- `id` — the matched chunk/symbol identifier
+- `text` or `content` — the matched source code
+- `score` — relevance score (0–1)
+- `metadata` — file path, symbol name, etc.
+
+## After searching
+
+- If a result has a sidecar (`.{filename}.sidecar.yaml` beside it), read the
+  sidecar to see its enriched intent and relations.
+- If a result has NO sidecar or missing intent, consider enriching it with `/enrich`.
+- Present results to the user in terms of "knowledge graph" — do not mention SMAK.
+""")
+
+        (commands_dir / "enrich.md").write_text("""\
+Annotate a code symbol with intent and/or relations.
+
+## How to execute
+
+Set intent (what the symbol does and why):
+```bash
+smak enrich --config config.yaml --index source_code \\
+    --file <relative_path> --symbol "<SymbolName>" \\
+    --intent "Human-readable description of purpose"
+```
+
+Add a relation to another symbol:
+```bash
+smak enrich --config config.yaml --index source_code \\
+    --file <relative_path> --symbol "<SymbolName>" \\
+    --relation "<other_file>::<OtherSymbol>" --bidirectional
+```
+
+## When to enrich
+
+- **Reading code**: symbol has no intent → add one
+- **Discovering relationships**: two entities are related → link them
+- **After modifying code**: existing intent may be stale → update it
+
+## Priority
+
+1. Entry points — main functions, API handlers, CLI commands
+2. Complex logic — algorithms, state machines, non-obvious flow
+3. Cross-cutting concerns — error handling, auth, logging
+4. Frequently modified files (high git activity)
+
+Skip auto-generated code, simple getters, and obvious boilerplate.
+
+## What to expect
+
+- A `.{filename}.sidecar.yaml` file is created/updated beside the source file
+- The sidecar contains structured YAML with `symbols[].intent` and `symbols[].relations`
+- Do NOT edit sidecar files by hand — always use `smak enrich`
+
+## UID format
+
+`<file_path>::<symbol_name>` — e.g., `src/auth.py::AuthHandler.validate`
+- File path is relative to project root
+- Dot notation for nested symbols: `ClassName.method_name`
+- Wildcard `*` for entire file: `path/to/file.py::*`
+- Never invent UIDs — use `/search` to discover valid ones
+""")
+
+        (commands_dir / "ingest.md").write_text("""\
+Rebuild the search corpus from source files.
+
+## When to run
+
+- **First time**: after `allmight init` to build the initial index
+- **After significant changes**: new files added, major refactoring
+- **After adding a corpus**: to populate the new index
+
+You do NOT need to re-ingest after enrichment — sidecars are separate
+from the search index.
+
+## How to execute
+
+Rebuild all corpora:
+```bash
+smak ingest --config config.yaml --json
+```
+
+Rebuild a specific corpus:
+```bash
+smak ingest --config config.yaml --index source_code --json
+```
+
+## What to expect
+
+- The `./smak/<corpus_name>/` directory is populated with search index data
+- `/search` will return results from the newly ingested files
+- Ingestion may take a few minutes for large codebases
+
+## Troubleshooting
+
+- If `smak` is not found, ensure SMAK is installed and on PATH
+- Check `smak health --config config.yaml --json` for diagnostics
+- List available corpora: `smak describe --config config.yaml --json`
+""")
+
+        (commands_dir / "status.md").write_text("""\
+Show the knowledge graph coverage and system health.
+
+## How to execute
+
+1. Scan all sidecar YAML files (`.*.sidecar.yaml`) across all paths
+   defined in `config.yaml` indices.
+2. For each sidecar, count symbols and check which have non-empty `intent`.
+3. Calculate coverage: `enriched_symbols / total_symbols * 100`.
+4. Read `enrichment/tracker.yaml` for historical data.
+5. If `memory/config.yaml` exists (memory system enabled), also report:
+   - Working memory: count words in `memory/working/MEMORY.md`
+   - Episodic memory: count files in `memory/episodes/`
+   - Semantic memory: count files in `memory/semantic/`
+
+## What to report
+
+```
+Power Level: XX.X%
+  source_code: XX.X% (N/M symbols enriched)
+  tests:       XX.X% (N/M symbols enriched)
+  Total relations: N
+
+Memory (if enabled):
+  Episodes: N total, M unconsolidated
+  Facts: N total, avg confidence X.XX
+```
+
+## When to run
+
+- After enrichment work to see progress
+- Periodically to track coverage trends
+- When the user asks "how healthy is the knowledge graph?"
+
+## After checking status
+
+- If coverage is low, prioritize `/enrich` on entry points
+- If many episodes are unconsolidated, suggest `/consolidate`
+- Update `enrichment/tracker.yaml` with the new snapshot
+""")
 
     def _update_claude_md(self, root: Path, manifest: ProjectManifest) -> None:
         """Append All-Might baseline instructions to CLAUDE.md at project root."""
@@ -208,69 +333,30 @@ class ProjectInitializer:
         allmight_section = f"""{marker}
 ## All-Might: Active Knowledge Graph
 
-This project uses **All-Might** as the single interface for knowledge graph operations.
-All operations go through All-Might commands.
+This project has an **All-Might knowledge graph** — semantic search,
+symbol enrichment, and graph intelligence across the codebase.
 
-### How It Works
+### What you can do
 
-All-Might indexes source files for semantic search, enables natural-language queries over code,
-and stores per-symbol metadata in **sidecar YAML files** (`.{{filename}}.sidecar.yaml`).
+| Command | What it does |
+|---------|-------------|
+| `/search <query>` | Search the codebase by meaning |
+| `/enrich` | Annotate a symbol with intent and relations |
+| `/ingest` | Rebuild the search corpus |
+| `/status` | Check enrichment coverage and health |
 
-Mental model: `init → ingest → search → enrich → knowledge graph`
+### How to learn more
 
-### Workspace Architecture
-
-This folder is a **standalone All-Might workspace hub** — it is decoupled from source code.
-
-```
-<this folder>/                        ← Claude Code project root
-├── config.yaml                       ← Project metadata + index definitions
-├── CLAUDE.md                         ← This file (agent constitution)
-├── enrichment/tracker.yaml           ← Power tracker
-├── panorama/                         ← Graph exports
-├── smak/                             ← Search data (built by /ingest)
-└── .claude/                          ← Skills, commands
-```
-
-**Source code is NOT in this folder.** It lives at external paths managed by the project's
-version control system. Indices in `config.yaml` reference these external paths
-(e.g., via `$DDI_ROOT_PATH` in SOS/EDA environments).
-
-| What | Location |
-|------|----------|
-| Search data | `./smak/<index_name>/` (local, built by `/ingest`) |
-| Index config | `./config.yaml` (local) |
-| Source code | External paths defined in `config.yaml` |
-| Sidecar files | Beside source files at the external path (not in this folder) |
-
-**Key implication for agents**: When you need to read or modify source files, you must
-navigate to the paths listed in `config.yaml` — they are outside this folder.
-
-- **Skill**: `.claude/skills/one-for-all/` — project guide, enrichment protocol, commands
-- **Config**: `config.yaml` — project metadata and corpus definitions
-- **Enrichment**: `enrichment/` — Power Level tracker
-
-### Commands
-
-| Command | Purpose |
-|---------|---------|
-| `/search <query>` | Semantic search across the codebase |
-| `/enrich` | Annotate a symbol with intent and/or relations |
-| `/ingest` | Rebuild the search corpus from source files |
-| `/status` | Show enrichment coverage and system health |
-
-### Guardrails
-
-- **NEVER** edit `.sidecar.yaml` files directly — use `/enrich`
-- **NEVER** edit `config.yaml` directly — use `allmight config` CLI commands
-- **NEVER** invent symbol UIDs — use `/search` to discover valid ones
+The `one-for-all` skill (auto-loaded in `.claude/skills/`) contains the
+complete operational guide: how the search engine works, how to enrich
+symbols, sidecar file format, and all CLI commands.
 
 ### Getting Started
 
-1. `/ingest` — build the search corpus (one-time)
+1. `/ingest` — build the search corpus (first time)
 2. `/search "query"` — explore the codebase
 3. `/enrich` — annotate symbols as you learn them
-4. `/status` — track enrichment progress
+4. `/status` — track progress
 """
 
         if claude_md.exists():

@@ -154,38 +154,155 @@ by editing `memory/working/MEMORY.md` directly.
     # ------------------------------------------------------------------
 
     def _generate_memory_commands(self, root: Path) -> None:
-        """Generate memory slash commands — 3 simple commands."""
+        """Generate memory slash commands — thick operational guides."""
         commands_dir = root / ".claude" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
 
-        (commands_dir / "remember.md").write_text(
-            "Record an observation for the current session.\n\n"
-            "Usage: `/remember \"<observation>\"`\n\n"
-            "Observations are buffered in the current session's episode and\n"
-            "consolidated into lasting facts when you run `/consolidate`.\n\n"
-            "Good observations:\n"
-            "- User corrections: \"User clarified that X means Y\"\n"
-            "- Discovered patterns: \"All handlers use middleware pattern Z\"\n"
-            "- Important decisions: \"Chose Redis because of pub/sub needs\"\n"
-        )
+        (commands_dir / "remember.md").write_text("""\
+Record an observation worth persisting beyond this session.
 
-        (commands_dir / "recall.md").write_text(
-            "Search past memories across all layers.\n\n"
-            "Usage: `/recall <query>`\n\n"
-            "Searches semantic facts and episodic memory, scores by\n"
-            "recency + importance + relevance, returns top results.\n"
-            "Accessed memories resist future decay.\n"
-        )
+## What to remember
 
-        (commands_dir / "consolidate.md").write_text(
-            "Convert session episodes into lasting semantic facts.\n\n"
-            "Usage: `/consolidate`\n\n"
-            "1. Read unconsolidated episodes.\n"
-            "2. Extract recurring observations and decisions.\n"
-            "3. Create, reinforce, or supersede semantic facts.\n"
-            "4. Mark processed episodes as consolidated.\n\n"
-            "Run periodically (weekly recommended) or after significant work.\n"
-        )
+- **User corrections**: "User clarified that X means Y"
+- **Discovered patterns**: "All handlers follow middleware pattern Z"
+- **Important decisions**: "Chose Redis over Memcached for pub/sub"
+- **User preferences**: "User prefers concise answers"
+- **Environment facts**: "Build requires Node 18+"
+
+## How to execute
+
+1. Write the observation as a YAML episode file in `memory/episodes/YYYY/MM/`:
+
+```yaml
+# memory/episodes/2026/04/sess_<session_id>.episode.yaml
+id: ep_<random_12hex>
+session_id: <current_session_id>
+started_at: <ISO timestamp>
+ended_at: <ISO timestamp>
+summary: "Brief session summary"
+observations:
+  - "The observation you want to remember"
+key_decisions: []
+files_touched: []
+topics: []
+outcome: ""
+importance: 0.5
+consolidated: false
+```
+
+2. Or append to an existing episode file for this session if one exists.
+
+## What to expect
+
+- The observation is stored as part of the session episode
+- It will surface when `/recall` searches for related queries
+- During `/consolidate`, recurring observations become lasting facts
+- Observations are append-only — never modify past episodes
+
+## When NOT to remember
+
+- Trivial observations the agent can re-derive from code
+- Information already captured in sidecar enrichment
+- Temporary debug notes
+""")
+
+        (commands_dir / "recall.md").write_text("""\
+Search past memories across all layers.
+
+## How to execute
+
+1. Search `memory/semantic/` for fact files (`.fact.yaml`) whose content
+   matches the query keywords.
+2. Search `memory/episodes/` for episode files (`.episode.yaml`) whose
+   summary or observations match.
+3. Score each result using composite scoring:
+   - **Recency** (30%): `e^(-hours_since_access / (168 * ln(1 + access_count)))`
+   - **Importance** (30%): the entry's stored importance (0–1)
+   - **Relevance** (40%): keyword overlap or semantic similarity
+4. Return top results sorted by composite score.
+5. For each returned fact, bump its `last_accessed` timestamp and
+   `access_count` in the YAML file (this makes it resist future decay).
+
+## What to expect
+
+Results from two sources:
+- **Semantic facts** (`memory/semantic/fact_*.fact.yaml`): consolidated,
+  high-confidence knowledge with categories and source episodes
+- **Episodes** (`memory/episodes/YYYY/MM/*.episode.yaml`): raw session
+  records with observations, decisions, and file lists
+
+## When to recall
+
+- Before making assumptions about user preferences
+- When facing a problem that seems familiar
+- When starting work in an area visited in past sessions
+- When the user asks "did we discuss X before?"
+
+## Memory decay
+
+Memories that are never accessed decay over time. The Ebbinghaus
+forgetting curve `M(t) = e^(-t/S)` means:
+- Frequently accessed memories persist (high S from access_count)
+- Never-accessed memories fade after ~2 weeks
+- Decayed memories still exist on disk but score too low to surface
+""")
+
+        (commands_dir / "consolidate.md").write_text("""\
+Convert session episodes into lasting semantic facts.
+
+## When to run
+
+- After several productive sessions
+- When you notice recurring patterns across episodes
+- Periodically (weekly recommended)
+- When the user asks to consolidate knowledge
+
+## How to execute
+
+1. List all episode files in `memory/episodes/` that have
+   `consolidated: false`.
+2. Extract recurring observations and decisions across episodes.
+3. For each extracted pattern, search existing facts in
+   `memory/semantic/` for overlap (Jaccard similarity >= 0.5).
+4. Based on the match:
+   - **No match**: create a new fact file in `memory/semantic/`:
+     ```yaml
+     # memory/semantic/fact_<random_12hex>.fact.yaml
+     id: fact_<random_12hex>
+     content: "The extracted pattern or knowledge"
+     category: "domain_knowledge"  # or: user_preference, convention,
+                                   #     correction, architecture_decision
+     confidence: 1.0
+     created_at: <ISO timestamp>
+     updated_at: <ISO timestamp>
+     last_accessed: <ISO timestamp>
+     access_count: 0
+     importance: 0.5
+     source_episodes:
+       - ep_<source_episode_id>
+     supersedes: null
+     namespace: default
+     ```
+   - **Match, consistent**: bump the existing fact's `confidence`
+     (min +0.1, max 1.0) and add the source episode to its list
+   - **Match, contradictory** (new info negates old): create a new fact
+     with `supersedes: <old_fact_id>`, reduce old fact's confidence to 30%
+5. Mark processed episodes as `consolidated: true`.
+6. Report: facts created, updated, superseded, conflicts detected.
+
+## What to expect
+
+- New `.fact.yaml` files in `memory/semantic/`
+- Updated confidence scores on existing facts
+- Supersession chains for corrected knowledge
+- Episodes marked as consolidated (won't be reprocessed)
+
+## Working memory
+
+If consolidation produces high-importance facts relevant to the user
+model or environment, also update `memory/working/MEMORY.md` sections
+(`user_model`, `environment`, `active_goals`, `pinned_memories`).
+""")
 
     # ------------------------------------------------------------------
     # CLAUDE.md update

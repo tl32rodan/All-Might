@@ -189,12 +189,12 @@ class TestProjectInitializer:
 
         claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
-        assert "NEVER" in content
-        assert "sidecar" in content.lower()
-        assert "config.yaml" in content
+        assert "/search" in content
+        assert "/enrich" in content
+        assert "one-for-all" in content.lower()
 
-    def test_claude_md_explains_how_it_works(self, sample_project):
-        """Test that CLAUDE.md explains how All-Might works."""
+    def test_claude_md_is_what_not_how(self, sample_project):
+        """CLAUDE.md should say WHAT you can do, not HOW (that's in skills)."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
@@ -203,8 +203,11 @@ class TestProjectInitializer:
 
         claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
-        assert "How It Works" in content
-        assert "corpus" in content.lower() or "corpora" in content.lower()
+        # Should point to skill for details
+        assert "one-for-all" in content
+        # Should NOT contain SMAK implementation details
+        assert "smak search" not in content
+        assert "smak enrich" not in content
 
     def test_sos_skill_enrichment_crossref(self, sample_project):
         """Test that SOS skill cross-references the enrichment protocol."""
@@ -219,8 +222,8 @@ class TestProjectInitializer:
         assert "/enrich" in sos_skill
         assert "enrichment-protocol" in sos_skill
 
-    def test_claude_md_has_standalone_hub_architecture(self, sample_project):
-        """Test that CLAUDE.md describes the standalone hub architecture."""
+    def test_claude_md_has_getting_started(self, sample_project):
+        """Test that CLAUDE.md has getting started steps."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
@@ -229,9 +232,8 @@ class TestProjectInitializer:
 
         claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
-        assert "standalone" in content.lower()
-        assert "config.yaml" in content
-        assert "smak/" in content or "search data" in content.lower()
+        assert "Getting Started" in content
+        assert "/ingest" in content
 
     def test_sos_skill_has_standalone_hub_and_config_management(self, sample_project):
         """Test that SOS skill includes standalone hub and config.yaml guidance."""

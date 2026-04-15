@@ -91,15 +91,15 @@ class TestOneForAllGenerator:
         content = skill_path.read_text()
         assert "one-for-all" in content
 
-    def test_one_for_all_includes_enrichment_protocol(self, initialized_project):
-        """Test that enrichment protocol is included in one-for-all."""
+    def test_one_for_all_includes_enrichment_guide(self, initialized_project):
+        """Test that enrichment guidance is included in one-for-all."""
         config_path = initialized_project / "config.yaml"
         generator = OneForAllGenerator()
         content = generator.generate(config_path)
 
-        assert "Enrichment Protocol" in content
-        assert "/enrich" in content
-        assert "Guardrails" in content
+        assert "When to Enrich" in content
+        assert "smak enrich" in content
+        assert "sidecar" in content.lower()
 
     def test_generate_writes_skill_only(self, initialized_project):
         """Test that regeneration updates the skill file (commands are init-only)."""
@@ -143,17 +143,18 @@ class TestOneForAllGenerator:
         assert "One For All" in content1
         assert "One For All" in content2
 
-    def test_one_for_all_has_enrichment_and_guardrails(self, initialized_project):
-        """Test that one-for-all includes enrichment protocol and guardrails."""
+    def test_one_for_all_has_smak_reference(self, initialized_project):
+        """Test that one-for-all teaches agent about SMAK operations."""
         config_path = initialized_project / "config.yaml"
         generator = OneForAllGenerator()
         content = generator.generate(config_path)
 
-        assert "Enrichment Protocol" in content
-        assert "Guardrails" in content
-        assert "NEVER" in content
+        assert "SMAK" in content  # Agent should know about SMAK
+        assert "smak search" in content
+        assert "smak enrich" in content
+        assert "smak ingest" in content
+        assert "Do NOT" in content or "NEVER" in content  # Guardrails
         assert "sidecar" in content.lower()
-        assert "UID format" in content.lower() or "uid format" in content.lower()
 
 
 class TestQuirks:
