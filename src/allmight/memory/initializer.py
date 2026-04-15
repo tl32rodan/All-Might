@@ -299,12 +299,12 @@ a three-layer persistent memory architecture for agent learning.
     # ------------------------------------------------------------------
 
     def _refresh_opencode_compat(self, root: Path) -> None:
-        """Ensure OpenCode symlinks cover newly-generated memory content.
+        """Ensure ``AGENTS.md`` symlink exists after memory init.
 
-        The main ``_create_opencode_compat`` in the project initializer
-        creates the base symlinks.  This method only needs to refresh the
-        ``AGENTS.md`` symlink in case CLAUDE.md was freshly created by
-        the memory initializer.
+        Only creates ``AGENTS.md → CLAUDE.md``.  We do NOT touch the
+        ``.opencode/`` directory — it is OpenCode's own runtime dir
+        (node_modules, plugins, etc.) and pre-creating it causes
+        module-resolution errors.  OpenCode reads ``.claude/`` natively.
         """
         import os
 
@@ -312,17 +312,3 @@ a three-layer persistent memory architecture for agent learning.
         claude_md = root / "CLAUDE.md"
         if claude_md.exists() and not agents_md.exists():
             os.symlink("CLAUDE.md", str(agents_md))
-
-        # Ensure .opencode/ symlinks exist (idempotent)
-        opencode_dir = root / ".opencode"
-        claude_dir = root / ".claude"
-        if claude_dir.is_dir():
-            opencode_dir.mkdir(exist_ok=True)
-            for subdir in ("skills", "commands"):
-                source = claude_dir / subdir
-                target = opencode_dir / subdir
-                if source.is_dir() and not target.exists():
-                    os.symlink(
-                        os.path.relpath(str(source), str(opencode_dir)),
-                        str(target),
-                    )

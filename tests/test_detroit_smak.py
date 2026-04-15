@@ -306,27 +306,13 @@ class TestProjectInitializer:
         assert agents_md.is_symlink()
         assert agents_md.resolve() == claude_md.resolve()
 
-    def test_opencode_skills_symlink(self, sample_project):
-        """.opencode/skills/ should symlink to .claude/skills/."""
+    def test_opencode_no_dotdir_created(self, sample_project):
+        """.opencode/ should NOT be created — it is OpenCode's runtime dir."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
         ProjectInitializer().initialize(manifest)
 
-        opencode_skills = sample_project / ".opencode" / "skills"
-        claude_skills = sample_project / ".claude" / "skills"
-        assert opencode_skills.is_symlink()
-        assert opencode_skills.resolve() == claude_skills.resolve()
-
-    def test_opencode_commands_symlink(self, sample_project):
-        """.opencode/commands/ should symlink to .claude/commands/."""
-        scanner = ProjectScanner()
-        manifest = scanner.scan(sample_project)
-        ProjectInitializer().initialize(manifest)
-
-        opencode_cmds = sample_project / ".opencode" / "commands"
-        claude_cmds = sample_project / ".claude" / "commands"
-        assert opencode_cmds.is_symlink()
-        assert opencode_cmds.resolve() == claude_cmds.resolve()
+        assert not (sample_project / ".opencode").exists()
 
     def test_opencode_compat_idempotent(self, sample_project):
         """Running init twice should not duplicate or break symlinks."""
@@ -337,4 +323,4 @@ class TestProjectInitializer:
         init.initialize(manifest)
 
         assert (sample_project / "AGENTS.md").is_symlink()
-        assert (sample_project / ".opencode" / "skills").is_symlink()
+        assert not (sample_project / ".opencode").exists()
