@@ -138,12 +138,11 @@ class TestCustomWeights:
             assert results[0].importance_score > results[1].importance_score
 
 
-class TestRetrieveWithSmak:
-    def test_merges_smak_results(self, retriever, semantic):
-        semantic.create_fact(content="Local fact about auth", category="test")
-        smak_results = [
-            {"id": "smak_1", "content": "SMAK result about auth", "score": 0.8, "source": "smak"},
-        ]
-        results = retriever.retrieve_with_smak("auth", smak_results, top_k=5)
-        sources = {r.source for r in results}
-        assert "smak" in sources
+class TestSmakIntegration:
+    def test_retriever_works_without_smak(self, retriever, semantic):
+        """When SMAK is unavailable, retrieval falls back to keyword matching."""
+        semantic.create_fact(content="Local fact about auth tokens", category="test")
+        results = retriever.retrieve("auth tokens")
+        assert len(results) >= 1
+        # Should use keyword fallback (SMAK not available in test env)
+        assert results[0].source == "semantic"

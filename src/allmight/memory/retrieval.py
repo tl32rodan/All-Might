@@ -1,32 +1,43 @@
 """Unified Retriever — composite-scored search across memory layers.
 
-Merges results from episodic and semantic stores, applies the three-
-dimensional scoring formula from Stanford's Generative Agents paper
-extended with Ebbinghaus decay:
+Merges results from episodic and semantic stores via SMAK vector search,
+applies the three-dimensional scoring formula from Stanford's Generative
+Agents paper extended with Ebbinghaus decay:
 
     score = w_r × recency + w_i × importance + w_rel × relevance
 
 where:
 - ``recency``   = decay score from :mod:`decay`
 - ``importance`` = entry's stored importance (0–1)
-- ``relevance``  = semantic similarity from SMAK vector search (0–1)
+- ``relevance``  = SMAK semantic similarity (0–1), with keyword fallback
 
 Working memory (Layer 1) is NOT searched — it is already in context.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
+from ..bridge.smak_bridge import SmakBridge, SmakBridgeError
 from ..core.domain import MemoryConfig, RetrievalResult
 from .decay import compute_decay_score
 from .episodic import EpisodicMemoryStore
 from .semantic import SemanticMemoryStore
 
+log = logging.getLogger(__name__)
+
 
 class UnifiedRetriever:
-    """Searches across episodic + semantic stores with composite scoring."""
+    """Searches across episodic + semantic stores with composite scoring.
+
+    When SMAK is available (and the ``episodes`` / ``semantic_facts``
+    indices are ingested), retrieval uses **vector similarity** for the
+    relevance dimension.  When SMAK is not available, it falls back to
+    keyword-overlap scoring transparently.
+    """
 
     def __init__(
         self,
@@ -38,6 +49,22 @@ class UnifiedRetriever:
         self.episodic = EpisodicMemoryStore(root)
         self.semantic = SemanticMemoryStore(root)
 
+        # Attempt to initialise SMAK bridge for semantic search
+        self._bridge: SmakBridge | None = None
+        config_path = root / "config.yaml"
+        if config_path.exists():
+            try:
+                self._bridge = SmakBridge(config_path)
+                # Quick health check — if SMAK CLI is not on PATH this
+                # will raise and we fall back to keyword matching.
+                self._bridge.health()
+            except (SmakBridgeError, Exception):
+                self._bridge = None
+
+    # ------------------------------------------------------------------
+    # Primary API
+    # ------------------------------------------------------------------
+
     def retrieve(
         self,
         query: str,
@@ -48,30 +75,73 @@ class UnifiedRetriever:
     ) -> list[RetrievalResult]:
         """Search all memory layers and return scored results.
 
-        This is a local-only implementation that does keyword matching
-        on in-memory stores.  When SMAK is available, the caller can
-        enrich ``relevance_score`` with vector similarity.
+        Strategy:
+        1. If SMAK is available → vector search ``episodes`` and
+           ``semantic_facts`` indices for relevance scores.
+        2. Always do a local scan as well (catches entries not yet
+           ingested into SMAK).
+        3. Merge, apply composite scoring, deduplicate, return top-K.
         """
-        candidates: list[RetrievalResult] = []
         now = datetime.now(timezone.utc)
         weights = self.config.retrieval_weights
         w_rec = weights.get("recency", 0.3)
         w_imp = weights.get("importance", 0.3)
         w_rel = weights.get("relevance", 0.4)
 
-        query_lower = query.lower()
+        candidates: list[RetrievalResult] = []
 
-        # --- Episodic candidates ---
-        episodes = self.episodic.list_episodes(limit=200)
-        for ep in episodes:
-            relevance = self._text_relevance(query_lower, ep.summary, ep.topics)
+        # --- SMAK vector search (when available) ---
+        smak_hits = self._smak_search(query, top_k=top_k * 3)
+        smak_id_scores: dict[str, float] = {}  # id → relevance from SMAK
+
+        for hit in smak_hits:
+            hit_id = hit.get("id", "")
+            smak_score = hit.get("score", 0.0)
+            smak_id_scores[hit_id] = smak_score
+
+            # Build a candidate from the SMAK hit directly
+            source_index = hit.get("index", "")
+            memory_type = "episode" if source_index == "episodes" else "fact"
+            source_label = "episodic" if memory_type == "episode" else "semantic"
+
+            # Try to load the full record for metadata
+            recency, importance = self._load_metadata(
+                hit_id, memory_type, now
+            )
+
+            score = w_rec * recency + w_imp * importance + w_rel * smak_score
+
+            if not include_dormant and recency < 0.10:
+                continue
+
+            candidates.append(RetrievalResult(
+                memory_id=hit_id,
+                content=hit.get("content", hit.get("text", "")),
+                memory_type=memory_type,
+                score=score,
+                recency_score=recency,
+                importance_score=importance,
+                relevance_score=smak_score,
+                source=source_label,
+            ))
+
+        # --- Local scan (catch un-ingested entries + fallback) ---
+        query_lower = query.lower()
+        seen_ids = {c.memory_id for c in candidates}
+
+        # Episodic
+        for ep in self.episodic.list_episodes(limit=200):
+            if ep.id in seen_ids:
+                continue
+            relevance = smak_id_scores.get(
+                ep.id,
+                self._text_relevance(query_lower, ep.summary, ep.topics),
+            )
             if relevance <= 0:
                 continue
 
             recency = compute_decay_score(ep.started_at, 1, now=now)
-            importance = ep.importance
-
-            score = w_rec * recency + w_imp * importance + w_rel * relevance
+            score = w_rec * recency + w_imp * ep.importance + w_rel * relevance
 
             if not include_dormant and recency < 0.10:
                 continue
@@ -82,15 +152,19 @@ class UnifiedRetriever:
                 memory_type="episode",
                 score=score,
                 recency_score=recency,
-                importance_score=importance,
+                importance_score=ep.importance,
                 relevance_score=relevance,
                 source="episodic",
             ))
 
-        # --- Semantic candidates ---
-        facts = self.semantic.list_facts(limit=200, namespace=namespace)
-        for fact in facts:
-            relevance = self._text_relevance(query_lower, fact.content, [fact.category])
+        # Semantic facts
+        for fact in self.semantic.list_facts(limit=200, namespace=namespace):
+            if fact.id in seen_ids:
+                continue
+            relevance = smak_id_scores.get(
+                fact.id,
+                self._text_relevance(query_lower, fact.content, [fact.category]),
+            )
             if relevance <= 0:
                 continue
 
@@ -99,9 +173,7 @@ class UnifiedRetriever:
                 fact.access_count,
                 now=now,
             )
-            importance = fact.importance
-
-            score = w_rec * recency + w_imp * importance + w_rel * relevance
+            score = w_rec * recency + w_imp * fact.importance + w_rel * relevance
 
             if not include_dormant and recency < 0.10:
                 continue
@@ -112,12 +184,12 @@ class UnifiedRetriever:
                 memory_type="fact",
                 score=score,
                 recency_score=recency,
-                importance_score=importance,
+                importance_score=fact.importance,
                 relevance_score=relevance,
                 source="semantic",
             ))
 
-        # Sort by composite score, deduplicate, truncate
+        # --- Deduplicate, sort, truncate ---
         candidates.sort(key=lambda r: r.score, reverse=True)
         seen: set[str] = set()
         unique: list[RetrievalResult] = []
@@ -125,65 +197,89 @@ class UnifiedRetriever:
             if c.memory_id not in seen:
                 seen.add(c.memory_id)
                 unique.append(c)
+
+        # Bump access metadata on returned results
+        for r in unique[:top_k]:
+            if r.memory_type == "fact":
+                self.semantic.record_access(r.memory_id)
+
         return unique[:top_k]
 
     # ------------------------------------------------------------------
-    # SMAK-enhanced retrieval (optional, when bridge is available)
+    # SMAK integration
     # ------------------------------------------------------------------
 
-    def retrieve_with_smak(
+    def _smak_search(self, query: str, top_k: int = 15) -> list[dict[str, Any]]:
+        """Search SMAK memory indices.  Returns [] if SMAK unavailable."""
+        if self._bridge is None:
+            return []
+
+        results: list[dict[str, Any]] = []
+
+        for index_name in ("episodes", "semantic_facts"):
+            try:
+                raw = self._bridge.search(query, index=index_name, top_k=top_k)
+                # SMAK returns {"results": [{"id", "text"|"content", "score", ...}]}
+                for hit in raw.get("results", []):
+                    hit["index"] = index_name
+                    results.append(hit)
+            except SmakBridgeError:
+                log.debug("SMAK search failed for index %s", index_name)
+                continue
+
+        return results
+
+    def _load_metadata(
         self,
-        query: str,
-        smak_results: list[dict],
-        *,
-        top_k: int = 5,
-        namespace: str = "default",
-    ) -> list[RetrievalResult]:
-        """Merge SMAK vector search results with local memory search.
+        entry_id: str,
+        memory_type: str,
+        now: datetime,
+    ) -> tuple[float, float]:
+        """Load recency and importance from the local store for a SMAK hit.
 
-        ``smak_results`` should be a list of dicts with at least
-        ``{"id": str, "content": str, "score": float, "source": str}``.
+        Returns ``(recency_score, importance)`` or sensible defaults.
         """
-        local = self.retrieve(query, top_k=top_k * 2, namespace=namespace)
-
-        now = datetime.now(timezone.utc)
-        weights = self.config.retrieval_weights
-        w_rec = weights.get("recency", 0.3)
-        w_imp = weights.get("importance", 0.3)
-        w_rel = weights.get("relevance", 0.4)
-
-        for sr in smak_results:
-            local.append(RetrievalResult(
-                memory_id=sr.get("id", ""),
-                content=sr.get("content", ""),
-                memory_type=sr.get("source", "smak"),
-                score=w_rel * sr.get("score", 0.0),
-                recency_score=0.0,
-                importance_score=0.0,
-                relevance_score=sr.get("score", 0.0),
-                source="smak",
-            ))
-
-        local.sort(key=lambda r: r.score, reverse=True)
-        return local[:top_k]
+        if memory_type == "episode":
+            ep = self.episodic.get_episode(entry_id)
+            if ep:
+                return (
+                    compute_decay_score(ep.started_at, 1, now=now),
+                    ep.importance,
+                )
+        else:
+            fact = self.semantic.get_fact(entry_id)
+            if fact:
+                return (
+                    compute_decay_score(
+                        fact.last_accessed or fact.updated_at or fact.created_at,
+                        fact.access_count,
+                        now=now,
+                    ),
+                    fact.importance,
+                )
+        # Defaults when local record not found
+        return (0.5, 0.5)
 
     # ------------------------------------------------------------------
-    # Internal
+    # Keyword fallback
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _text_relevance(query_lower: str, text: str, extra_terms: list[str] | None = None) -> float:
+    def _text_relevance(
+        query_lower: str,
+        text: str,
+        extra_terms: list[str] | None = None,
+    ) -> float:
         """Simple keyword-overlap relevance (0–1).
 
-        This is a stopgap until SMAK vector search is wired in.
-        Any word overlap gives a positive signal.
+        Used as fallback when SMAK is not available or when entries
+        have not been ingested yet.
         """
         query_words = set(query_lower.split())
         if not query_words:
             return 0.0
 
-        text_lower = text.lower()
-        all_text = text_lower
+        all_text = text.lower()
         if extra_terms:
             all_text += " " + " ".join(t.lower() for t in extra_terms)
 
