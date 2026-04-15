@@ -38,11 +38,11 @@ def main():
 
 @main.command()
 @click.argument("path", default=".", type=click.Path(exists=True))
-@click.option("--smak-path", type=click.Path(exists=True), help="Path to SMAK installation (for skill copying)")
+@click.option("--smak-path", type=click.Path(exists=True), help="Path to skill installation (for skill copying)")
 @click.option("--sos", is_flag=True, help="Enable SOS/EDA environment support")
 @click.option("--with-memory", is_flag=True, help="Also initialize the agent memory subsystem")
 def init(path: str, smak_path: str | None, sos: bool, with_memory: bool):
-    """Detroit SMAK — one punch to bootstrap the entire workspace.
+    """Detroit — one punch to bootstrap the entire workspace.
 
     Scans the project, creates config.yaml with project metadata and
     corpora, and injects .claude/skills and commands.
@@ -63,7 +63,7 @@ def init(path: str, smak_path: str | None, sos: bool, with_memory: bool):
     smak = P(smak_path).resolve() if smak_path else None
     initializer.initialize(manifest, smak_path=smak)
 
-    click.echo(f"Detroit SMAK! Project '{manifest.name}' initialized.")
+    click.echo(f"Detroit! Project '{manifest.name}' initialized.")
     click.echo(f"  Languages: {', '.join(manifest.languages) or 'none detected'}")
     click.echo(f"  Indices:   {len(manifest.indices)}")
     click.echo(f"  Config:    {root / 'config.yaml'}")
