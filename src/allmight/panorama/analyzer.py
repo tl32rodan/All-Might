@@ -147,6 +147,85 @@ class PanoramaAnalyzer:
         roots = set(find(n.uid) for n in nodes)
         return len(roots)
 
+    def analyze_with_memory(self, config_path: Path) -> KnowledgeGraph:
+        """Build the knowledge graph including semantic memory facts.
+
+        Extends :meth:`analyze` by injecting semantic facts as nodes
+        and their source-episode links as edges.  This creates a
+        unified view of code knowledge + agent memory.
+        """
+        graph = self.analyze(config_path)
+
+        root = Path(
+            (load_config(config_path)).get("project", {}).get(
+                "root", config_path.parent
+            )
+        )
+        facts_dir = root / "memory" / "semantic"
+        if not facts_dir.is_dir():
+            return graph
+
+        for fact_file in facts_dir.glob("*.fact.yaml"):
+            try:
+                with open(fact_file) as f:
+                    data = yaml.safe_load(f) or {}
+            except Exception:
+                continue
+
+            fact_id = data.get("id", fact_file.stem)
+            content = data.get("content", "")
+            category = data.get("category", "")
+
+            # Add fact as a graph node
+            uid = f"memory::{fact_id}"
+            graph.nodes.append(GraphNode(
+                uid=uid,
+                name=f"[{category}] {content[:60]}",
+                file_path="memory/semantic",
+                index="semantic_memory",
+                has_intent=True,
+                intent=content,
+            ))
+
+            # Link fact to its source episodes
+            for ep_id in data.get("source_episodes", []):
+                ep_uid = f"memory::{ep_id}"
+                graph.edges.append(GraphEdge(
+                    source_uid=uid,
+                    target_uid=ep_uid,
+                    source_index="semantic_memory",
+                ))
+
+            # Link to superseded fact
+            supersedes = data.get("supersedes")
+            if supersedes:
+                graph.edges.append(GraphEdge(
+                    source_uid=uid,
+                    target_uid=f"memory::{supersedes}",
+                    source_index="semantic_memory",
+                ))
+
+        # Recompute metrics
+        n = len(graph.nodes)
+        e = len(graph.edges)
+        node_set = set(nd.uid for nd in graph.nodes)
+        edge_connected = set()
+        for edge in graph.edges:
+            edge_connected.add(edge.source_uid)
+            edge_connected.add(edge.target_uid)
+        orphans = node_set - edge_connected
+
+        graph.metrics = GraphMetrics(
+            total_nodes=n,
+            total_edges=e,
+            nodes_with_intent=sum(1 for nd in graph.nodes if nd.has_intent),
+            orphan_nodes=len(orphans),
+            clusters=self._count_components(graph.nodes, graph.edges),
+            density=e / (n * (n - 1)) if n > 1 else 0.0,
+        )
+
+        return graph
+
     def _normalize_uid(self, uid: str) -> str:
         """Normalize a UID by removing ./ prefix from path component."""
         if "::" in uid:

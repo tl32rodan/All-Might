@@ -17,6 +17,10 @@ class TriggerEvent(Enum):
     ON_DISCOVER_RELATION = "on_discover_relation"
     ON_CODE_CHANGE = "on_code_change"
     ON_SEARCH_HIT = "on_search_hit"
+    # Agent Memory triggers
+    ON_SESSION_END = "on_session_end"
+    ON_MEMORY_CONFLICT = "on_memory_conflict"
+    ON_CONSOLIDATION = "on_consolidation"
 
 
 @dataclass
@@ -65,6 +69,25 @@ def default_policy() -> EnrichmentPolicy:
                 condition="Search returned a hit with no sidecar",
                 action="Suggest: enrich_file to create stub sidecar",
                 priority="low",
+            ),
+            # Agent Memory rules
+            EnrichmentRule(
+                trigger=TriggerEvent.ON_SESSION_END,
+                condition="Session produced observations about code symbols",
+                action="Suggest: record episode and check for enrichable observations",
+                priority="normal",
+            ),
+            EnrichmentRule(
+                trigger=TriggerEvent.ON_MEMORY_CONFLICT,
+                condition="New observation contradicts an existing semantic fact about a symbol",
+                action="Suggest: supersede fact and update sidecar intent if applicable",
+                priority="high",
+            ),
+            EnrichmentRule(
+                trigger=TriggerEvent.ON_CONSOLIDATION,
+                condition="Consolidation extracted a code-structure observation",
+                action="Suggest: create sidecar enrichment from consolidated memory",
+                priority="normal",
             ),
         ],
     )
