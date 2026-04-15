@@ -78,7 +78,7 @@ below.  "Enough" means at minimum: domain/purpose + at least one workspace name.
 Write to `.claude/CLAUDE.md` using the hub template structure:
 
 - **Identity & Mission** — from domain/purpose and goal
-- **SMAK Philosophy** — static section (always include)
+- **Knowledge Graph Philosophy** — static section (always include)
 - **Online vs VC** — include only if SOS/EDA environment detected; omit otherwise
 - **Hub Architecture** — static section (always include)
 - **Workspace Registry** — table from workspace list

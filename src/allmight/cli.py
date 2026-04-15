@@ -5,8 +5,8 @@ operations that cannot be agent-driven:
 
     allmight init [path]                — Bootstrap a workspace
     allmight power-level [--config]     — Show knowledge graph coverage
-    allmight config add-index           — Add a SMAK index
-    allmight config remove-index        — Remove a SMAK index
+    allmight config add-index           — Add a corpus
+    allmight config remove-index        — Remove a corpus
     allmight config list-indices        — List configured indices
     allmight config update-index        — Update an existing index
 
@@ -27,7 +27,7 @@ from . import __version__
 def main():
     """All-Might: Active Knowledge Graph Framework.
 
-    Agent harness for multi-workspace SMAK orchestration.
+    Agent harness for multi-workspace knowledge graph orchestration.
     Use 'init' to bootstrap, then let the agent drive via skills.
     """
 
@@ -45,7 +45,7 @@ def init(path: str, smak_path: str | None, sos: bool, with_memory: bool):
     """Detroit SMAK — one punch to bootstrap the entire workspace.
 
     Scans the project, creates config.yaml with project metadata and
-    SMAK indices, and injects .claude/skills and commands.
+    corpora, and injects .claude/skills and commands.
     """
     from pathlib import Path as P
 
@@ -116,18 +116,18 @@ def power_level(config_path: str):
 
 @main.group()
 def config():
-    """Manage SMAK indices and project configuration."""
+    """Manage corpora and project configuration."""
 
 
 @config.command("add-index")
 @click.option("--name", required=True, help="Index name")
 @click.option("--description", required=True, help="Index description")
 @click.option("--paths", required=True, multiple=True, help="Paths to include (repeatable)")
-@click.option("--uri", default=None, help="Vector store URI (default: ./smak/<name>)")
+@click.option("--uri", default=None, help="Corpus storage path (default: ./smak/<name>)")
 @click.option("--path-env", default=None, help="Environment variable for path prefix")
 @click.option("--root", "root_path", default=".", type=click.Path(exists=True), help="Project root")
 def config_add_index(name: str, description: str, paths: tuple, uri: str | None, path_env: str | None, root_path: str):
-    """Add a new SMAK index."""
+    """Add a new corpus."""
     from pathlib import Path as P
 
     from .config import ConfigManager
@@ -141,7 +141,7 @@ def config_add_index(name: str, description: str, paths: tuple, uri: str | None,
 @click.option("--name", required=True, help="Index name to remove")
 @click.option("--root", "root_path", default=".", type=click.Path(exists=True), help="Project root")
 def config_remove_index(name: str, root_path: str):
-    """Remove an existing SMAK index."""
+    """Remove an existing corpus."""
     from pathlib import Path as P
 
     from .config import ConfigManager
@@ -155,7 +155,7 @@ def config_remove_index(name: str, root_path: str):
 @click.option("--root", "root_path", default=".", type=click.Path(exists=True), help="Project root")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def config_list_indices(root_path: str, as_json: bool):
-    """List all SMAK indices."""
+    """List all corpora."""
     import json
     from pathlib import Path as P
 
@@ -183,7 +183,7 @@ def config_list_indices(root_path: str, as_json: bool):
 @click.option("--paths", multiple=True, help="New paths (repeatable)")
 @click.option("--root", "root_path", default=".", type=click.Path(exists=True), help="Project root")
 def config_update_index(name: str, description: str | None, paths: tuple, root_path: str):
-    """Update an existing SMAK index."""
+    """Update an existing corpus."""
     from pathlib import Path as P
 
     from .config import ConfigManager
@@ -217,7 +217,7 @@ def memory():
 def memory_init(path: str):
     """Initialize the agent memory subsystem.
 
-    Creates memory/ directory structure, config, SMAK indices for
+    Creates memory/ directory structure, config, memory stores for
     episodes and semantic facts, memory skill, and slash commands.
     Requires config.yaml to exist (run 'allmight init' first).
     """

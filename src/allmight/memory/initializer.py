@@ -1,7 +1,11 @@
 """Memory Initializer — bootstraps the agent memory subsystem.
 
-Creates the ``memory/`` directory structure, memory config, SMAK
-indices for episodes and facts, memory skills, and slash commands.
+Creates the ``memory/`` directory structure, memory config with store
+definitions, memory skills, and slash commands.
+
+Memory stores are managed **independently** from workspace corpora.
+Store definitions live in ``memory/config.yaml`` and an internal
+search-engine config is generated at ``memory/smak_config.yaml``.
 
 Follows the same pattern as ``detroit_smak/initializer.py``.
 """
@@ -11,7 +15,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..config import ConfigManager
 from .config import MemoryConfigManager
 from .episodic import EpisodicMemoryStore
 from .semantic import SemanticMemoryStore
@@ -26,7 +29,7 @@ class MemoryInitializer:
 
         Expects ``config.yaml`` to already exist (run ``allmight init`` first).
         """
-        # 1. Create memory config
+        # 1. Create memory config (includes store definitions)
         cfg_mgr = MemoryConfigManager(root)
         cfg = cfg_mgr.initialize()
 
@@ -40,44 +43,46 @@ class MemoryInitializer:
         semantic = SemanticMemoryStore(root)
         semantic.initialize()
 
-        # 3. Add SMAK indices for memory stores
-        self._add_memory_indices(root)
+        # 3. Create memory store directories
+        (root / "memory" / "store").mkdir(parents=True, exist_ok=True)
 
-        # 4. Generate memory skill
+        # 4. Migrate: clean up legacy memory indices from workspace config.yaml
+        self._migrate_legacy_indices(root)
+
+        # 5. Generate memory skill
         self._generate_memory_skill(root)
 
-        # 5. Generate memory commands
+        # 6. Generate memory commands
         self._generate_memory_commands(root)
 
-        # 6. Update CLAUDE.md
+        # 7. Update CLAUDE.md
         self._update_claude_md(root)
 
-        # 7. Refresh OpenCode compatibility symlinks
+        # 8. Refresh OpenCode compatibility symlinks
         self._refresh_opencode_compat(root)
 
     # ------------------------------------------------------------------
-    # SMAK indices
+    # Migration
     # ------------------------------------------------------------------
 
-    def _add_memory_indices(self, root: Path) -> None:
-        """Add ``episodes`` and ``semantic_facts`` indices to config.yaml."""
-        mgr = ConfigManager(root)
+    def _migrate_legacy_indices(self, root: Path) -> None:
+        """Remove memory indices from workspace config.yaml if present.
 
-        if mgr.get_index("episodes") is None:
-            mgr.add_index(
-                name="episodes",
-                description="Agent session episodes (memory system)",
-                paths=["./memory/episodes"],
-                uri="./smak/episodes",
-            )
+        Earlier versions incorrectly added ``episodes`` and
+        ``semantic_facts`` to the workspace config.  Clean them up.
+        """
+        config_path = root / "config.yaml"
+        if not config_path.exists():
+            return
 
-        if mgr.get_index("semantic_facts") is None:
-            mgr.add_index(
-                name="semantic_facts",
-                description="Consolidated semantic facts (memory system)",
-                paths=["./memory/semantic"],
-                uri="./smak/semantic_facts",
-            )
+        try:
+            from ..config import ConfigManager
+            mgr = ConfigManager(root)
+            for name in ("episodes", "semantic_facts"):
+                if mgr.get_index(name) is not None:
+                    mgr.remove_index(name)
+        except Exception:
+            pass  # config.yaml may not be parseable
 
     # ------------------------------------------------------------------
     # Skill generation
@@ -262,7 +267,7 @@ a three-layer persistent memory architecture for agent learning.
 | Layer | Location | Purpose |
 |-------|----------|---------|
 | Working Memory | `memory/working/MEMORY.md` | Always-in-context facts (user model, environment, goals) |
-| Episodic Memory | `memory/episodes/` | Append-only session records, SMAK-searchable |
+| Episodic Memory | `memory/episodes/` | Append-only session records, searchable |
 | Semantic Memory | `memory/semantic/` | Consolidated facts with confidence scoring and decay |
 
 ### Memory Commands

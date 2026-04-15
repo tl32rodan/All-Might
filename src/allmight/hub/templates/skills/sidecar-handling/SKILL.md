@@ -20,15 +20,15 @@ Sidecar files (`.{filename}.sidecar.yaml`) store per-symbol metadata (intent,
 relations) beside source files.  In an SOS environment, three layers exist:
 
 ```
-Layer 1: Online ($DDI_ROOT_PATH)    <- Live source + sidecars (SMAK indexes THIS)
+Layer 1: Online ($DDI_ROOT_PATH)    <- Live source + sidecars (corpus indexes THIS)
 Layer 2: VC release (e.g. rel1.0)   <- Frozen snapshot (immutable)
 Layer 3: SOS workspace (/users/you/ws_xxx/)  <- Personal checkout (read-write)
 ```
 
-| Layer | Source | Sidecars | Mutable? | SMAK indexes? |
+| Layer | Source | Sidecars | Mutable? | Indexed? |
 |-------|--------|----------|----------|---------------|
 | Online | Latest | Latest | Yes (after check-in) | **Yes** |
-| VC release | Frozen | Frozen | No | No (uses online FAISS) |
+| VC release | Frozen | Frozen | No | No (uses online data) |
 | SOS workspace | Checked-out copy | Editable | Yes | No (personal) |
 
 ## Sidecar File Schema
@@ -72,7 +72,7 @@ $DDI_ROOT_PATH/relative/path/to/file.py::*          (whole file)
 
 - `$DDI_ROOT_PATH` is set and points to online
 - An SOS workspace exists (or you will create one)
-- The target workspace's SMAK indices are ingested
+- The target workspace's corpora are ingested
 
 ### Step 1: Identify What to Enrich
 
@@ -121,7 +121,7 @@ sos check-in <sidecar_file>
 
 After check-in:
 - The sidecar is committed to Layer 1 (online) or Layer 2 (VC)
-- It becomes available for `smak ingest` and team-wide search
+- It becomes available for `/ingest` and team-wide search
 - Path mismatch warnings (if any) are resolved
 
 ### Step 5: Verify
@@ -143,7 +143,7 @@ After check-in:
 
 ## Path Mismatch Warnings
 
-When editing sidecars in an SOS workspace (Layer 3), SMAK may emit path mismatch
+When editing sidecars in an SOS workspace (Layer 3), All-Might may emit path mismatch
 warnings.  **This is normal** — it means you're editing at a workspace path while
 relations point to the canonical `$DDI_ROOT_PATH`.  After `sos check-in`,
 everything aligns.
@@ -158,9 +158,9 @@ Do NOT:
 1. **NEVER** edit `.sidecar.yaml` files by hand — not in online, not in VC, not
    in a workspace.  Always use `/enrich`.
 2. **NEVER** hardcode absolute paths in relations.  Always use `$DDI_ROOT_PATH/...`.
-3. **ALWAYS** set `$DDI_ROOT_PATH` before running SMAK commands.
+3. **ALWAYS** set `$DDI_ROOT_PATH` before running All-Might commands.
 4. **ALWAYS** `sos check-in` after enrichment to make sidecars available team-wide.
-5. **ALWAYS** re-ingest after enrichment to update FAISS indices.
+5. **ALWAYS** re-ingest after enrichment to update search indices.
 
 ## Interaction with Other Skills
 

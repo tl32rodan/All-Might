@@ -159,14 +159,15 @@ class TestOneForAllGenerator:
         assert "Do NOT edit" in content
         assert "UID Format" in content
 
-    def test_one_for_all_explains_smak(self, initialized_project):
-        """Test that one-for-all skill explains SMAK philosophy."""
+    def test_one_for_all_explains_allmight(self, initialized_project):
+        """Test that one-for-all skill explains All-Might concepts."""
         config_path = initialized_project / "config.yaml"
         generator = OneForAllGenerator()
         content = generator.generate(config_path)
 
-        assert "Semantic Mesh Augmented Kernel" in content
-        assert "hand-edit" in content.lower() or "hand-edit sidecar" in content.lower()
+        assert "All-Might" in content
+        assert "corpus" in content.lower() or "corpora" in content.lower()
+        assert "hand-edit" in content.lower()
 
     def test_one_for_all_has_standalone_hub_note(self, initialized_project):
         """Test that one-for-all notes the standalone hub architecture."""

@@ -8,7 +8,7 @@
 Phase 0: Bootstrap
   ├─ allmight init [--with-memory]  ──────>
   ├─ (optional) allmight memory init ────>
-  └─ smak ingest                   ──────>
+  └─ /ingest                       ──────>
 
 Phase 1: Knowledge Discovery
   │                                        ├─ /search "query"
@@ -52,7 +52,7 @@ Phase 6: Garbage Collection
 | 時機 | 動作 | 說明 |
 |------|------|------|
 | **專案初始化** | `allmight init [--with-memory]` | 一次性操作, 建立 workspace |
-| **首次 ingest** | `smak ingest` | 建立 FAISS 向量索引 |
+| **首次 ingest** | `/ingest` | 建立語料庫搜尋索引 |
 | **記憶初始化** | `allmight memory init` | 若未用 `--with-memory` flag |
 | **修正 agent** | `/memory-update user_model "..."` | 當 agent 記錄不準確時手動修正 |
 | **設定偏好** | `/memory-update user_model "偏好簡潔回答"` | 影響所有後續 session |
@@ -107,7 +107,7 @@ Phase 6: Garbage Collection
 │     - key_decisions: 重要決定        │
 │     - files_touched: 修改的檔案      │
 │  2. Episode 寫入 memory/episodes/    │ ← 自動
-│  3. SMAK ingest (if configured)      │ ← Hook 可觸發
+│  3. /ingest (if configured)           │ ← Hook 可觸發
 │  4. SessionEnd hook 清理             │ ← Hooks 自動
 │                                      │
 └──────────────────────────────────────┘

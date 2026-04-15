@@ -104,7 +104,7 @@ The workspace `.claude/` is for **domain-specific knowledge only**.  Do NOT incl
 - SOS workflow instructions (lives in `sidecar-handling` skill)
 - Cross-workspace patterns (lives in hub CLAUDE.md, managed by `self-improving`)
 - Guardrails about sidecar editing (lives in hub CLAUDE.md)
-- SMAK philosophy or general instructions (lives in hub CLAUDE.md)
+- Knowledge graph philosophy or general instructions (lives in hub CLAUDE.md)
 
 ## Example
 

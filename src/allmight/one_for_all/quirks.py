@@ -47,7 +47,7 @@ QUIRKS: dict[str, AgentQuirk] = {
             "256K context — can ingest entire SKILL.md + large files",
             "Agent Swarm up to 100 parallel sub-agents",
             "Read SKILL.md manually at session start",
-            "MCP server connection required for SMAK tools",
+            "MCP server connection required for knowledge graph tools",
         ],
     ),
     "gpt": AgentQuirk(
@@ -59,7 +59,7 @@ QUIRKS: dict[str, AgentQuirk] = {
         notes=[
             "128K context — may need summarized SKILL.md for large projects",
             "Read SKILL.md manually at session start",
-            "MCP server connection required for SMAK tools",
+            "MCP server connection required for knowledge graph tools",
             "Be more selective with search — fewer tool calls available",
         ],
     ),

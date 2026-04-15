@@ -2,17 +2,17 @@
 name: one-for-all
 description: >-
   Project knowledge graph guide for {{ project_name }}.
-  Provides project structure, SMAK index reference, key enriched symbols,
+  Provides project structure, corpus reference, key enriched symbols,
   and current Power Level. Auto-loaded when agent needs to understand the project.
 ---
 
 # One For All — {{ project_name }}
 
-> **SMAK** (Semantic Mesh Augmented Kernel) is the vector search engine that indexes this codebase.
-> **All-Might** is the active layer you interact with — it wraps SMAK with commands, enrichment, and graph intelligence.
+> **All-Might** manages the corpora that index this codebase, providing semantic search,
+> enrichment, and graph intelligence.
 >
 > All knowledge graph operations go through **All-Might commands** (`/search`, `/enrich`, `/explain`, etc.).
-> You do NOT call SMAK MCP tools directly, and you do NOT hand-edit sidecar or config YAML files.
+> Do NOT hand-edit sidecar or config YAML files.
 >
 > Generated at: {{ generated_at }}
 
@@ -26,7 +26,7 @@ description: >-
 - **Frameworks**: {{ frameworks | join(', ') }}
 {% endif %}
 
-## 2. SMAK Index Reference
+## 2. Corpus Reference
 
 | Index | Description | Paths |
 |-------|-------------|-------|
@@ -37,9 +37,9 @@ description: >-
 Use `/list-indices` to verify indices are active.
 
 > **Note:** This workspace is a standalone hub — source code is at external paths
-> listed in the "Paths" column above. FAISS databases are stored locally in `./smak/`.
+> listed in the "Paths" column above. Search data stored locally in `./smak/`.
 > Sidecar files live beside the source files at those external paths, not here.
-> **Indices are built from online (Layer 1) only.** To verify features in version control
+> **Corpora are built from online (Layer 1) only.** To verify features in version control
 > releases, use SOS revision log matching (see `sos-smak` skill).
 
 ### Choosing the right index
@@ -94,12 +94,12 @@ Run `/power-level` to get fresh metrics, or `/regenerate` to update this skill.
 | `/search <query>` | Semantic search with graph context |
 | `/explain <uid>` | Full graph context for a symbol |
 | `/enrich` | Annotate a symbol with intent/relations |
-| `/ingest` | Trigger SMAK vector store ingest |
+| `/ingest` | Rebuild corpus |
 | `/power-level` | Check knowledge coverage metrics |
 | `/regenerate` | Update this skill with latest state |
 | `/panorama` | Export knowledge graph visualization |
 | `/graph-report` | Graph intelligence report |
-| `/add-index` | Add a new SMAK index |
+| `/add-index` | Add a new corpus |
 | `/remove-index` | Remove an index |
 | `/list-indices` | List all configured indices |
 

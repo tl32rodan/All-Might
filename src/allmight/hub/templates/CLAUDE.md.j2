@@ -4,9 +4,9 @@
 ## All-Might Hub — One For All
 
 You are operating inside an **All-Might hub** — a multi-workspace agent harness
-that manages {{ workspace_count }} SMAK workspaces.
+that manages {{ workspace_count }} knowledge workspaces.
 
-Each workspace is a SMAK instance that indexes one domain's source code from
+Each workspace indexes one domain's source code from
 **online** (`$DDI_ROOT_PATH`).  Your job is to build and maintain a knowledge
 graph across all managed workspaces through semantic search, enrichment, and
 self-improvement.
@@ -18,21 +18,13 @@ self-improvement.
 Use the `detroit-smak` skill to query any workspace.  Use `self-improving` to
 audit the hub's health.  Use `enrich` to inject know-how into a workspace.
 
-## What is SMAK
+## How It Works
 
-**SMAK** (Semantic Mesh Augmented Kernel) is a semantic search engine and vector
-store for code.  It indexes source files into FAISS vector indices, enables
+All-Might indexes source files into searchable **corpora**, enables
 natural-language search, and stores per-symbol metadata in **sidecar YAML files**
 (`.{filename}.sidecar.yaml`).
 
-**All-Might** sits on top of SMAK as the **active intelligence layer**:
-
-| Layer | Role |
-|-------|------|
-| **SMAK** | Indexing, vector search, sidecar file I/O |
-| **All-Might** | Agent-facing skills, enrichment protocol, graph intelligence, multi-workspace orchestration |
-
-Mental model: `init -> ingest -> search -> enrich -> knowledge graph`
+Mental model: `init -> /ingest -> /search -> /enrich -> knowledge graph`
 
 ## Online vs. Version Control (Global)
 
@@ -41,17 +33,17 @@ sub-agents do not need to know about online/VC — they just see "source code".
 
 ### Three-Layer Model
 
-| Layer | What | Mutable? | Indexed by SMAK? |
+| Layer | What | Mutable? | Indexed? |
 |-------|------|----------|-----------------|
 | **Online** (`$DDI_ROOT_PATH`) | Latest source — the live working tree | Yes | **Yes** |
-| **VC release** (e.g. `rel1.0`) | Frozen snapshot at a tag | No | No (same FAISS) |
+| **VC release** (e.g. `rel1.0`) | Frozen snapshot at a tag | No | No (same data) |
 | **SOS workspace** (`/users/you/ws_xxx/`) | Personal checkout for editing sidecars | Yes | No |
 
 ### Key Rules
 
 - `$DDI_ROOT_PATH` always points to **online** (latest, mutable).
-- All SMAK `/search` and `/explain` results come from **online**.
-- VC releases are frozen snapshots — they do NOT have separate FAISS indices.
+- All `/search` and `/explain` results come from **online**.
+- VC releases are frozen snapshots — they do NOT have separate search indices.
 - To verify whether a feature exists in a specific VC release:
   1. `/search` on online to find the relevant files/symbols
   2. Use `sos log` / `sos history` on the file to find the revision log entry
@@ -76,8 +68,8 @@ sub-agents do not need to know about online/VC — they just see "source code".
 |
 +-- workspaces/
     |-- <name>/                            <- One workspace per domain/flow
-    |   |-- config.yaml                    <- SMAK index config for this domain
-    |   |-- smak/                          <- FAISS databases (local)
+    |   |-- config.yaml                    <- Corpus configuration for this domain
+    |   |-- smak/                          <- Search data (local)
     |   |-- .claude/                       <- Domain-specific context (loaded by sub-agent)
     |   |   |-- CLAUDE.md                  <- Domain knowledge, symbol memory
     |   |   +-- skills/                    <- Domain-specific skills (if any)
@@ -89,7 +81,7 @@ sub-agents do not need to know about online/VC — they just see "source code".
 
 | Layer | Loaded by | Contains |
 |-------|-----------|----------|
-| **Hub .claude/** | Claude Code automatically (project root) | SMAK philosophy, guardrails, online/VC awareness, skill reference |
+| **Hub .claude/** | Claude Code automatically (project root) | Knowledge graph philosophy, guardrails, online/VC awareness, skill reference |
 | **Workspace .claude/** | Sub-agent (workspace cwd) | Domain-specific symbols, enrichment patterns, flow-specific know-how |
 
 When the `detroit-smak` skill dispatches a sub-agent to a workspace, the sub-agent
@@ -108,7 +100,6 @@ need to know about online/VC/SOS — it just works with "source code at these pa
 - **NEVER** operate on a workspace without first loading its `.claude/` context.
   Always use the `detroit-smak` skill for workspace queries — it handles context loading.
 - **ALWAYS** use All-Might skills and commands for knowledge graph operations.
-  SMAK MCP tools exist but are internal plumbing — agents must not call them directly.
 
 ## Skill Quick Reference
 

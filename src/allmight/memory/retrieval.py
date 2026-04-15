@@ -49,14 +49,14 @@ class UnifiedRetriever:
         self.episodic = EpisodicMemoryStore(root)
         self.semantic = SemanticMemoryStore(root)
 
-        # Attempt to initialise SMAK bridge for semantic search
+        # Attempt to initialise search bridge for semantic search.
+        # Uses memory's own config (memory/smak_config.yaml), NOT the
+        # workspace config.yaml — memory stores are independent.
         self._bridge: SmakBridge | None = None
-        config_path = root / "config.yaml"
-        if config_path.exists():
+        memory_smak_config = root / "memory" / "smak_config.yaml"
+        if memory_smak_config.exists():
             try:
-                self._bridge = SmakBridge(config_path)
-                # Quick health check — if SMAK CLI is not on PATH this
-                # will raise and we fall back to keyword matching.
+                self._bridge = SmakBridge(memory_smak_config)
                 self._bridge.health()
             except (SmakBridgeError, Exception):
                 self._bridge = None

@@ -1,7 +1,7 @@
 ---
 name: detroit-smak
 description: >-
-  Precision workspace strike. Spawn a sub-agent inside a SMAK workspace to
+  Precision workspace strike. Spawn a sub-agent inside a workspace to
   perform semantic search, enrichment lookup, or graph queries. Supports
   single-target and multi-target (parallel) modes. Use when you need to
   query indexed knowledge in one or more workspaces.
@@ -11,7 +11,7 @@ argument-hint: "<workspace> <query>"
 
 # Detroit SMAK — Precision Strike
 
-Dispatch a sub-agent into a specific SMAK workspace to perform semantic search,
+Dispatch a sub-agent into a specific workspace to perform semantic search,
 enrichment lookup, or graph queries.  The sub-agent inherits the hub's global
 context and automatically loads the workspace's domain-specific `.claude/`.
 
@@ -25,7 +25,7 @@ Hub Agent (you)
   |-- 3. Spawn sub-agent with cwd = workspaces/<name>/
   |       |
   |       +-- Sub-agent loads workspaces/<name>/.claude/ (automatic)
-  |       +-- Sub-agent has SMAK bridge for this workspace
+  |       +-- Sub-agent has search bridge for this workspace
   |       +-- Sub-agent executes query
   |       +-- Sub-agent returns structured results
   |
@@ -38,8 +38,8 @@ The sub-agent launches with **workspace directory as cwd**.  Claude Code's nativ
 `.claude/` loading picks up the workspace's domain context automatically.
 
 What the sub-agent sees:
-- `config.yaml` — the SMAK index configuration for this domain
-- `smak/` — FAISS databases for semantic search
+- `config.yaml` — the corpus configuration for this domain
+- `smak/` — Search data for semantic search
 - `.claude/CLAUDE.md` — domain-specific knowledge (symbol memory, patterns)
 - `.claude/skills/` — domain-specific skills (if any)
 - `enrichment/` — power tracker for this workspace
@@ -63,7 +63,7 @@ When you need to query **one** workspace:
 ### Example Prompts to Sub-Agent
 
 **Semantic search:**
-> Search for "timing constraint handler" using the SMAK indices in this workspace.
+> Search for "timing constraint handler" using the corpora in this workspace.
 > Return the top 5 results with file paths, symbol names, and relevance scores.
 
 **Enrichment lookup:**
@@ -93,7 +93,7 @@ usage across flows):
 >
 > Hub action:
 > 1. Spawn sub-agents for stdcell, io_phy, pll, ... (all workspaces)
-> 2. Each sub-agent runs: search for "TimingUtils" in their SMAK index
+> 2. Each sub-agent runs: search for "TimingUtils" in their corpus
 > 3. Collect results: stdcell has 5 hits, io_phy has 3 hits, pll has 0 hits
 > 4. Present: "TimingUtils is used in 2 of 10 flows — stdcell (5 references)
 >    and io_phy (3 references). PLL and other flows do not reference it."

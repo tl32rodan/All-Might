@@ -198,8 +198,8 @@ class TestProjectInitializer:
         assert "sidecar" in content.lower()
         assert "config.yaml" in content
 
-    def test_claude_md_explains_smak(self, sample_project):
-        """Test that CLAUDE.md explains what SMAK is."""
+    def test_claude_md_explains_how_it_works(self, sample_project):
+        """Test that CLAUDE.md explains how All-Might works."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
@@ -208,8 +208,8 @@ class TestProjectInitializer:
 
         claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
-        assert "What is SMAK" in content
-        assert "semantic search" in content.lower() or "vector store" in content.lower()
+        assert "How It Works" in content
+        assert "corpus" in content.lower() or "corpora" in content.lower()
 
     def test_sos_skill_enrichment_crossref(self, sample_project):
         """Test that SOS skill cross-references the enrichment protocol."""
@@ -236,7 +236,7 @@ class TestProjectInitializer:
         content = claude_md.read_text()
         assert "standalone" in content.lower()
         assert "config.yaml" in content
-        assert "smak/" in content or "FAISS" in content
+        assert "smak/" in content or "search data" in content.lower()
 
     def test_sos_skill_has_standalone_hub_and_config_management(self, sample_project):
         """Test that SOS skill includes standalone hub and config.yaml guidance."""

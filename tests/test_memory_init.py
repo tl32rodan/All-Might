@@ -30,15 +30,32 @@ class TestMemoryInitializer:
         assert (project_root / "memory" / "episodes").is_dir()
         assert (project_root / "memory" / "semantic").is_dir()
 
-    def test_adds_smak_indices(self, project_root):
+    def test_stores_in_memory_config(self, project_root):
+        """Memory stores should be in memory/config.yaml, NOT in workspace config.yaml."""
         MemoryInitializer().initialize(project_root)
 
-        with open(project_root / "config.yaml") as f:
-            config = yaml.safe_load(f)
+        # Memory stores must be in memory/config.yaml
+        with open(project_root / "memory" / "config.yaml") as f:
+            mem_config = yaml.safe_load(f)
+        assert "episodes" in mem_config.get("stores", {})
+        assert "semantic_facts" in mem_config.get("stores", {})
 
-        index_names = [idx["name"] for idx in config["indices"]]
-        assert "episodes" in index_names
-        assert "semantic_facts" in index_names
+        # Memory stores must NOT be in workspace config.yaml
+        with open(project_root / "config.yaml") as f:
+            ws_config = yaml.safe_load(f)
+        index_names = [idx["name"] for idx in ws_config.get("indices", [])]
+        assert "episodes" not in index_names
+        assert "semantic_facts" not in index_names
+
+    def test_smak_config_generated(self, project_root):
+        """Internal smak_config.yaml should be generated for search engine."""
+        MemoryInitializer().initialize(project_root)
+        assert (project_root / "memory" / "smak_config.yaml").exists()
+
+    def test_memory_store_directory_created(self, project_root):
+        """The memory/store/ directory should be created."""
+        MemoryInitializer().initialize(project_root)
+        assert (project_root / "memory" / "store").is_dir()
 
     def test_generates_memory_skill(self, project_root):
         MemoryInitializer().initialize(project_root)
@@ -75,17 +92,18 @@ class TestMemoryInitializer:
         content = (project_root / "CLAUDE.md").read_text()
         assert "Agent Memory System" in content
 
-    def test_idempotent_indices(self, project_root):
-        """Running init twice should not duplicate indices."""
+    def test_idempotent_stores(self, project_root):
+        """Running init twice should not duplicate store definitions."""
         init = MemoryInitializer()
         init.initialize(project_root)
         init.initialize(project_root)
 
-        with open(project_root / "config.yaml") as f:
-            config = yaml.safe_load(f)
+        with open(project_root / "memory" / "config.yaml") as f:
+            mem_config = yaml.safe_load(f)
 
-        episode_indices = [i for i in config["indices"] if i["name"] == "episodes"]
-        assert len(episode_indices) == 1
+        stores = mem_config.get("stores", {})
+        assert "episodes" in stores
+        assert "semantic_facts" in stores
 
     def test_opencode_agents_md_symlink(self, project_root):
         """Memory init should create AGENTS.md → CLAUDE.md symlink."""
