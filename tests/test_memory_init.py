@@ -87,6 +87,24 @@ class TestMemoryInitializer:
         episode_indices = [i for i in config["indices"] if i["name"] == "episodes"]
         assert len(episode_indices) == 1
 
+    def test_opencode_agents_md_symlink(self, project_root):
+        """Memory init should create AGENTS.md → CLAUDE.md symlink."""
+        MemoryInitializer().initialize(project_root)
+
+        agents_md = project_root / "AGENTS.md"
+        claude_md = project_root / "CLAUDE.md"
+        assert claude_md.exists()
+        assert agents_md.is_symlink()
+        assert agents_md.resolve() == claude_md.resolve()
+
+    def test_opencode_compat_idempotent(self, project_root):
+        """Running memory init twice should not break symlinks."""
+        init = MemoryInitializer()
+        init.initialize(project_root)
+        init.initialize(project_root)
+
+        assert (project_root / "AGENTS.md").is_symlink()
+
 
 class TestMemoryConfigManager:
     def test_initialize_creates_config(self, tmp_path):

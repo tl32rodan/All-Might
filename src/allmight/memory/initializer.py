@@ -52,6 +52,9 @@ class MemoryInitializer:
         # 6. Update CLAUDE.md
         self._update_claude_md(root)
 
+        # 7. Refresh OpenCode compatibility symlinks
+        self._refresh_opencode_compat(root)
+
     # ------------------------------------------------------------------
     # SMAK indices
     # ------------------------------------------------------------------
@@ -290,3 +293,36 @@ a three-layer persistent memory architecture for agent learning.
             claude_md.write_text(content)
         else:
             claude_md.write_text(f"# Project\n\n{memory_section}")
+
+    # ------------------------------------------------------------------
+    # OpenCode compatibility
+    # ------------------------------------------------------------------
+
+    def _refresh_opencode_compat(self, root: Path) -> None:
+        """Ensure OpenCode symlinks cover newly-generated memory content.
+
+        The main ``_create_opencode_compat`` in the project initializer
+        creates the base symlinks.  This method only needs to refresh the
+        ``AGENTS.md`` symlink in case CLAUDE.md was freshly created by
+        the memory initializer.
+        """
+        import os
+
+        agents_md = root / "AGENTS.md"
+        claude_md = root / "CLAUDE.md"
+        if claude_md.exists() and not agents_md.exists():
+            os.symlink("CLAUDE.md", str(agents_md))
+
+        # Ensure .opencode/ symlinks exist (idempotent)
+        opencode_dir = root / ".opencode"
+        claude_dir = root / ".claude"
+        if claude_dir.is_dir():
+            opencode_dir.mkdir(exist_ok=True)
+            for subdir in ("skills", "commands"):
+                source = claude_dir / subdir
+                target = opencode_dir / subdir
+                if source.is_dir() and not target.exists():
+                    os.symlink(
+                        os.path.relpath(str(source), str(opencode_dir)),
+                        str(target),
+                    )

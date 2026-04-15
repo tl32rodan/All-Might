@@ -293,3 +293,48 @@ class TestProjectInitializer:
         # Should still work — no errors, files still exist
         assert (sample_project / "config.yaml").exists()
         assert (sample_project / ".claude" / "skills" / "one-for-all" / "SKILL.md").exists()
+
+    def test_opencode_agents_md_symlink(self, sample_project):
+        """AGENTS.md symlink should be created pointing to CLAUDE.md."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        ProjectInitializer().initialize(manifest)
+
+        agents_md = sample_project / "AGENTS.md"
+        claude_md = sample_project / "CLAUDE.md"
+        assert claude_md.exists()
+        assert agents_md.is_symlink()
+        assert agents_md.resolve() == claude_md.resolve()
+
+    def test_opencode_skills_symlink(self, sample_project):
+        """.opencode/skills/ should symlink to .claude/skills/."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        ProjectInitializer().initialize(manifest)
+
+        opencode_skills = sample_project / ".opencode" / "skills"
+        claude_skills = sample_project / ".claude" / "skills"
+        assert opencode_skills.is_symlink()
+        assert opencode_skills.resolve() == claude_skills.resolve()
+
+    def test_opencode_commands_symlink(self, sample_project):
+        """.opencode/commands/ should symlink to .claude/commands/."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        ProjectInitializer().initialize(manifest)
+
+        opencode_cmds = sample_project / ".opencode" / "commands"
+        claude_cmds = sample_project / ".claude" / "commands"
+        assert opencode_cmds.is_symlink()
+        assert opencode_cmds.resolve() == claude_cmds.resolve()
+
+    def test_opencode_compat_idempotent(self, sample_project):
+        """Running init twice should not duplicate or break symlinks."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        init = ProjectInitializer()
+        init.initialize(manifest)
+        init.initialize(manifest)
+
+        assert (sample_project / "AGENTS.md").is_symlink()
+        assert (sample_project / ".opencode" / "skills").is_symlink()
