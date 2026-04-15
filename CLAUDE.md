@@ -4,29 +4,7 @@
 
 After modifying initializer, skill templates, commands, or memory init:
 
-1. Regenerate the example workspace to verify the output:
-   ```bash
-   rm -rf examples/single-workspace/.claude examples/single-workspace/CLAUDE.md \
-          examples/single-workspace/AGENTS.md examples/single-workspace/config.yaml \
-          examples/single-workspace/enrichment examples/single-workspace/panorama \
-          examples/single-workspace/memory
-   PYTHONPATH=src python -c "
-   from allmight.detroit_smak.scanner import ProjectScanner
-   from allmight.detroit_smak.initializer import ProjectInitializer
-   from allmight.memory.initializer import MemoryInitializer
-   from pathlib import Path
-   root = Path('examples/single-workspace').resolve()
-   manifest = ProjectScanner().scan(root)
-   ProjectInitializer().initialize(manifest)
-   MemoryInitializer().initialize(root)
-   "
-   ```
-
-2. Check the generated files in `examples/single-workspace/` match expectations
-
-3. Run tests: `PYTHONPATH=src python -m pytest tests/`
-
-4. Commit the regenerated example alongside your code changes
+1. Run tests: `PYTHONPATH=src python -m pytest tests/`
 
 ## Project Structure
 
@@ -44,8 +22,6 @@ All-Might/                          ← This repo (the framework)
 │   ├── hub/                        ← Multi-workspace hub templates
 │   └── cli.py                      ← CLI entry point (init only)
 ├── tests/                          ← Test suite
-├── examples/
-│   └── single-workspace/           ← ← REGENERATE THIS after changes
 └── docs/
 ```
 
@@ -53,7 +29,7 @@ All-Might/                          ← This repo (the framework)
 
 | File | What it generates |
 |------|-------------------|
-| `detroit_smak/initializer.py` | CLAUDE.md, config.yaml, skills, commands |
+| `detroit_smak/initializer.py` | CLAUDE.md, knowledge_graph/, skills, commands |
 | `one_for_all/templates/skill-base.md.j2` | The one-for-all SKILL.md |
 | `memory/initializer.py` | Memory section in one-for-all, /remember /recall /consolidate |
 | `detroit_smak/scanner.py` | Detects languages, frameworks, proposes indices |
@@ -116,6 +92,10 @@ my-chip-project/                          ← One All-Might project
         ├── config.yaml                   ← SMAK config (indices: source_code, tests)
         └── store/
 ```
+
+**SMAK indexes source files in-place** — no files are ever copied into
+the All-Might project. Only the vector index (`store/`) and SMAK config
+(`config.yaml`) live inside `knowledge_graph/` workspaces.
 
 **Sidecar files** (`.sidecar.yaml`) live beside the source code they describe
 (at `$DDI_ROOT_PATH/...`), NOT inside the All-Might project.

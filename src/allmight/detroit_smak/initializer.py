@@ -144,20 +144,23 @@ class ProjectInitializer:
         (commands_dir / "search.md").write_text("""\
 Search the codebase by semantic meaning.
 
+SMAK searches the vector index — source files are never copied.
+Results point back to files at their original paths.
+
 ## How to execute
 
 ```bash
-smak search "<query>" --config config.yaml --index source_code --top-k 5 --json
+smak search "<query>" --config knowledge_graph/<workspace>/config.yaml --index source_code --top-k 5 --json
 ```
 
 To search across all corpora at once:
 ```bash
-smak search-all "<query>" --config config.yaml --top-k 3 --json
+smak search-all "<query>" --config knowledge_graph/<workspace>/config.yaml --top-k 3 --json
 ```
 
 To look up a specific symbol by UID:
 ```bash
-smak lookup "<file_path>::<symbol_name>" --config config.yaml --index source_code --json
+smak lookup "<file_path>::<symbol_name>" --config knowledge_graph/<workspace>/config.yaml --index source_code --json
 ```
 
 ## What to expect
@@ -179,18 +182,21 @@ JSON output with a `results` array. Each result contains:
         (commands_dir / "enrich.md").write_text("""\
 Annotate a code symbol with intent and/or relations.
 
+Enrichment creates `.sidecar.yaml` files beside the source code at its
+original path. Nothing is copied into the All-Might project.
+
 ## How to execute
 
 Set intent (what the symbol does and why):
 ```bash
-smak enrich --config config.yaml --index source_code \\
+smak enrich --config knowledge_graph/<workspace>/config.yaml --index source_code \\
     --file <relative_path> --symbol "<SymbolName>" \\
     --intent "Human-readable description of purpose"
 ```
 
 Add a relation to another symbol:
 ```bash
-smak enrich --config config.yaml --index source_code \\
+smak enrich --config knowledge_graph/<workspace>/config.yaml --index source_code \\
     --file <relative_path> --symbol "<SymbolName>" \\
     --relation "<other_file>::<OtherSymbol>" --bidirectional
 ```
@@ -226,40 +232,44 @@ Skip auto-generated code, simple getters, and obvious boilerplate.
 """)
 
         (commands_dir / "ingest.md").write_text("""\
-Rebuild the search corpus from source files.
+Build the SMAK vector index from source files.
+
+SMAK indexes source files **in-place** at their original paths.
+No files are copied — only the vector index (in `store/`) is created
+inside the workspace.
 
 ## When to run
 
 - **First time**: after `allmight init` to build the initial index
 - **After significant changes**: new files added, major refactoring
-- **After adding a corpus**: to populate the new index
+- **After adding a workspace**: to populate the new index
 
 You do NOT need to re-ingest after enrichment — sidecars are separate
 from the search index.
 
 ## How to execute
 
-Rebuild all corpora:
+Rebuild all corpora in a workspace:
 ```bash
-smak ingest --config config.yaml --json
+smak ingest --config knowledge_graph/<workspace>/config.yaml --json
 ```
 
 Rebuild a specific corpus:
 ```bash
-smak ingest --config config.yaml --index source_code --json
+smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code --json
 ```
 
 ## What to expect
 
-- The `./smak/<corpus_name>/` directory is populated with search index data
-- `/search` will return results from the newly ingested files
-- Ingestion may take a few minutes for large codebases
+- The `store/` directory inside the workspace is populated with vector index data
+- `/search` will return results from the indexed files
+- Source files remain at their original paths — nothing is copied
 
 ## Troubleshooting
 
 - If `smak` is not found, ensure SMAK is installed and on PATH
-- Check `smak health --config config.yaml --json` for diagnostics
-- List available corpora: `smak describe --config config.yaml --json`
+- Check `smak health --config knowledge_graph/<workspace>/config.yaml --json` for diagnostics
+- List available corpora: `smak describe --config knowledge_graph/<workspace>/config.yaml --json`
 """)
 
         (commands_dir / "status.md").write_text("""\
@@ -268,7 +278,7 @@ Show the knowledge graph coverage and system health.
 ## How to execute
 
 1. Scan all sidecar YAML files (`.*.sidecar.yaml`) across all paths
-   defined in `config.yaml` indices.
+   defined in each workspace's `config.yaml` indices.
 2. For each sidecar, count symbols and check which have non-empty `intent`.
 3. Calculate coverage: `enriched_symbols / total_symbols * 100`.
 4. Read `enrichment/tracker.yaml` for historical data.
@@ -325,9 +335,11 @@ code by meaning, annotate what it learns, and remember across sessions.
 
 ### Concepts
 
+- **Corpus** = a vector index built from source files by `/ingest`. Source
+  files are indexed **in-place** — nothing is copied into this project.
+  Only the vector index (in `knowledge_graph/<workspace>/store/`) is local.
 - **Annotation** = a note on a code symbol (function, class) describing its
-  purpose and connections. Stored in sidecar files beside the source code.
-- **Corpus** = a searchable index built from source files. Created by `/ingest`.
+  purpose and connections. Stored in `.sidecar.yaml` files beside the source code.
 - **Power Level** = percentage of symbols that have annotations. Higher = better.
 
 ### How to learn the details
@@ -448,6 +460,11 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 > It manages SMAK workspaces under `knowledge_graph/`, shared enrichment,
 > and agent memory. Use the commands below — Do NOT hand-edit sidecar or
 > config YAML files directly.
+>
+> **Important**: SMAK indexes source files **in-place** at their original
+> paths. Do NOT copy source code or documentation into this project.
+> Only the vector index (`store/`) and SMAK config (`config.yaml`) live
+> inside `knowledge_graph/` workspaces.
 
 ## Project Overview
 
@@ -463,7 +480,9 @@ Workspaces live under `knowledge_graph/`. Discover them:
 ls knowledge_graph/
 ```
 
-Each workspace has its own `config.yaml` (indices) and `store/` (search data).
+Each workspace has its own `config.yaml` (index definitions pointing to
+source paths) and `store/` (vector index data). Source files stay at
+their original paths — they are never copied.
 
 ## SMAK CLI Reference
 
