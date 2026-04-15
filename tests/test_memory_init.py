@@ -86,14 +86,14 @@ class TestMemoryInitializer:
         MemoryInitializer().initialize(project_root)
 
         content = (project_root / "CLAUDE.md").read_text()
-        assert "Agent Memory System" in content
+        assert "Agent Memory" in content
         assert "Existing content." in content  # Preserved
 
     def test_creates_claude_md_if_missing(self, project_root):
         MemoryInitializer().initialize(project_root)
         assert (project_root / "CLAUDE.md").exists()
         content = (project_root / "CLAUDE.md").read_text()
-        assert "Agent Memory System" in content
+        assert "Agent Memory" in content
 
     def test_idempotent_stores(self, project_root):
         """Running init twice should not duplicate store definitions."""

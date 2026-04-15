@@ -333,27 +333,34 @@ Memory (if enabled):
         allmight_section = f"""{marker}
 ## All-Might: Active Knowledge Graph
 
-This project has an **All-Might knowledge graph** — semantic search,
-symbol enrichment, and graph intelligence across the codebase.
+This project has an **All-Might knowledge graph** — the agent can search
+code by meaning, annotate what it learns, and remember across sessions.
 
-### What you can do
+### Capabilities
 
 | Command | What it does |
 |---------|-------------|
-| `/search <query>` | Search the codebase by meaning |
-| `/enrich` | Annotate a symbol with intent and relations |
-| `/ingest` | Rebuild the search corpus |
-| `/status` | Check enrichment coverage and health |
+| `/search <query>` | Search code by meaning (not just keywords) |
+| `/enrich` | Annotate a symbol — record what it does and what it relates to |
+| `/ingest` | Build or rebuild the search index from source files |
+| `/status` | Show how much of the codebase has been annotated |
 
-### How to learn more
+### Concepts
+
+- **Annotation** = a note on a code symbol (function, class) describing its
+  purpose and connections. Stored in sidecar files beside the source code.
+- **Corpus** = a searchable index built from source files. Created by `/ingest`.
+- **Power Level** = percentage of symbols that have annotations. Higher = better.
+
+### How to learn the details
 
 The `one-for-all` skill (auto-loaded in `.claude/skills/`) contains the
-complete operational guide: how the search engine works, how to enrich
-symbols, sidecar file format, and all CLI commands.
+complete operational guide: search engine commands, annotation workflow,
+sidecar file format, and troubleshooting.
 
 ### Getting Started
 
-1. `/ingest` — build the search corpus (first time)
+1. `/ingest` — build the search index (first time)
 2. `/search "query"` — explore the codebase
 3. `/enrich` — annotate symbols as you learn them
 4. `/status` — track progress

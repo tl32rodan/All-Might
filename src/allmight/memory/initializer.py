@@ -314,29 +314,26 @@ model or environment, also update `memory/working/MEMORY.md` sections
         marker = "<!-- ALL-MIGHT-MEMORY -->"
 
         memory_section = f"""{marker}
-## Agent Memory System
+## Agent Memory
 
-This workspace has the **All-Might Agent Memory** subsystem enabled —
-a three-layer persistent memory architecture for agent learning.
+The agent can **remember things across sessions**: your preferences,
+past decisions, corrections, and learned patterns.
 
-### Memory Layers
+### What the agent can do
 
-| Layer | Location | Purpose |
-|-------|----------|---------|
-| Working Memory | `memory/working/MEMORY.md` | Always-in-context facts (user model, environment, goals) |
-| Episodic Memory | `memory/episodes/` | Append-only session records, searchable |
-| Semantic Memory | `memory/semantic/` | Consolidated facts with confidence scoring and decay |
+| Command | What it does |
+|---------|-------------|
+| `/remember` | Save an observation from this session |
+| `/recall` | Search what the agent remembers from past sessions |
+| `/consolidate` | Turn raw session notes into lasting knowledge |
 
-### Memory Commands
+### How it works
 
-| Command | Purpose |
-|---------|---------|
-| `/remember` | Record an observation during this session |
-| `/recall` | Search past memories across all layers |
-| `/consolidate` | Convert session episodes into lasting facts |
+- **Session notes** — each session's observations are recorded as an episode
+- **Lasting facts** — `/consolidate` extracts recurring patterns into permanent knowledge
+- **Natural decay** — frequently recalled memories persist; forgotten ones fade
 
-Memory entries have **decay** — frequently accessed memories persist longer.
-Run `/status` to check memory health alongside enrichment coverage.
+The `one-for-all` skill has the complete operational guide.
 """
         if claude_md.exists():
             content = claude_md.read_text()
