@@ -53,7 +53,7 @@ class ProjectInitializer:
         self._create_opencode_compat(root)
 
     def _create_metadata(self, root: Path, manifest: ProjectManifest) -> None:
-        """Create enrichment/, panorama/, knowledge_graph/ at the project root.
+        """Create enrichment/, knowledge_graph/ at the project root.
 
         Note: config.yaml is NOT created here — it belongs to SMAK workspaces
         under knowledge_graph/*/config.yaml, not the All-Might project root.
@@ -78,9 +78,6 @@ class ProjectInitializer:
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         _write_yaml(enrichment_dir / "tracker.yaml", tracker)
-
-        # panorama/ — output directory
-        (root / "panorama").mkdir(exist_ok=True)
 
     def _install_smak_skills(
         self,

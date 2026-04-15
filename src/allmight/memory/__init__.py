@@ -1,17 +1,11 @@
-"""All-Might Agent Memory System.
+"""All-Might Agent Memory System — L1 / L2 / L3.
 
-Three-layer memory architecture inspired by Hermes Agent, MemGPT/Letta,
-and cognitive science (Ebbinghaus, ACT-R):
+Three-tier persistent memory organized like cache/RAM/disk:
 
-- **Working Memory** (Layer 1): Always in context via ``MEMORY.md``.
-  User model, environment facts, pinned memories.  Token-budgeted.
-- **Episodic Memory** (Layer 2): Append-only session records in
-  ``memory/episodes/``.  Indexed for semantic search.
-- **Semantic Memory** (Layer 3): Consolidated facts in
-  ``memory/semantic/``.  Versioned with supersession chains,
-  conflict resolution, and Ebbinghaus decay scoring.
-
-The memory system cross-pollinates with All-Might's existing
-knowledge graph (sidecars + Panorama) — episodic observations
-can seed sidecar enrichment, and graph structure boosts retrieval.
+- **L1 — MEMORY.md** (project root): Always in context via hook.
+  Project map, user preferences, active goals, key facts.
+- **L2 — understanding/** (per-corpus): Loaded when entering a
+  workspace. Source code roadmap, debug SOP, patterns.
+- **L3 — journal/** (append-only): Searchable via SMAK vector index.
+  Historical observations and learned knowledge.
 """

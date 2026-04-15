@@ -12,12 +12,11 @@ After modifying initializer, skill templates, commands, or memory init:
 All-Might/                          ← This repo (the framework)
 ├── src/allmight/                    ← Framework source code
 │   ├── detroit_smak/               ← Scanner + Initializer (generates workspace)
-│   ├── memory/                     ← Agent memory system
+│   ├── memory/                     ← Agent memory system (L1/L2/L3)
 │   ├── bridge/                     ← SMAK CLI subprocess wrapper (internal)
 │   ├── config/                     ← config.yaml manager
 │   ├── core/                       ← Domain models + protocols
 │   ├── enrichment/                 ← Power Level tracker + planner
-│   ├── panorama/                   ← Knowledge graph analyzer + exporter
 │   ├── one_for_all/                ← Skill template generator
 │   ├── hub/                        ← Multi-workspace hub templates
 │   └── cli.py                      ← CLI entry point (init only)
@@ -31,7 +30,7 @@ All-Might/                          ← This repo (the framework)
 |------|-------------------|
 | `detroit_smak/initializer.py` | CLAUDE.md, knowledge_graph/, skills, commands |
 | `one_for_all/templates/skill-base.md.j2` | The one-for-all SKILL.md |
-| `memory/initializer.py` | Memory section in one-for-all, /remember /recall /consolidate |
+| `memory/initializer.py` | MEMORY.md (L1), understanding/ (L2), journal/ (L3), /remember /recall |
 | `detroit_smak/scanner.py` | Detects languages, frameworks, proposes indices |
 
 ## Architecture Layers
@@ -66,20 +65,22 @@ my-chip-project/                          ← One All-Might project
 │       ├── ingest.md                     ← /ingest operational guide
 │       ├── status.md                     ← /status operational guide
 │       ├── remember.md                   ← /remember (memory)
-│       ├── recall.md                     ← /recall (memory)
-│       └── consolidate.md               ← /consolidate (memory)
+│       └── recall.md                     ← /recall (memory)
+│
+├── MEMORY.md                             ← L1: project map + user prefs (hook-loaded)
 │
 ├── enrichment/                           ← Shared: annotation coverage across ALL workspaces
 │   └── tracker.yaml
 │
 ├── memory/                               ← Shared: agent memory across ALL workspaces
-│   ├── config.yaml                       ← Memory settings + store definitions
-│   ├── working/MEMORY.md                 ← Always-in-context facts
-│   ├── episodes/                         ← Session history
-│   ├── semantic/                         ← Consolidated facts
-│   └── store/                            ← Memory search data (internal)
-│
-├── panorama/                             ← Shared: graph exports across ALL workspaces
+│   ├── config.yaml                       ← Memory settings
+│   ├── understanding/                    ← L2: per-corpus knowledge
+│   │   ├── stdcell.md
+│   │   └── pll.md
+│   ├── journal/                          ← L3: append-only text files
+│   │   ├── stdcell/
+│   │   └── general/
+│   └── store/                            ← L3: SMAK vector index of journal/
 │
 └── knowledge_graph/                      ← SMAK workspaces (each independent)
     ├── stdcell/
@@ -140,9 +141,10 @@ by their directory structure, not by a registry file.
 
 | Component | Scope | Why |
 |-----------|-------|-----|
+| `MEMORY.md` | Project-wide | L1 cache: project map, user prefs (hook-loaded) |
 | `enrichment/` | Project-wide | Annotation coverage spans all workspaces |
-| `memory/` | Project-wide | Agent remembers across all workspaces |
-| `panorama/` | Project-wide | Graph connects symbols across workspaces |
+| `memory/understanding/` | Project-wide | L2: per-corpus knowledge (agent reads/writes) |
+| `memory/journal/` | Project-wide | L3: searchable log (SMAK indexed) |
 | `.claude/skills/` | Project-wide | One skill teaches agent about all workspaces |
 | `.claude/commands/` | Project-wide | One set of commands for the whole project |
 | `knowledge_graph/<name>/config.yaml` | Per-workspace | Each SMAK DB has its own index config |

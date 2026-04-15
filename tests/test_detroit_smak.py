@@ -65,7 +65,6 @@ class TestProjectInitializer:
 
         assert (sample_project / "knowledge_graph").is_dir()
         assert (sample_project / "enrichment" / "tracker.yaml").exists()
-        assert (sample_project / "panorama").is_dir()
 
     def test_creates_knowledge_graph_dir(self, sample_project):
         """knowledge_graph/ is created — SMAK workspaces live here."""

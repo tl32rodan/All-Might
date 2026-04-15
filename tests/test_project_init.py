@@ -59,11 +59,6 @@ class TestProjectInit:
         _init(project_root)
         assert (project_root / "enrichment" / "tracker.yaml").exists()
 
-    def test_creates_panorama_dir(self, project_root):
-        """panorama/ directory created at project level (shared)."""
-        _init(project_root)
-        assert (project_root / "panorama").is_dir()
-
     def test_creates_knowledge_graph_dir(self, project_root):
         """knowledge_graph/ directory created."""
         _init(project_root)
@@ -109,17 +104,16 @@ class TestProjectInitWithMemory:
         from allmight.memory.initializer import MemoryInitializer
         MemoryInitializer().initialize(project_root)
         assert (project_root / "memory").is_dir()
-        assert (project_root / "memory" / "working" / "MEMORY.md").exists()
+        assert (project_root / "MEMORY.md").exists()
 
     def test_creates_memory_commands(self, project_root):
-        """--with-memory adds remember.md, recall.md, consolidate.md."""
+        """--with-memory adds remember.md and recall.md."""
         _init(project_root)
         from allmight.memory.initializer import MemoryInitializer
         MemoryInitializer().initialize(project_root)
         cmds = project_root / ".claude" / "commands"
         assert (cmds / "remember.md").exists()
         assert (cmds / "recall.md").exists()
-        assert (cmds / "consolidate.md").exists()
 
     def test_appends_memory_to_skill(self, project_root):
         """--with-memory appends memory section to one-for-all SKILL.md."""
@@ -127,7 +121,7 @@ class TestProjectInitWithMemory:
         from allmight.memory.initializer import MemoryInitializer
         MemoryInitializer().initialize(project_root)
         skill = (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
-        assert "Agent Memory" in skill
+        assert "Memory" in skill
         assert "/remember" in skill
         assert "/recall" in skill
 

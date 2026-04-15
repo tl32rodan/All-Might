@@ -61,8 +61,6 @@ def init(path: str, smak_path: str | None, sos: bool, with_memory: bool):
     click.echo(f"All-Might! Project '{manifest.name}' initialized.")
     click.echo(f"  Languages: {', '.join(manifest.languages) or 'none detected'}")
     click.echo(f"  Corpora:   {len(manifest.indices)}")
-    click.echo(f"  Config:    {root / 'config.yaml'}")
-
     if with_memory:
         from .memory.initializer import MemoryInitializer
 
@@ -85,32 +83,27 @@ def init(path: str, smak_path: str | None, sos: bool, with_memory: bool):
 
 @main.group()
 def memory():
-    """Agent memory system — three-layer persistent memory."""
+    """Agent memory system — L1/L2/L3 persistent memory."""
 
 
 @memory.command("init")
 @click.argument("path", default=".", type=click.Path(exists=True))
 def memory_init(path: str):
-    """Add agent memory to an existing workspace.
+    """Add agent memory to an existing project.
 
-    Creates memory/ directory structure, appends memory guide to the
-    one-for-all skill, and generates /remember, /recall, /consolidate
-    commands.  Requires config.yaml (run 'allmight init' first).
+    Creates MEMORY.md (L1), memory/understanding/ (L2), memory/journal/ (L3),
+    and generates /remember, /recall commands.
     """
     from pathlib import Path as P
 
     from .memory.initializer import MemoryInitializer
 
     root = P(path).resolve()
-    config_path = root / "config.yaml"
-    if not config_path.exists():
-        click.echo("Error: config.yaml not found. Run 'allmight init' first.")
-        raise SystemExit(1)
 
     initializer = MemoryInitializer()
     initializer.initialize(root)
 
     click.echo("Agent Memory System initialized.")
-    click.echo("  Working memory:  memory/working/MEMORY.md")
-    click.echo("  Episodic store:  memory/episodes/")
-    click.echo("  Semantic store:  memory/semantic/")
+    click.echo("  L1 cache:        MEMORY.md")
+    click.echo("  L2 understanding: memory/understanding/")
+    click.echo("  L3 journal:      memory/journal/")
