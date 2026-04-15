@@ -213,3 +213,72 @@ class TestMemoryConfigManager:
         mgr.save(cfg)
         loaded = mgr.load()
         assert "journal" in loaded.stores
+
+
+class TestMemoryNudgeHook:
+    """Memory Nudge — Stop hook that reminds agent to update memory."""
+
+    def test_creates_hooks_dir(self, project_root):
+        """memory init creates .claude/hooks/ directory."""
+        MemoryInitializer().initialize(project_root)
+        assert (project_root / ".claude" / "hooks").is_dir()
+
+    def test_creates_nudge_script(self, project_root):
+        """memory-nudge.sh created in hooks directory."""
+        MemoryInitializer().initialize(project_root)
+        script = project_root / ".claude" / "hooks" / "memory-nudge.sh"
+        assert script.exists()
+
+    def test_nudge_script_is_executable(self, project_root):
+        """Hook script has executable permission."""
+        MemoryInitializer().initialize(project_root)
+        import os
+        script = project_root / ".claude" / "hooks" / "memory-nudge.sh"
+        assert os.access(script, os.X_OK)
+
+    def test_nudge_script_references_memory(self, project_root):
+        """Hook script mentions MEMORY.md and understanding."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "hooks" / "memory-nudge.sh").read_text()
+        assert "MEMORY.md" in content
+        assert "understanding" in content
+
+    def test_creates_l1_loader_script(self, project_root):
+        """memory-load.sh created — injects MEMORY.md into context."""
+        MemoryInitializer().initialize(project_root)
+        script = project_root / ".claude" / "hooks" / "memory-load.sh"
+        assert script.exists()
+
+    def test_l1_loader_reads_memory_md(self, project_root):
+        """Loader script cats MEMORY.md content."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "hooks" / "memory-load.sh").read_text()
+        assert "MEMORY.md" in content
+
+
+class TestReflectCommand:
+    """/reflect — structured self-reflection to maintain memory quality."""
+
+    def test_creates_reflect_command(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        assert (project_root / ".claude" / "commands" / "reflect.md").exists()
+
+    def test_reflect_mentions_all_tiers(self, project_root):
+        """reflect.md references L1, L2, and L3."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        assert "MEMORY.md" in content
+        assert "understanding" in content
+        assert "journal" in content
+
+    def test_reflect_has_checklist(self, project_root):
+        """reflect.md has a structured checklist for the agent."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        assert "## How" in content or "## Checklist" in content or "## Steps" in content
+
+    def test_skill_mentions_reflect(self, project_root):
+        """Skill section references /reflect command."""
+        MemoryInitializer().initialize(project_root)
+        skill = (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
+        assert "/reflect" in skill

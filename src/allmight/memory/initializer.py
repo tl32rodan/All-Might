@@ -32,16 +32,19 @@ class MemoryInitializer:
         (root / "memory" / "journal").mkdir(parents=True, exist_ok=True)
         (root / "memory" / "store").mkdir(parents=True, exist_ok=True)
 
-        # 5. Generate memory skill section
+        # 5. Generate hook scripts (nudge + L1 loader)
+        self._generate_hooks(root)
+
+        # 6. Generate memory skill section
         self._generate_memory_skill(root)
 
-        # 6. Generate memory commands
+        # 7. Generate memory commands (remember, recall, reflect)
         self._generate_memory_commands(root)
 
-        # 7. Update CLAUDE.md
+        # 8. Update CLAUDE.md
         self._update_claude_md(root)
 
-        # 8. Refresh OpenCode compatibility symlinks
+        # 9. Refresh OpenCode compatibility symlinks
         self._refresh_opencode_compat(root)
 
     # ------------------------------------------------------------------
@@ -81,6 +84,63 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
 
 *(none recorded yet)*
 """)
+
+    # ------------------------------------------------------------------
+    # Hooks — Memory Nudge + L1 Loader
+    # ------------------------------------------------------------------
+
+    def _generate_hooks(self, root: Path) -> None:
+        """Generate hook scripts for active memory management.
+
+        Two hooks:
+        - memory-nudge.sh (Stop hook): reminds agent to update memory
+        - memory-load.sh (UserPromptSubmit hook): injects MEMORY.md into context
+        """
+        import os
+        import stat
+
+        hooks_dir = root / ".claude" / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+
+        # --- Stop hook: Memory Nudge ---
+        nudge_script = hooks_dir / "memory-nudge.sh"
+        nudge_script.write_text("""\
+#!/usr/bin/env bash
+# Memory Nudge — Stop hook
+# Fires every time the agent finishes a response.
+# Reminds it to update memory if it learned something.
+set -euo pipefail
+
+cat <<'NUDGE'
+[Memory Nudge] Before finishing, consider:
+- Did you learn something about a workspace? → Update memory/understanding/<workspace>.md
+- Did the user share a preference or correction? → Update MEMORY.md
+- Did you discover something worth logging? → Append to memory/journal/
+NUDGE
+exit 0
+""")
+        nudge_script.chmod(nudge_script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+        # --- UserPromptSubmit hook: L1 Loader ---
+        loader_script = hooks_dir / "memory-load.sh"
+        loader_script.write_text("""\
+#!/usr/bin/env bash
+# L1 Loader — UserPromptSubmit hook
+# Injects MEMORY.md content into agent context every turn.
+set -euo pipefail
+
+INPUT=$(cat)
+PROJECT_DIR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd','.'))" 2>/dev/null || echo ".")
+
+MEMORY_FILE="$PROJECT_DIR/MEMORY.md"
+if [ -f "$MEMORY_FILE" ]; then
+    echo "--- Project Memory (MEMORY.md) ---"
+    cat "$MEMORY_FILE"
+    echo "--- End Project Memory ---"
+fi
+exit 0
+""")
+        loader_script.chmod(loader_script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     # ------------------------------------------------------------------
     # Skill generation
@@ -148,6 +208,16 @@ Searched via SMAK vector index (`memory/store/`).
 |---------|---------|
 | `/remember` | Write to L2 understanding + append L3 journal entry |
 | `/recall` | Search L3 journal via SMAK |
+| `/reflect` | End-of-session review: tidy L1, update L2, log to L3 |
+
+### Memory Nudge (Stop Hook)
+
+A Stop hook at `.claude/hooks/memory-nudge.sh` fires after every agent
+response. It reminds you to update memory if you learned something.
+This is deterministic — it always fires, unlike advisory instructions.
+
+A UserPromptSubmit hook at `.claude/hooks/memory-load.sh` injects
+`MEMORY.md` content into context every turn, making L1 truly always-loaded.
 """
         content = skill_path.read_text()
         if marker in content:
@@ -251,6 +321,59 @@ Results from `memory/journal/` text files. Each result contains:
 - L3 journal is for things not captured in L1 or L2
 """)
 
+        (commands_dir / "reflect.md").write_text("""\
+Structured self-reflection to maintain memory quality.
+
+Run periodically (end of session, after major work) to keep memory
+accurate and tidy.
+
+## Steps
+
+### 1. Review L1 — MEMORY.md
+
+Read `MEMORY.md` at project root. Ask yourself:
+- Is the Project Map still accurate? Any new workspaces to add?
+- Are Active Goals still current? Remove completed ones.
+- Any Key Facts that are stale or wrong?
+
+Update directly if anything changed.
+
+### 2. Review L2 — Understanding
+
+For each workspace you worked on this session, read
+`memory/understanding/<workspace>.md`. Ask:
+- Did I learn new architecture details? Add them.
+- Did I discover a debug SOP or gotcha? Document it.
+- Is the Key Files section still accurate?
+
+Create the file if it doesn't exist yet.
+
+### 3. Log to L3 — Journal
+
+Summarize what you learned this session as a journal entry in
+`memory/journal/<workspace>/` or `memory/journal/general/`:
+
+```markdown
+# <date> — <brief title>
+
+<Summary of discoveries, decisions, and insights.>
+```
+
+### 4. Re-index (if needed)
+
+If you added journal entries, re-index for `/recall`:
+```bash
+smak ingest --config memory/smak_config.yaml
+```
+
+## When to reflect
+
+- End of a productive session
+- After completing a major task
+- When the Memory Nudge reminds you
+- When the user asks you to consolidate what you learned
+""")
+
     # ------------------------------------------------------------------
     # CLAUDE.md update
     # ------------------------------------------------------------------
@@ -270,6 +393,7 @@ decisions, corrections, and learned patterns.
 |---------|-------------|
 | `/remember` | Save knowledge to understanding files and journal |
 | `/recall` | Search past journal entries via SMAK |
+| `/reflect` | End-of-session review to keep memory tidy |
 
 Memory is organized in three tiers:
 - **MEMORY.md** — always loaded, project map and user preferences
