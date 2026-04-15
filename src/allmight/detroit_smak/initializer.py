@@ -142,161 +142,62 @@ class ProjectInitializer:
         )
 
     def _generate_allmight_skills(self, root: Path, manifest: ProjectManifest) -> None:
-        """Generate All-Might skills (WHAT + WHEN/WHY + bootstrap layers)."""
+        """Generate All-Might skill — one unified skill that covers everything."""
         skills_dir = root / ".claude" / "skills"
         skills_dir.mkdir(parents=True, exist_ok=True)
 
-        # detroit-smak/SKILL.md — bootstrap (user-triggered)
-        self._write_skill(
-            skills_dir / "detroit-smak" / "SKILL.md",
-            name="detroit-smak",
-            description=(
-                "Project knowledge graph initialization. Re-scan project structure, "
-                "regenerate configuration and All-Might workspace. "
-                "Use when the project structure has significantly changed."
-            ),
-            disable_model_invocation=True,
-            body=self._detroit_smak_skill_body(manifest),
-        )
-
-        # one-for-all/SKILL.md — project knowledge map (auto-loaded)
+        # one-for-all/SKILL.md — the single unified skill (auto-loaded)
         self._write_skill(
             skills_dir / "one-for-all" / "SKILL.md",
             name="one-for-all",
             description=(
-                "Project knowledge graph guide. Provides project structure, "
-                "corpus reference, key symbols, and current Power Level. "
+                "All-Might knowledge guide. Project structure, corpus reference, "
+                "enrichment protocol, key symbols, and Power Level. "
                 "Auto-loaded when agent needs to understand the project."
             ),
             body=self._one_for_all_skill_body(manifest),
         )
 
-        # enrichment/SKILL.md — enrichment protocol (auto-loaded)
-        self._write_skill(
-            skills_dir / "enrichment" / "SKILL.md",
-            name="enrichment-protocol",
-            description=(
-                "Knowledge enrichment protocol. Guides agents on when and how "
-                "to contribute to the knowledge graph while working. "
-                "Auto-loaded when agent reads or modifies code."
-            ),
-            body=self._enrichment_skill_body(),
-        )
-
     def _generate_commands(self, root: Path, manifest: ProjectManifest) -> None:
-        """Generate .claude/commands/ for slash-command operations."""
+        """Generate .claude/commands/ — minimal set of 4 core commands."""
         commands_dir = root / ".claude" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
 
-        # /power-level
-        (commands_dir / "power-level.md").write_text(
-            "Analyze the project's knowledge graph coverage (Power Level).\n\n"
-            "1. Read `enrichment/tracker.yaml` for the last known Power Level.\n"
-            "2. Scan all sidecar YAML files (`.*.sidecar.yaml`) across all corpora.\n"
-            "3. For each sidecar, count total symbols vs symbols with non-empty `intent`.\n"
-            "4. Count total relations across all sidecars.\n"
-            "5. Report the overall coverage percentage and per-index breakdown.\n"
-            "6. Update `enrichment/tracker.yaml` with the new metrics.\n\n"
-            "Display results in a clear table format with coverage bars.\n"
-        )
-
-        # /regenerate
-        (commands_dir / "regenerate.md").write_text(
-            "Regenerate the One For All skill with the latest project state.\n\n"
-            "1. Read `config.yaml` for project configuration and corpus definitions.\n"
-            "2. Scan all sidecar YAML files to find enriched symbols.\n"
-            "3. Calculate current Power Level.\n"
-            "4. Regenerate `.claude/skills/one-for-all/SKILL.md` with:\n"
-            "   - Updated project overview\n"
-            "   - Current index reference with descriptions\n"
-            "   - Key enriched symbols summary (top symbols by relation count)\n"
-            "   - Current Power Level metrics\n"
-            "   - Updated architecture notes from high-coverage areas\n"
-            "5. Update `enrichment/tracker.yaml` with new metrics.\n\n"
-            "Report what changed in the regenerated skill.\n"
-        )
-
-        # /panorama
-        (commands_dir / "panorama.md").write_text(
-            "Export the knowledge graph as a panoramic visualization.\n\n"
-            "1. Scan all sidecar YAML files across all corpora.\n"
-            "2. Build a graph of symbols (nodes) and relations (edges).\n"
-            "3. Generate a Mermaid diagram showing the key relationships.\n"
-            "4. Write output to `panorama/overview.mermaid`.\n"
-            "5. Also write `panorama/graph.json` with the full graph data.\n"
-            "6. Report summary statistics: node count, edge count, clusters, orphans.\n\n"
-            "Focus on the most connected symbols — omit isolated nodes with no relations.\n"
-        )
-
-        # /search
         (commands_dir / "search.md").write_text(
-            "Search the knowledge graph via All-Might.\n\n"
+            "Semantic search across the codebase.\n\n"
             "Usage: `/search <query>` or `/search <query> --index <index>`\n\n"
-            "Run `allmight search \"<query>\" --index source_code` to perform semantic search.\n"
-            "Use `allmight explain <uid>` for graph context on any result.\n"
+            "Perform natural-language search over the indexed corpus.\n"
+            "For deeper context on a result, explain the symbol's graph connections "
+            "(intent, relations, community membership).\n"
         )
 
-        # /enrich
         (commands_dir / "enrich.md").write_text(
-            "Enrich a symbol with intent and/or relations via All-Might.\n\n"
+            "Annotate a symbol with intent and/or relations.\n\n"
             "Usage: `/enrich --file <path> --symbol <name> --intent \"description\"`\n\n"
-            "Run `allmight enrich --file <path> --symbol <name> --intent \"...\"` to annotate.\n"
             "Add `--relation <uid>` (repeatable) to link to other symbols.\n"
-            "Add `--bidirectional` to create the reverse link too.\n"
+            "Add `--bidirectional` to create the reverse link too.\n\n"
+            "See the enrichment protocol in the one-for-all skill for guidance\n"
+            "on when and what to enrich.\n"
         )
 
-        # /ingest
         (commands_dir / "ingest.md").write_text(
-            "Rebuild the corpus search data.\n\n"
+            "Rebuild the search corpus from source files.\n\n"
             "Usage: `/ingest` or `/ingest --index <index>`\n\n"
-            "Run `allmight ingest` to re-ingest all indices, or\n"
-            "`allmight ingest --index source_code` for a specific index.\n"
+            "Run after initial setup or when source files have changed significantly.\n"
+            "This updates the search index so `/search` returns current results.\n"
         )
 
-        # /explain
-        (commands_dir / "explain.md").write_text(
-            "Show full graph context for a symbol.\n\n"
-            "Usage: `/explain <uid>`\n\n"
-            "Run `allmight explain \"<path>::<symbol>\"` to see:\n"
-            "- Intent, outgoing/incoming relations, degree\n"
-            "- Whether it's a god node (highly connected)\n"
-            "- Which community/cluster it belongs to\n"
-        )
-
-        # /graph-report
-        (commands_dir / "graph-report.md").write_text(
-            "Generate a graph intelligence report.\n\n"
-            "Run `allmight report` to produce `panorama/GRAPH_REPORT.md`.\n"
-            "The report includes:\n"
-            "- Overview metrics (nodes, edges, density)\n"
-            "- God nodes (most connected symbols)\n"
-            "- Communities (connected components)\n"
-            "- Orphan nodes (symbols with no relations)\n"
-            "- Cross-index relations\n"
-        )
-
-        # /add-index
-        (commands_dir / "add-index.md").write_text(
-            "Add a new corpus to the workspace configuration.\n\n"
-            "Usage: `/add-index --name <name> --description \"desc\" --paths <path>`\n\n"
-            "Run `allmight config add-index --name <name> --description \"...\" --paths <path>`.\n"
-            "This updates `config.yaml`.\n"
-            "After adding, run `/ingest --index <name>` to build the search data.\n"
-        )
-
-        # /remove-index
-        (commands_dir / "remove-index.md").write_text(
-            "Remove a corpus from the workspace configuration.\n\n"
-            "Usage: `/remove-index --name <name>`\n\n"
-            "Run `allmight config remove-index --name <name>`.\n"
-            "This updates `config.yaml`.\n"
-        )
-
-        # /list-indices
-        (commands_dir / "list-indices.md").write_text(
-            "List all corpora in the workspace configuration.\n\n"
-            "Run `allmight config list-indices` to see all configured indices.\n"
-            "Add `--json` for machine-readable output.\n"
+        (commands_dir / "status.md").write_text(
+            "Show All-Might system health.\n\n"
+            "1. Scan all sidecar files across all corpora.\n"
+            "2. Count total symbols vs enriched symbols (those with intent).\n"
+            "3. Report coverage percentage and per-corpus breakdown.\n"
+            "4. If agent memory is enabled, also report:\n"
+            "   - Working memory: token usage vs budget\n"
+            "   - Episodic memory: total episodes, unconsolidated count\n"
+            "   - Semantic memory: total facts, average confidence\n"
+            "5. Update `enrichment/tracker.yaml` with new metrics.\n\n"
+            "Display results in a clear table format.\n"
         )
 
     def _update_claude_md(self, root: Path, manifest: ProjectManifest) -> None:
@@ -345,76 +246,31 @@ version control system. Indices in `config.yaml` reference these external paths
 **Key implication for agents**: When you need to read or modify source files, you must
 navigate to the paths listed in `config.yaml` — they are outside this folder.
 
-- **Skills**: `.claude/skills/` — `one-for-all` (project map), `enrichment` (protocol)
-- **Config**: `config.yaml` — project metadata, semantic index definitions, enrichment settings
+- **Skill**: `.claude/skills/one-for-all/` — project guide, enrichment protocol, commands
+- **Config**: `config.yaml` — project metadata and corpus definitions
 - **Enrichment**: `enrichment/` — Power Level tracker
-- **Panorama**: `panorama/` — graph exports
 
 ### Commands
 
 | Command | Purpose |
 |---------|---------|
-| `/search <query>` | Semantic search with graph context |
-| `/enrich` | Annotate a symbol with intent/relations |
-| `/explain <uid>` | Full graph context for a symbol |
-| `/ingest` | Rebuild corpus |
-| `/power-level` | Knowledge graph coverage metrics |
-| `/regenerate` | Regenerate One For All skill |
-| `/panorama` | Export knowledge graph visualization |
-| `/graph-report` | Generate graph intelligence report |
-| `/add-index` | Add a new corpus |
-| `/remove-index` | Remove an existing index |
-| `/list-indices` | List all configured indices |
+| `/search <query>` | Semantic search across the codebase |
+| `/enrich` | Annotate a symbol with intent and/or relations |
+| `/ingest` | Rebuild the search corpus from source files |
+| `/status` | Show enrichment coverage and system health |
 
-### Guardrails — Critical Rules
+### Guardrails
 
-- **NEVER** directly edit `.sidecar.yaml` files. Always use `/enrich` to modify sidecar content.
-  Sidecar files have a strict schema that hand-editing will break.
-- **NEVER** directly edit `config.yaml`. Use `/add-index`, `/remove-index`,
-  or `allmight config update-index` to modify index configuration.
-- **NEVER** invent symbol UIDs. UIDs follow the format `<file_path>::<symbol_name>`
-  (e.g., `src/module.py::ClassName.method_name`). Use `/search` or `/explain` to discover valid UIDs.
-- **ALWAYS** use All-Might commands for knowledge graph operations.
+- **NEVER** edit `.sidecar.yaml` files directly — use `/enrich`
+- **NEVER** edit `config.yaml` directly — use `allmight config` CLI commands
+- **NEVER** invent symbol UIDs — use `/search` to discover valid ones
 
-### Online vs. Version Control
+### Getting Started
 
-**Corpora index online (Layer 1) only.** All `/search` and `/explain` results come from online.
-Version control (VC) releases are frozen snapshots — they do not have separate search indices.
-
-To check whether a feature exists in a specific VC release:
-1. `/search` on online to find the relevant files/symbols
-2. Use `sos log` / `sos history` on the file to find the revision log entry
-3. Check if the **same revision log string** exists in the target VC
-4. Same log → same code → feature is present in that VC
-
-See the `sos-smak` skill for the full SOS workflow and version control details.
-
-### Getting Started — Step by Step
-
-**Phase 1: Build the search index** (one-time setup)
-1. Run `/ingest` to build the corpus from source code
-2. Verify with `/list-indices` — you should see your corpora listed
-3. If `/ingest` isn't available yet, ensure the search engine is installed
-
-**Phase 2: Explore** (start using immediately)
-1. `/search "what does the auth module do"` — semantic search across the codebase
-2. `/explain "src/auth.py::AuthHandler"` — deep graph context for any symbol
-3. The `one-for-all` skill auto-loads with project overview and corpus reference
-
-**Phase 3: Enrich** (as you learn the codebase)
-1. When you understand a symbol's purpose, run `/enrich` to annotate it
-2. Follow the `enrichment-protocol` skill for guidance on when and how
-3. Run `/power-level` to track enrichment progress (aim for key entry points first)
-
-**Phase 4: Maintain** (periodically)
-1. `/regenerate` — update the one-for-all skill with latest enrichment data
-2. `/panorama` — export the knowledge graph as a visualization
-3. `/graph-report` — identify god nodes, orphans, and communities
-
-**Milestone checkpoints:**
-- After `/ingest`: `/search` returns relevant results ✓
-- After first `/enrich`: `/power-level` shows > 0% coverage ✓
-- After 10+ enrichments: `/graph-report` shows meaningful clusters ✓
+1. `/ingest` — build the search corpus (one-time)
+2. `/search "query"` — explore the codebase
+3. `/enrich` — annotate symbols as you learn them
+4. `/status` — track enrichment progress
 """
 
         if claude_md.exists():

@@ -69,8 +69,8 @@ it when source files change significantly.
 
 ```
 /search "authentication handler"
-/explain "src/auth.py::AuthHandler"
-/power-level
+/enrich --file src/auth.py --symbol "AuthHandler" --intent "Validates JWT tokens"
+/status
 ```
 
 ## Daily Workflow
@@ -80,49 +80,35 @@ it when source files change significantly.
 | When | Do | Why |
 |------|-----|-----|
 | **First time** | `allmight init .` | Bootstrap the workspace |
-| **First time** | Run `/ingest` in agent | Build search index |
-| **When you learn** | Tell the agent to `/enrich` | Grow the knowledge graph |
-| **Periodically** | `/power-level` | Check enrichment progress |
-| **Periodically** | `/memory-consolidate` | Convert session notes to facts (if memory enabled) |
-| **When structure changes** | `/ingest` again | Rebuild the search index |
+| **First time** | `/ingest` | Build search index |
+| **When you learn** | `/enrich` | Grow the knowledge graph |
+| **Periodically** | `/status` | Check progress |
+| **Periodically** | `/consolidate` | Convert session notes to facts (if memory enabled) |
+| **When structure changes** | `/ingest` | Rebuild the search index |
 
 ### For the agent (automatic)
 
-The agent reads `CLAUDE.md` and skills on startup. It knows how to:
+The agent reads `CLAUDE.md` and the `one-for-all` skill on startup.
+It knows how to search, enrich, remember, and recall.
 
-- `/search` — find code by meaning, not just keywords
-- `/explain` — show full graph context for any symbol
-- `/enrich` — annotate symbols with intent and cross-references
-- `/memory-observe` — record observations during work (if memory enabled)
-- `/memory-recall` — search past session knowledge (if memory enabled)
+## Commands
 
-## Commands Reference
-
-### Knowledge Graph
+### Core (always available)
 
 | Command | Purpose |
 |---------|---------|
 | `/search <query>` | Semantic search across the codebase |
-| `/explain <uid>` | Full graph context for a symbol |
 | `/enrich` | Annotate a symbol with intent and/or relations |
-| `/ingest` | Rebuild the search corpus |
-| `/power-level` | Show knowledge graph coverage metrics |
-| `/regenerate` | Update skills with latest enrichment data |
-| `/panorama` | Export knowledge graph as visualization |
-| `/graph-report` | Graph intelligence report (god nodes, communities) |
-| `/add-index` | Add a new corpus |
-| `/remove-index` | Remove a corpus |
-| `/list-indices` | List all configured corpora |
+| `/ingest` | Rebuild the search corpus from source files |
+| `/status` | Show enrichment coverage and system health |
 
-### Agent Memory (requires `--with-memory`)
+### Memory (requires `--with-memory`)
 
 | Command | Purpose |
 |---------|---------|
-| `/memory-observe` | Record an observation during this session |
-| `/memory-recall` | Search past memories across all layers |
-| `/memory-update` | Update working memory (user preferences, environment) |
-| `/memory-consolidate` | Convert session episodes into lasting facts |
-| `/memory-status` | Check memory health and usage |
+| `/remember` | Record an observation during this session |
+| `/recall` | Search past memories across all layers |
+| `/consolidate` | Convert session episodes into lasting facts |
 
 ## Architecture
 

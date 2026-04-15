@@ -84,9 +84,8 @@ class TestProjectInitializer:
         initializer.initialize(manifest, smak_path=None)
 
         skills_dir = sample_project / ".claude" / "skills"
-        assert (skills_dir / "detroit-smak" / "SKILL.md").exists()
+        # Only one unified skill is generated
         assert (skills_dir / "one-for-all" / "SKILL.md").exists()
-        assert (skills_dir / "enrichment" / "SKILL.md").exists()
 
     def test_does_not_install_smak_skill(self, sample_project):
         """Phase 7: agents use All-Might commands, not SMAK MCP tools directly."""
@@ -108,19 +107,15 @@ class TestProjectInitializer:
         initializer.initialize(manifest, smak_path=None)
 
         commands_dir = sample_project / ".claude" / "commands"
-        # Original commands
-        assert (commands_dir / "power-level.md").exists()
-        assert (commands_dir / "regenerate.md").exists()
-        assert (commands_dir / "panorama.md").exists()
-        # Phase 7 new commands
+        # Simplified command set: 4 core commands only
         assert (commands_dir / "search.md").exists()
         assert (commands_dir / "enrich.md").exists()
         assert (commands_dir / "ingest.md").exists()
-        assert (commands_dir / "explain.md").exists()
-        assert (commands_dir / "graph-report.md").exists()
-        assert (commands_dir / "add-index.md").exists()
-        assert (commands_dir / "remove-index.md").exists()
-        assert (commands_dir / "list-indices.md").exists()
+        assert (commands_dir / "status.md").exists()
+        # Old commands should NOT exist
+        assert not (commands_dir / "explain.md").exists()
+        assert not (commands_dir / "power-level.md").exists()
+        assert not (commands_dir / "regenerate.md").exists()
 
     def test_updates_claude_md(self, sample_project):
         scanner = ProjectScanner()
@@ -133,7 +128,7 @@ class TestProjectInitializer:
         assert claude_md.exists()
         content = claude_md.read_text()
         assert "ALL-MIGHT" in content
-        assert "/power-level" in content
+        assert "/status" in content
 
     def test_one_for_all_uses_allmight_commands(self, sample_project):
         """Phase 7: One For All references All-Might commands, not SMAK MCP."""
@@ -263,8 +258,8 @@ class TestProjectInitializer:
 
         claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
-        assert "online" in content.lower()
-        assert "sos log" in content.lower() or "revision log" in content.lower()
+        assert "/search" in content
+        assert "/enrich" in content
 
     def test_sos_skill_has_online_first_workflow(self, sample_project):
         """Test that SOS skill documents the online-first + log verification pattern."""

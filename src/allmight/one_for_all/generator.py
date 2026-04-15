@@ -72,12 +72,6 @@ class OneForAllGenerator:
         skill_path.parent.mkdir(parents=True, exist_ok=True)
         skill_path.write_text(content)
 
-        # Also generate enrichment protocol skill
-        self._generate_enrichment_skill(root, indices, power_level)
-
-        # Generate commands
-        self._generate_commands(root, "config.yaml")
-
         return content
 
     def _scan_sidecars(self, root: Path, indices: list[IndexSpec]) -> list[SymbolInfo]:

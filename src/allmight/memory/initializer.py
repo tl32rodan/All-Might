@@ -89,162 +89,102 @@ class MemoryInitializer:
     # ------------------------------------------------------------------
 
     def _generate_memory_skill(self, root: Path) -> None:
-        """Generate ``.claude/skills/memory/SKILL.md``."""
-        skills_dir = root / ".claude" / "skills" / "memory"
-        skills_dir.mkdir(parents=True, exist_ok=True)
+        """Append memory section to the one-for-all SKILL.md.
 
-        content = """\
----
-name: agent-memory
-description: >-
-  Three-layer agent memory system. Guides agents on how to observe,
-  recall, consolidate, and manage memories across sessions.
-  Working memory (always in context), episodic memory (session history),
-  semantic memory (consolidated facts with decay scoring).
----
+        Instead of creating a separate skill, we extend the unified
+        one-for-all skill with memory instructions.
+        """
+        skill_path = root / ".claude" / "skills" / "one-for-all" / "SKILL.md"
+        if not skill_path.exists():
+            return
 
-# Agent Memory System
+        marker = "<!-- MEMORY -->"
+        memory_section = f"""
+{marker}
 
-> All-Might provides a three-layer memory architecture for persistent
-> agent learning across sessions.
+## Agent Memory
 
-## Architecture
+Three-layer persistent memory for learning across sessions.
 
-| Layer | Store | Access | Purpose |
-|-------|-------|--------|---------|
-| **Working Memory** | `memory/working/MEMORY.md` | Always in context | User model, environment facts, pinned memories |
-| **Episodic Memory** | `memory/episodes/` | `/memory-recall` | Searchable session history |
-| **Semantic Memory** | `memory/semantic/` | `/memory-recall` | Consolidated facts with decay |
+| Layer | Store | Purpose |
+|-------|-------|---------|
+| **Working** | `memory/working/MEMORY.md` | Always in context — user model, environment, goals |
+| **Episodic** | `memory/episodes/` | Session history — observations, decisions |
+| **Semantic** | `memory/semantic/` | Consolidated facts — with confidence and decay |
 
-## When to Observe
-
-Record observations during a session when you encounter:
-
-- **User corrections**: "User said X is actually Y"
-- **Discovered patterns**: "All handlers follow pattern Z"
-- **Important decisions**: "Chose approach A because of B"
-- **User preferences**: "User prefers concise responses"
-- **Environment facts**: "Build requires Node 18+"
-
-Use `/memory-observe "observation text"` to buffer observations.
-
-## When to Recall
-
-Search memory before:
-
-- Making assumptions about user preferences
-- Facing a problem that feels familiar
-- Starting work in an area you've visited before
-- Needing context from a past session
-
-Use `/memory-recall "query"` to search across all layers.
-
-## When to Update Working Memory
-
-Update working memory for information that should be present in
-every session:
-
-- Persistent user preferences
-- Critical environment configurations
-- Active project goals
-
-Use `/memory-update <section> "content"` where section is one of:
-`user_model`, `environment`, `active_goals`, `pinned_memories`.
-
-## When to Consolidate
-
-Run consolidation to convert session episodes into lasting knowledge:
-
-- After several productive sessions
-- When you notice recurring patterns
-- Periodically (weekly recommended)
-
-Use `/memory-consolidate` to run the consolidation engine.
-
-## Memory × Knowledge Graph
-
-Memory and the knowledge graph reinforce each other:
-
-- Observations about code structure can seed sidecar enrichment
-- Corrections about symbol intent should update both memory and sidecars
-- Frequently recalled symbols indicate enrichment priority
-- Graph communities boost memory retrieval relevance
-
-## Commands
+### Memory Commands
 
 | Command | Purpose |
 |---------|---------|
-| `/memory-observe` | Record an observation for this session |
-| `/memory-recall` | Search across all memory layers |
-| `/memory-update` | Update a working memory section |
-| `/memory-consolidate` | Convert episodes to semantic facts |
-| `/memory-status` | Show memory health metrics |
+| `/remember` | Record an observation during this session |
+| `/recall` | Search past memories across all layers |
+| `/consolidate` | Convert session episodes into lasting facts |
+
+### When to Remember
+
+Use `/remember "..."` when you encounter:
+- User corrections or preferences
+- Discovered patterns or conventions
+- Important decisions and their rationale
+
+### When to Recall
+
+Use `/recall "..."` before:
+- Making assumptions about user preferences
+- Facing a problem that seems familiar
+- Starting work in a previously-visited area
+
+### Consolidation
+
+Run `/consolidate` periodically (weekly recommended) to extract lasting
+facts from session episodes. The agent can also update working memory
+sections (`user_model`, `environment`, `active_goals`, `pinned_memories`)
+by editing `memory/working/MEMORY.md` directly.
 """
-        (skills_dir / "SKILL.md").write_text(content)
+        content = skill_path.read_text()
+        if marker in content:
+            before = content[: content.index(marker)]
+            content = before.rstrip() + "\n" + memory_section
+        else:
+            content = content.rstrip() + "\n" + memory_section
+        skill_path.write_text(content)
 
     # ------------------------------------------------------------------
     # Command generation
     # ------------------------------------------------------------------
 
     def _generate_memory_commands(self, root: Path) -> None:
-        """Generate memory slash commands in ``.claude/commands/``."""
+        """Generate memory slash commands — 3 simple commands."""
         commands_dir = root / ".claude" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
 
-        (commands_dir / "memory-observe.md").write_text(
-            "Record an observation for the current session's episodic memory.\n\n"
-            "Usage: `/memory-observe \"<observation>\"`\n\n"
-            "Observations are stored in the current session's episode record.\n"
-            "They will be consolidated into semantic facts during `/memory-consolidate`.\n\n"
+        (commands_dir / "remember.md").write_text(
+            "Record an observation for the current session.\n\n"
+            "Usage: `/remember \"<observation>\"`\n\n"
+            "Observations are buffered in the current session's episode and\n"
+            "consolidated into lasting facts when you run `/consolidate`.\n\n"
             "Good observations:\n"
             "- User corrections: \"User clarified that X means Y\"\n"
-            "- Discovered patterns: \"All API handlers use middleware pattern Z\"\n"
-            "- Important decisions: \"Chose Redis over Memcached because of pub/sub needs\"\n"
-            "- Environment facts: \"CI requires Python 3.11+\"\n"
+            "- Discovered patterns: \"All handlers use middleware pattern Z\"\n"
+            "- Important decisions: \"Chose Redis because of pub/sub needs\"\n"
         )
 
-        (commands_dir / "memory-recall.md").write_text(
-            "Search across all memory layers for relevant past knowledge.\n\n"
-            "Usage: `/memory-recall <query>`\n\n"
-            "1. Search semantic facts (consolidated knowledge) for matches.\n"
-            "2. Search episodic memory (past sessions) for matches.\n"
-            "3. Score results using composite retrieval (recency + importance + relevance).\n"
-            "4. Present top results with source attribution and confidence scores.\n"
-            "5. Update access metadata on retrieved entries (resists future decay).\n\n"
-            "Add `--include-dormant` to also search faded memories.\n"
+        (commands_dir / "recall.md").write_text(
+            "Search past memories across all layers.\n\n"
+            "Usage: `/recall <query>`\n\n"
+            "Searches semantic facts and episodic memory, scores by\n"
+            "recency + importance + relevance, returns top results.\n"
+            "Accessed memories resist future decay.\n"
         )
 
-        (commands_dir / "memory-update.md").write_text(
-            "Update a section of working memory (MEMORY.md).\n\n"
-            "Usage: `/memory-update <section> \"<content>\"`\n\n"
-            "Sections:\n"
-            "- `user_model` — User preferences, communication style, corrections\n"
-            "- `environment` — Build tools, versions, system configurations\n"
-            "- `active_goals` — Current objectives and milestones\n"
-            "- `pinned_memories` — Critical facts that must always be in context\n\n"
-            "Working memory is always loaded at session start. Keep it focused\n"
-            "and within the token budget (check with `/memory-status`).\n"
-        )
-
-        (commands_dir / "memory-consolidate.md").write_text(
-            "Trigger consolidation of recent episodes into semantic facts.\n\n"
-            "Usage: `/memory-consolidate`\n\n"
-            "1. Read all unconsolidated episodes.\n"
-            "2. Extract recurring observations, decisions, and topics.\n"
-            "3. Search existing semantic facts for overlap.\n"
-            "4. Create new facts, reinforce existing ones, or supersede contradicted facts.\n"
-            "5. Mark processed episodes as consolidated.\n"
-            "6. Report: facts created, updated, superseded, conflicts detected.\n"
-        )
-
-        (commands_dir / "memory-status.md").write_text(
-            "Show memory system health metrics.\n\n"
-            "Usage: `/memory-status`\n\n"
-            "Displays:\n"
-            "- Working memory: token usage vs. budget, section breakdown\n"
-            "- Episodic memory: total episodes, unconsolidated count\n"
-            "- Semantic memory: total facts, average confidence, categories\n"
-            "- Decay status: active / fading / dormant entry counts\n"
+        (commands_dir / "consolidate.md").write_text(
+            "Convert session episodes into lasting semantic facts.\n\n"
+            "Usage: `/consolidate`\n\n"
+            "1. Read unconsolidated episodes.\n"
+            "2. Extract recurring observations and decisions.\n"
+            "3. Create, reinforce, or supersede semantic facts.\n"
+            "4. Mark processed episodes as consolidated.\n\n"
+            "Run periodically (weekly recommended) or after significant work.\n"
         )
 
     # ------------------------------------------------------------------
@@ -274,19 +214,12 @@ a three-layer persistent memory architecture for agent learning.
 
 | Command | Purpose |
 |---------|---------|
-| `/memory-observe` | Record an observation during this session |
-| `/memory-recall` | Search past memories across all layers |
-| `/memory-update` | Update working memory sections |
-| `/memory-consolidate` | Convert episodes into semantic facts |
-| `/memory-status` | Check memory health and usage |
+| `/remember` | Record an observation during this session |
+| `/recall` | Search past memories across all layers |
+| `/consolidate` | Convert session episodes into lasting facts |
 
-### Memory Guardrails
-
-- **ALWAYS** use memory commands — do not hand-edit files in `memory/`.
-- Observations are **append-only** — do not modify past episodes.
-- Consolidation may **supersede** old facts when corrections are found.
-- Working memory has a **token budget** — keep it focused.
-- Memory entries have **decay** — frequently accessed memories persist longer.
+Memory entries have **decay** — frequently accessed memories persist longer.
+Run `/status` to check memory health alongside enrichment coverage.
 """
         if claude_md.exists():
             content = claude_md.read_text()

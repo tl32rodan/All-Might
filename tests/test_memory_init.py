@@ -9,7 +9,7 @@ from allmight.memory.initializer import MemoryInitializer
 
 @pytest.fixture
 def project_root(tmp_path):
-    """A minimal project root with config.yaml."""
+    """A minimal project root with config.yaml and one-for-all SKILL.md."""
     config = {
         "project": {"name": "test-project", "root": str(tmp_path)},
         "indices": [
@@ -18,6 +18,10 @@ def project_root(tmp_path):
     }
     with open(tmp_path / "config.yaml", "w") as f:
         yaml.dump(config, f)
+    # Create the one-for-all SKILL.md that memory init appends to
+    skill_dir = tmp_path / ".claude" / "skills" / "one-for-all"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: one-for-all\n---\n\n# One For All\n")
     return tmp_path
 
 
@@ -57,24 +61,23 @@ class TestMemoryInitializer:
         MemoryInitializer().initialize(project_root)
         assert (project_root / "memory" / "store").is_dir()
 
-    def test_generates_memory_skill(self, project_root):
+    def test_memory_appended_to_one_for_all(self, project_root):
+        """Memory section should be appended to one-for-all SKILL.md."""
         MemoryInitializer().initialize(project_root)
-        skill_path = project_root / ".claude" / "skills" / "memory" / "SKILL.md"
+        skill_path = project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md"
         assert skill_path.exists()
         content = skill_path.read_text()
-        assert "agent-memory" in content
-        assert "Working Memory" in content
-        assert "Episodic Memory" in content
-        assert "Semantic Memory" in content
+        assert "Agent Memory" in content
+        assert "/remember" in content
+        assert "/recall" in content
+        assert "/consolidate" in content
 
     def test_generates_commands(self, project_root):
         MemoryInitializer().initialize(project_root)
         commands_dir = project_root / ".claude" / "commands"
-        assert (commands_dir / "memory-observe.md").exists()
-        assert (commands_dir / "memory-recall.md").exists()
-        assert (commands_dir / "memory-update.md").exists()
-        assert (commands_dir / "memory-consolidate.md").exists()
-        assert (commands_dir / "memory-status.md").exists()
+        assert (commands_dir / "remember.md").exists()
+        assert (commands_dir / "recall.md").exists()
+        assert (commands_dir / "consolidate.md").exists()
 
     def test_updates_claude_md(self, project_root):
         # Create existing CLAUDE.md
