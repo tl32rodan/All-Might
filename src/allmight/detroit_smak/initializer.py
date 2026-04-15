@@ -53,35 +53,13 @@ class ProjectInitializer:
         self._create_opencode_compat(root)
 
     def _create_metadata(self, root: Path, manifest: ProjectManifest) -> None:
-        """Create config.yaml, enrichment/, and panorama/ at the project root."""
-        # Build index dicts
-        indices = []
-        for idx in manifest.indices:
-            entry: dict = {
-                "name": idx.name,
-                "uri": idx.uri or f"./smak/{idx.name}",
-                "description": idx.description,
-                "paths": idx.paths,
-            }
-            if idx.path_env:
-                entry["path_env"] = idx.path_env
-            indices.append(entry)
+        """Create enrichment/, panorama/, knowledge_graph/ at the project root.
 
-        # Merged config.yaml
-        config = {
-            "project": {
-                "name": manifest.name,
-                "root": str(manifest.root_path),
-                "languages": manifest.languages,
-                "frameworks": manifest.frameworks,
-            },
-            "enrichment": {
-                "strategy": "advisory",
-            },
-            "indices": indices,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        _write_yaml(root / "config.yaml", config)
+        Note: config.yaml is NOT created here — it belongs to SMAK workspaces
+        under knowledge_graph/*/config.yaml, not the All-Might project root.
+        """
+        # knowledge_graph/ — workspace container (SMAK workspaces live here)
+        (root / "knowledge_graph").mkdir(exist_ok=True)
 
         # enrichment/tracker.yaml — initial Power Level (all 0%)
         enrichment_dir = root / "enrichment"
@@ -458,11 +436,6 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 
     def _one_for_all_skill_body(self, manifest: ProjectManifest) -> str:
         """Generate the initial body for one-for-all/SKILL.md."""
-        index_table = "| Index | Description | Paths |\n|-------|-------------|-------|\n"
-        for idx in manifest.indices:
-            paths_str = ", ".join(idx.paths)
-            index_table += f"| `{idx.name}` | {idx.description} | `{paths_str}` |\n"
-
         dir_map = ""
         if manifest.directory_map:
             dir_map = "### Directory Structure\n\n"
@@ -471,11 +444,10 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 
         return f"""# One For All — {manifest.name}
 
-> **All-Might** is the active knowledge graph layer that indexes this codebase,
-> providing commands, enrichment, and graph intelligence.
->
-> All knowledge graph operations go through **All-Might commands** (`/search`, `/enrich`, `/explain`, etc.).
-> Do NOT hand-edit sidecar or config YAML files.
+> **All-Might** is the active knowledge graph layer for this project.
+> It manages SMAK workspaces under `knowledge_graph/`, shared enrichment,
+> and agent memory. Use the commands below — Do NOT hand-edit sidecar or
+> config YAML files directly.
 
 ## Project Overview
 
@@ -484,55 +456,88 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 - **Frameworks**: {', '.join(manifest.frameworks) or 'Not yet detected'}
 
 {dir_map}
+## SMAK Workspaces
 
-## Corpus Reference
+Workspaces live under `knowledge_graph/`. Discover them:
+```bash
+ls knowledge_graph/
+```
 
-{index_table}
+Each workspace has its own `config.yaml` (indices) and `store/` (search data).
 
-Use `/list-indices` to verify indices are active.
+## SMAK CLI Reference
 
-> **Note:** This workspace is a standalone hub — source code is at external paths
-> listed in the "Paths" column above. Search data is stored locally in `./smak/`.
-> Sidecar files live beside the source files at those external paths, not here.
-> **Indices are built from online (Layer 1) only.** To verify features in version control
-> releases, use SOS revision log matching (see `sos-smak` skill).
+All commands use `--config <workspace>/config.yaml`. Add `--json` for
+machine-readable output.
 
-## Key Symbols
+**Search** — find code by semantic meaning:
+```bash
+smak search "authentication handler" --config knowledge_graph/main/config.yaml --index source_code --top-k 5 --json
+smak search-all "error handling" --config knowledge_graph/main/config.yaml --top-k 3 --json
+smak lookup "src/auth.py::AuthHandler" --config knowledge_graph/main/config.yaml --index source_code --json
+```
 
-> No symbols have been enriched yet. As you work with this project and use
-> `/enrich` to annotate code, this section will be populated when you
-> run `/regenerate`.
+**Enrich** — annotate a symbol with intent and relations:
+```bash
+smak enrich --config knowledge_graph/main/config.yaml --index source_code \\
+    --file src/auth.py --symbol "AuthHandler.validate" \\
+    --intent "Validates JWT tokens and extracts user claims"
 
-## Power Level
+smak enrich --config knowledge_graph/main/config.yaml --index source_code \\
+    --file src/auth.py --symbol "AuthHandler.validate" \\
+    --relation "src/models.py::User" --bidirectional
+```
 
-- **Coverage**: 0% (fresh workspace)
-- **Enriched symbols**: 0
-- **Total relations**: 0
+**Ingest** — rebuild the vector index from source files:
+```bash
+smak ingest --config knowledge_graph/main/config.yaml                    # all corpora
+smak ingest --config knowledge_graph/main/config.yaml --index source_code  # specific corpus
+```
 
-Run `/power-level` to get current metrics, or `/regenerate` to update this skill.
+**Diagnostics**:
+```bash
+smak health --config knowledge_graph/main/config.yaml --json
+smak describe --config knowledge_graph/main/config.yaml --json
+smak stats --config knowledge_graph/main/config.yaml --json
+```
 
-## All-Might Commands
+## Sidecar Files
+
+Sidecar files store enrichment metadata beside the source file they describe.
+They are named `.{{source_filename}}.sidecar.yaml`.
+
+```yaml
+# Example: .auth.py.sidecar.yaml  (beside src/auth.py)
+symbols:
+  - name: "AuthHandler.validate"
+    intent: "Validates JWT tokens and extracts user claims"
+    relations:
+      - "src/models.py::User"
+      - "tests/test_auth.py::test_validate"
+```
+
+**Important rules:**
+- NEVER edit .sidecar.yaml files by hand — always use `smak enrich`
+- UIDs follow the format `<file_path>::<symbol_name>`
+- Use dot notation for nested symbols: `ClassName.method_name`
+- The wildcard `*` means the entire file: `path/to/file.py::*`
+- Do NOT invent UIDs — use `smak search` to discover valid ones
+
+## Commands
 
 | Command | Purpose |
 |---------|---------|
-| `/search <query>` | Semantic search with graph context |
-| `/explain <uid>` | Full graph context for a symbol |
-| `/enrich` | Annotate a symbol with intent/relations |
-| `/ingest` | Rebuild corpus |
-| `/power-level` | Check knowledge coverage metrics |
-| `/regenerate` | Update this skill with latest state |
-| `/panorama` | Export knowledge graph visualization |
-| `/graph-report` | Graph intelligence report |
-| `/add-index` | Add a new corpus |
-| `/remove-index` | Remove an index |
-| `/list-indices` | List all configured indices |
+| `/search <query>` | Search the codebase semantically |
+| `/enrich` | Annotate a symbol with intent and relations |
+| `/ingest` | Rebuild the search corpus from source files |
+| `/status` | Show enrichment coverage and system health |
 
 ## Getting Started
 
-1. Use `/search "..."` to explore the codebase semantically
-2. Use `/explain "path::symbol"` for deep context on any symbol
-3. When you understand a symbol's purpose, use `/enrich` (see `enrichment-protocol` skill)
-4. Run `/power-level` periodically to track progress
+1. `/ingest` — build the search index (first time setup)
+2. `/search "query"` — explore the codebase
+3. `/enrich` — annotate symbols as you learn them
+4. `/status` — track enrichment progress
 """
 
     def _enrichment_skill_body(self) -> str:

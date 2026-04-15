@@ -27,6 +27,18 @@ def project_with_graph(tmp_path):
     initializer = ProjectInitializer()
     initializer.initialize(manifest)
 
+    # Analyzer/exporter need config.yaml — create workspace config
+    config = {
+        "project": {"name": manifest.name, "root": str(tmp_path)},
+        "indices": [
+            {"name": idx.name, "uri": idx.uri or f"./smak/{idx.name}",
+             "description": idx.description, "paths": idx.paths}
+            for idx in manifest.indices
+        ],
+    }
+    with open(tmp_path / "config.yaml", "w") as f:
+        yaml.dump(config, f)
+
     # Create sidecars with relations
     sidecar1 = {
         "symbols": [
@@ -69,6 +81,18 @@ class TestPanoramaAnalyzer:
         manifest = scanner.scan(tmp_path)
         initializer = ProjectInitializer()
         initializer.initialize(manifest)
+
+        # Analyzer needs config.yaml — create workspace config
+        config = {
+            "project": {"name": manifest.name, "root": str(tmp_path)},
+            "indices": [
+                {"name": idx.name, "uri": idx.uri or f"./smak/{idx.name}",
+                 "description": idx.description, "paths": idx.paths}
+                for idx in manifest.indices
+            ],
+        }
+        with open(tmp_path / "config.yaml", "w") as f:
+            yaml.dump(config, f)
 
         config_path = tmp_path / "config.yaml"
         analyzer = PanoramaAnalyzer()

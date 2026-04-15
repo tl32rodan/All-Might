@@ -26,6 +26,19 @@ def initialized_project(tmp_path):
     manifest = scanner.scan(tmp_path)
     initializer = ProjectInitializer()
     initializer.initialize(manifest)
+
+    # Planner/tracker tests need config.yaml with indices — create workspace config
+    config = {
+        "project": {"name": manifest.name, "root": str(tmp_path)},
+        "indices": [
+            {"name": idx.name, "uri": idx.uri or f"./smak/{idx.name}",
+             "description": idx.description, "paths": idx.paths}
+            for idx in manifest.indices
+        ],
+    }
+    with open(tmp_path / "config.yaml", "w") as f:
+        yaml.dump(config, f)
+
     return tmp_path
 
 

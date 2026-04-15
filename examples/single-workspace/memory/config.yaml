@@ -1,0 +1,16 @@
+memory:
+  working_memory_budget: 4000
+  episode_retention_days: 90
+  decay_rate: 0.05
+  consolidation_strategy: async
+  retrieval_weights:
+    recency: 0.3
+    importance: 0.3
+    relevance: 0.4
+stores:
+  episodes:
+    path: ./memory/episodes
+    store_uri: ./memory/store/episodes
+  semantic_facts:
+    path: ./memory/semantic
+    store_uri: ./memory/store/semantic_facts
