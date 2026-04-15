@@ -59,6 +59,57 @@ single-workspace/
 | `panorama/` | Graph exports (generated on demand) | Agent (writes when asked) |
 | `memory/` | Persistent agent memory across sessions | Agent (reads/writes) |
 
+## hub-3-flows/
+
+A multi-workspace setup with 3 independent SMAK workspaces:
+
+```
+hub-3-flows/
+└── workspaces/
+    ├── stdcell/                   ← EDA workspace (Verilog/SystemVerilog)
+    │   ├── rtl/top.v              ← Source: RTL design files
+    │   ├── verif/tb_top.sv        ← Source: verification testbenches
+    │   ├── constraints/timing.sdc ← Source: timing constraints
+    │   ├── config.yaml            ← 3 corpora: rtl, verif, constraints
+    │   ├── CLAUDE.md
+    │   ├── .claude/skills/...     ← one-for-all (teaches smak for THIS workspace)
+    │   ├── .claude/commands/...   ← /search, /enrich, /ingest, /status + memory
+    │   ├── enrichment/
+    │   ├── panorama/
+    │   └── memory/
+    │
+    ├── io_phy/                    ← EDA workspace (Verilog/SystemVerilog)
+    │   ├── rtl/io_pad.v
+    │   ├── verif/tb_io.sv
+    │   ├── config.yaml            ← 2 corpora: rtl, verif
+    │   ├── ...                    ← same structure as stdcell
+    │
+    └── pll/                       ← Software workspace (Python)
+        ├── src/pll.py
+        ├── tests/test_pll.py
+        ├── config.yaml            ← 2 corpora: source_code, tests
+        ├── ...                    ← same structure
+```
+
+### Key observations
+
+1. **Each workspace is self-contained** — has its own config.yaml, skills,
+   commands, enrichment tracker, and memory.
+
+2. **config.yaml differs per workspace** — stdcell has `rtl`, `verif`,
+   `constraints` corpora; pll has `source_code`, `tests`. The scanner
+   auto-detects based on directory structure.
+
+3. **No hub-level config.yaml yet** — currently each workspace is initialized
+   independently with `allmight init`. A future hub config would just list
+   workspace paths without duplicating their SMAK settings.
+
+4. **Skills/commands are identical** — the one-for-all skill and commands are
+   the same templates, but the one-for-all SKILL.md content differs because
+   it reflects each workspace's detected languages and corpora.
+
+---
+
 ## Regenerating
 
 ```bash

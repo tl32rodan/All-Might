@@ -1,0 +1,26 @@
+project:
+  name: All-Might
+  root: /home/user/All-Might/examples/hub-3-flows/workspaces/stdcell
+  languages:
+  - Verilog
+  - SystemVerilog
+  frameworks: []
+enrichment:
+  strategy: advisory
+indices:
+- name: rtl
+  uri: ./smak/rtl
+  description: RTL design files — RTL design files (Verilog, SystemVerilog)
+  paths:
+  - ./rtl
+- name: verif
+  uri: ./smak/verif
+  description: Verification/testbench — Verification testbenches and coverage models
+  paths:
+  - ./verif
+- name: constraints
+  uri: ./smak/constraints
+  description: SDC timing constraints, floorplan DEF, and power intent UPF
+  paths:
+  - ./constraints
+created_at: '2026-04-15T08:59:31.486689+00:00'
