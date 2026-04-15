@@ -1,175 +1,93 @@
 # All-Might
 
-Active Knowledge Graph Framework for AI coding agents.
+Turn your codebase into a knowledge graph that AI agents can search,
+learn from, and remember across sessions.
 
-All-Might turns your codebase into a searchable, enrichable knowledge graph
-that agents can query, learn from, and build upon across sessions.
-
-## What It Does
-
-```
-init  →  /ingest  →  /search  →  /enrich  →  knowledge graph
-                                     ↑              ↓
-                               agent learns    agent remembers
-```
-
-- **Semantic search** — natural-language queries across your codebase
-- **Symbol enrichment** — agents annotate code with intent and relationships
-- **Knowledge graph** — visualize how code connects (communities, god nodes, paths)
-- **Agent memory** — three-layer persistent memory across sessions (optional)
-
-## Quick Start
-
-### 1. Install
+## Setup
 
 ```bash
 pip install allmight
-```
-
-### 2. Initialize a workspace
-
-```bash
 cd /path/to/your/project
-allmight init .
+allmight init .                # knowledge graph only
+allmight init . --with-memory  # + agent memory (recommended)
 ```
 
-This creates `config.yaml`, corpora definitions, and agent skills in `.claude/`.
+Then open the folder in **Claude Code** or **OpenCode** and start talking.
 
-To also enable agent memory (recommended for long-running projects):
+## Talking to the Agent
 
-```bash
-allmight init . --with-memory
-```
+### Explore
 
-### 3. Open in Claude Code or OpenCode
+> "Search for how authentication works"
+>
+> "What does the AuthHandler class do?"
+>
+> "Find all error handling patterns in this project"
 
-```bash
-# Claude Code
-claude
+The agent uses `/search` to find code by meaning, then explains what it found.
 
-# OpenCode
-opencode
-```
+### Enrich
 
-All-Might skills auto-load. The agent immediately has access to the knowledge
-graph commands.
+> "Annotate the AuthHandler with its purpose"
+>
+> "Link the login function to its test file"
+>
+> "Enrich the top 5 most important entry points"
 
-### 4. Build the search index
+The agent uses `/enrich` to record what code does and how it connects.
+This builds the knowledge graph over time.
 
-Inside the coding agent, run:
+### Track Progress
 
-```
-/ingest
-```
+> "How much of the codebase is annotated?"
+>
+> "Show me the knowledge graph health"
 
-This builds the search corpus from your source code. You only need to re-run
-it when source files change significantly.
+The agent uses `/status` to report enrichment coverage.
 
-### 5. Start exploring
+### Remember (if memory enabled)
 
-```
-/search "authentication handler"
-/enrich --file src/auth.py --symbol "AuthHandler" --intent "Validates JWT tokens"
-/status
-```
+> "Remember that the user prefers TypeScript over JavaScript"
+>
+> "What did we discuss about the auth module last time?"
+>
+> "Consolidate what you've learned from recent sessions"
 
-## Daily Workflow
+The agent uses `/remember`, `/recall`, and `/consolidate` to persist
+knowledge across sessions.
 
-### For the human
+## What You Need to Do
 
-| When | Do | Why |
-|------|-----|-----|
-| **First time** | `allmight init .` | Bootstrap the workspace |
-| **First time** | `/ingest` | Build search index |
-| **When you learn** | `/enrich` | Grow the knowledge graph |
-| **Periodically** | `/status` | Check progress |
-| **Periodically** | `/consolidate` | Convert session notes to facts (if memory enabled) |
-| **When structure changes** | `/ingest` | Rebuild the search index |
+| When | Tell the agent |
+|------|----------------|
+| **First time** | "Run /ingest to build the search index" |
+| **Exploring** | Ask questions about the code |
+| **Learning something** | "Enrich this symbol with what you just learned" |
+| **Checking progress** | "Show me the status" |
+| **Weekly (memory)** | "Consolidate recent sessions" |
+| **After big changes** | "Re-run /ingest" |
 
-### For the agent (automatic)
-
-The agent reads `CLAUDE.md` and the `one-for-all` skill on startup.
-It knows how to search, enrich, remember, and recall.
+Everything else is automatic. The agent reads its skills on startup and
+knows how to operate the knowledge graph.
 
 ## Commands
 
-### Core (always available)
-
-| Command | Purpose |
-|---------|---------|
-| `/search <query>` | Semantic search across the codebase |
-| `/enrich` | Annotate a symbol with intent and/or relations |
-| `/ingest` | Rebuild the search corpus from source files |
-| `/status` | Show enrichment coverage and system health |
-
-### Memory (requires `--with-memory`)
-
-| Command | Purpose |
-|---------|---------|
-| `/remember` | Record an observation during this session |
-| `/recall` | Search past memories across all layers |
-| `/consolidate` | Convert session episodes into lasting facts |
-
-## Architecture
-
-```
-your-project/
-├── config.yaml              # Corpus definitions
-├── CLAUDE.md                 # Agent instructions (auto-generated)
-├── AGENTS.md                 # → CLAUDE.md symlink (OpenCode compat)
-├── enrichment/
-│   └── tracker.yaml          # Power Level metrics + history
-├── panorama/                 # Graph exports (JSON, Mermaid)
-├── smak/                     # Search index data (internal)
-├── memory/                   # Agent memory (if --with-memory)
-│   ├── config.yaml           # Memory settings + store definitions
-│   ├── working/MEMORY.md     # Always-in-context facts
-│   ├── episodes/             # Session history (append-only)
-│   ├── semantic/             # Consolidated facts with decay
-│   └── store/                # Memory search data (internal)
-└── .claude/
-    ├── skills/               # Auto-loaded agent skills
-    └── commands/             # Slash commands
-```
-
-## Key Concepts
-
-**Corpus** — A searchable index of source code. Created by `/ingest`, queried
-by `/search`. You can have multiple corpora for different parts of your
-project (source, tests, docs).
-
-**Sidecar** — A `.{filename}.sidecar.yaml` file that stores enrichment
-metadata (intent, relations) alongside the source file it describes.
-Never edit sidecars by hand — use `/enrich`.
-
-**Power Level** — A coverage metric showing what percentage of symbols
-have been enriched. Higher is better, but focus on entry points and
-complex logic first.
-
-**Symbol UID** — The unique identifier for a code symbol:
-`<file_path>::<symbol_name>` (e.g., `src/auth.py::AuthHandler.validate`).
-
-## Agent Memory (Optional)
-
-Enable with `allmight init --with-memory` or `allmight memory init`.
-
-Three-layer architecture inspired by cognitive science:
-
-| Layer | What | When |
-|-------|------|------|
-| **Working Memory** | `MEMORY.md` — always in context | User preferences, environment facts, active goals |
-| **Episodic Memory** | Session records | Auto-recorded at session end |
-| **Semantic Memory** | Consolidated facts | Created by `/memory-consolidate` from episodes |
-
-Memory features Ebbinghaus decay curves — frequently accessed memories
-persist longer, unused ones fade naturally.
+| Command | What to tell the agent |
+|---------|----------------------|
+| `/search` | "Search for ..." |
+| `/enrich` | "Annotate this symbol" |
+| `/ingest` | "Build/rebuild the search index" |
+| `/status` | "Show knowledge graph health" |
+| `/remember` | "Remember that ..." |
+| `/recall` | "What do you remember about ...?" |
+| `/consolidate` | "Consolidate recent sessions" |
 
 ## Compatibility
 
-| Tool | Support |
-|------|---------|
-| Claude Code | First-class (reads `.claude/` natively) |
-| OpenCode | Supported via `AGENTS.md` symlink + `.claude/` fallback |
+| Tool | Status |
+|------|--------|
+| **Claude Code** | First-class support |
+| **OpenCode** | Supported (via `AGENTS.md` symlink) |
 
 ## License
 
