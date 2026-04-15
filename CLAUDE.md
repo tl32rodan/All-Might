@@ -66,3 +66,118 @@ All-Might/                          ← This repo (the framework)
 | CLAUDE.md (in workspace) | What capabilities exist | Agent (high-level) |
 | Skills/Commands | How to execute operations (smak CLI) | Agent (low-level) |
 | CLI | `allmight init` only | Human (bootstrap) |
+
+---
+
+## Design Philosophy
+
+### 1. What All-Might Generates (Target Workspace Structure)
+
+An All-Might project manages **one knowledge graph** across **multiple
+SMAK workspaces** (corpora). Example with 3 EDA flows:
+
+```
+my-chip-project/                          ← One All-Might project
+├── CLAUDE.md                             ← Agent: WHAT can I do (high-level)
+├── AGENTS.md → CLAUDE.md                 ← OpenCode compatibility
+│
+├── .claude/
+│   ├── skills/
+│   │   └── one-for-all/SKILL.md          ← Agent: HOW to operate (low-level)
+│   └── commands/
+│       ├── search.md                     ← /search operational guide
+│       ├── enrich.md                     ← /enrich operational guide
+│       ├── ingest.md                     ← /ingest operational guide
+│       ├── status.md                     ← /status operational guide
+│       ├── remember.md                   ← /remember (memory)
+│       ├── recall.md                     ← /recall (memory)
+│       └── consolidate.md               ← /consolidate (memory)
+│
+├── enrichment/                           ← Shared: annotation coverage across ALL workspaces
+│   └── tracker.yaml
+│
+├── memory/                               ← Shared: agent memory across ALL workspaces
+│   ├── config.yaml                       ← Memory settings + store definitions
+│   ├── working/MEMORY.md                 ← Always-in-context facts
+│   ├── episodes/                         ← Session history
+│   ├── semantic/                         ← Consolidated facts
+│   └── store/                            ← Memory search data (internal)
+│
+├── panorama/                             ← Shared: graph exports across ALL workspaces
+│
+└── knowledge_graph/                      ← SMAK workspaces (each independent)
+    ├── stdcell/
+    │   ├── config.yaml                   ← SMAK config (indices: rtl, verif, constraints)
+    │   └── store/                        ← SMAK search data
+    ├── io_phy/
+    │   ├── config.yaml                   ← SMAK config (indices: rtl, verif)
+    │   └── store/
+    └── pll/
+        ├── config.yaml                   ← SMAK config (indices: source_code, tests)
+        └── store/
+```
+
+**Sidecar files** (`.sidecar.yaml`) live beside the source code they describe
+(at `$DDI_ROOT_PATH/...`), NOT inside the All-Might project.
+
+### 2. SRP: Three Layers of Agent Documentation
+
+| Layer | Audience | Abstraction | Contains |
+|-------|----------|-------------|----------|
+| **CLAUDE.md** | Agent | High-level WHAT | Capabilities, commands, "see skill for details" |
+| **Skills/Commands** | Agent | Low-level HOW | SMAK CLI commands, YAML schemas, troubleshooting |
+| **README.md** | Human | Conversational | "Tell the agent to search for..." |
+
+- **CLAUDE.md** knows about `/search`, `/enrich`, `/status` but NOT about `smak search --config ...`
+- **Skills** know about SMAK internals but never expose them to the human user
+- **README.md** doesn't mention SMAK, sidecars, or YAML — only natural-language examples
+
+### 3. config.yaml: Only SMAK Owns It
+
+There is **no All-Might-level config.yaml**.  Workspaces are discovered
+by scanning `knowledge_graph/*/config.yaml` — no registry needed.
+
+**SMAK config.yaml** (per workspace at `knowledge_graph/<name>/config.yaml`):
+```yaml
+indices:
+  - name: rtl
+    uri: ./store/rtl
+    description: "RTL design files (Verilog, SystemVerilog)"
+    paths:
+      - $DDI_ROOT_PATH/stdcell/rtl
+    path_env: DDI_ROOT_PATH
+  - name: verif
+    uri: ./store/verif
+    description: "Verification testbenches"
+    paths:
+      - $DDI_ROOT_PATH/stdcell/verif
+```
+
+**Rule**: config.yaml is SMAK's concern.  All-Might discovers workspaces
+by their directory structure, not by a registry file.
+
+### 4. Shared vs Per-Workspace
+
+| Component | Scope | Why |
+|-----------|-------|-----|
+| `enrichment/` | Project-wide | Annotation coverage spans all workspaces |
+| `memory/` | Project-wide | Agent remembers across all workspaces |
+| `panorama/` | Project-wide | Graph connects symbols across workspaces |
+| `.claude/skills/` | Project-wide | One skill teaches agent about all workspaces |
+| `.claude/commands/` | Project-wide | One set of commands for the whole project |
+| `knowledge_graph/<name>/config.yaml` | Per-workspace | Each SMAK DB has its own index config |
+| `knowledge_graph/<name>/store/` | Per-workspace | Each SMAK DB has its own search data |
+| Sidecar files | Per-source-file | Live beside source code (external) |
+
+### 5. CLI: Bootstrap Only
+
+The `allmight` CLI does ONE thing: `allmight init`.
+Everything else is agent-driven through skills and commands.
+
+```
+allmight init .                  → creates the project structure
+allmight init . --with-memory    → also adds memory subsystem
+allmight memory init             → add memory to existing project
+```
+
+The agent calls `smak` CLI directly (taught by skills), NOT `allmight` wrappers.
