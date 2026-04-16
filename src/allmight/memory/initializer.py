@@ -52,19 +52,16 @@ class MemoryInitializer:
         # 5. Generate hook scripts (nudge + L1 loader)
         self._generate_hooks(root)
 
-        # 6. Generate memory skill section
-        self._generate_memory_skill(root)
-
-        # 7. Generate memory commands (remember, recall, reflect)
+        # 6. Generate memory commands (remember, recall, reflect)
         self._generate_memory_commands(root)
 
-        # 8. Update CLAUDE.md
+        # 7. Update CLAUDE.md
         self._update_claude_md(root)
 
-        # 9. Refresh OpenCode compatibility (symlinks + opencode.json hooks)
+        # 8. Refresh OpenCode compatibility (symlinks + opencode.json hooks)
         self._refresh_opencode_compat(root)
 
-        # 10. Generate opencode.json with hooks for OpenCode
+        # 9. Generate opencode.json with hooks for OpenCode
         self._generate_opencode_json(root)
 
     # ------------------------------------------------------------------
@@ -164,7 +161,7 @@ Memory is organized in three tiers:
 - **memory/understanding/** — per-corpus knowledge, loaded on workspace entry
 - **memory/journal/** — searchable log, accessed via `/recall`
 
-The `one-for-all` skill has the complete operational guide.
+See `/remember`, `/recall`, and `/reflect` commands for detailed guides.
 """
 
     def _opencode_plugin_content(self) -> str:
@@ -255,109 +252,6 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
         for script_name in ("memory-nudge.sh", "memory-load.sh"):
             script = hooks_dir / script_name
             script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-    # ------------------------------------------------------------------
-    # Skill generation
-    # ------------------------------------------------------------------
-
-    def _generate_memory_skill(self, root: Path) -> None:
-        """Append memory section to the one-for-all SKILL.md."""
-        skill_path = root / ".claude" / "skills" / "one-for-all" / "SKILL.md"
-        if not skill_path.exists():
-            return
-
-        marker = "<!-- MEMORY -->"
-        memory_section = f"""
-{marker}
-
-## Agent Memory — L1 / L2 / L3
-
-Three-tier persistent memory, organized like cache/RAM/disk.
-
-| Tier | Location | Loaded | Managed by |
-|------|----------|--------|------------|
-| **L1** | `MEMORY.md` (project root) | Every turn (hook) | Agent writes |
-| **L2** | `memory/understanding/<workspace>.md` | On workspace entry | Agent reads/writes |
-| **L3** | `memory/journal/` | Via `/recall` (SMAK search) | Agent appends |
-
-### L1 — MEMORY.md (Cache)
-
-Always in context. Contains:
-- **Project map** — brief intro for each workspace
-- **User preferences** — communication style, tools, conventions
-- **Active goals** — what the agent is currently working on
-- **Key facts** — cross-cutting knowledge
-
-Update `MEMORY.md` directly as you learn. Keep it concise.
-
-### L2 — Understanding (RAM)
-
-Per-corpus knowledge in `memory/understanding/<workspace>.md`:
-- Source code / document roadmap
-- Architecture overview and key files
-- Debug SOP and known issues
-- Patterns, conventions, and gotchas
-
-Read the relevant file when entering a workspace. Update as you work.
-Create new files for new workspaces.
-
-### L3 — Journal (Disk)
-
-Append-only text files in `memory/journal/`. Organized by workspace or topic:
-```
-memory/journal/
-├── stdcell/
-│   └── 2026-04-15-dq-clocking.md
-├── pll/
-│   └── 2026-04-15-lock-fsm.md
-└── general/
-    └── user-prefs.md
-```
-
-Searched via SMAK vector index (`memory/store/`).
-
-### Memory Commands
-
-| Command | Purpose |
-|---------|---------|
-| `/remember` | Write to L2 understanding + append L3 journal entry |
-| `/recall` | Search L3 journal via SMAK |
-| `/reflect` | End-of-session review: tidy L1, update L2, log to L3 |
-
-### Feedback Loop (`memory/usage.log`)
-
-Every `/remember`, `/recall`, and `/reflect` logs a line to `memory/usage.log`:
-
-```
-2026-04-16T10:30:00Z recall "auth patterns" results=3 used=2
-2026-04-16T10:35:00Z remember workspace=pll "lock FSM uses 3 states"
-2026-04-16T11:00:00Z reflect insights=3
-```
-
-During `/reflect`, you read this log and generate insights:
-- Topics recalled often → promote to L2 understanding
-- Recalls with 0 results → knowledge gaps to fill
-- Workspaces remembered often → verify L2 is up to date
-- Sessions with no enrichment → missed opportunities?
-
-This closes the loop: **use → measure → improve**.
-
-### Memory Nudge (Stop Hook)
-
-A Stop hook at `.claude/hooks/memory-nudge.sh` fires after every agent
-response. It reminds you to update memory if you learned something.
-This is deterministic — it always fires, unlike advisory instructions.
-
-A UserPromptSubmit hook at `.claude/hooks/memory-load.sh` injects
-`MEMORY.md` content into context every turn, making L1 truly always-loaded.
-"""
-        content = skill_path.read_text()
-        if marker in content:
-            before = content[: content.index(marker)]
-            content = before.rstrip() + "\n" + memory_section
-        else:
-            content = content.rstrip() + "\n" + memory_section
-        skill_path.write_text(content)
 
     # ------------------------------------------------------------------
     # Command generation

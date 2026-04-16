@@ -57,9 +57,8 @@ class TestFirstInit:
         _full_init(sample_project)
         assert (sample_project / ".allmight").is_dir()
 
-    def test_first_init_writes_skills_directly(self, sample_project):
+    def test_first_init_no_staging(self, sample_project):
         _full_init(sample_project)
-        assert (sample_project / ".claude" / "skills" / "one-for-all" / "SKILL.md").exists()
         # No staging on first init
         assert not (sample_project / ".allmight" / "templates").exists()
 
@@ -109,20 +108,6 @@ class TestReInit:
         # Second init should stage
         _full_init(sample_project)
         assert (sample_project / ".allmight" / "templates").is_dir()
-
-    def test_reinit_does_not_overwrite_skills(self, sample_project):
-        _full_init(sample_project)
-        skill = sample_project / ".claude" / "skills" / "one-for-all" / "SKILL.md"
-        skill.write_text("USER CUSTOMIZED SKILL CONTENT")
-
-        _full_init(sample_project)
-
-        # Working file preserved
-        assert skill.read_text() == "USER CUSTOMIZED SKILL CONTENT"
-        # Reference staged
-        staged = sample_project / ".allmight" / "templates" / "skills" / "one-for-all" / "SKILL.md"
-        assert staged.exists()
-        assert "USER CUSTOMIZED" not in staged.read_text()
 
     def test_reinit_does_not_overwrite_commands(self, sample_project):
         _full_init(sample_project)
@@ -237,22 +222,6 @@ class TestReInit:
 
 class TestForceInit:
     """Force init (--force) — overwrites everything like first-time."""
-
-    def test_force_overwrites_modified_skills(self, sample_project):
-        _full_init(sample_project)
-        skill = sample_project / ".claude" / "skills" / "one-for-all" / "SKILL.md"
-        skill.write_text("USER CUSTOMIZED SKILL CONTENT")
-
-        # Force init
-        scanner = ProjectScanner()
-        manifest = scanner.scan(sample_project)
-        ProjectInitializer().initialize(manifest, force=True)
-        MemoryInitializer().initialize(sample_project, staging=False)
-
-        assert "USER CUSTOMIZED" not in skill.read_text()
-        assert "One For All" in skill.read_text()
-        # No staging on force
-        assert not (sample_project / ".allmight" / "templates").exists()
 
     def test_force_overwrites_modified_commands(self, sample_project):
         _full_init(sample_project)
