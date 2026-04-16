@@ -1,99 +1,156 @@
-"""Memory Initializer — bootstraps the agent memory subsystem.
+"""Memory Initializer — bootstraps the L1/L2/L3 agent memory system.
 
-Creates the ``memory/`` directory structure, memory config with store
-definitions, memory skills, and slash commands.
-
-Memory stores are managed **independently** from workspace corpora.
-Store definitions live in ``memory/config.yaml`` and an internal
-search-engine config is generated at ``memory/smak_config.yaml``.
-
-Follows the same pattern as ``detroit_smak/initializer.py``.
+Architecture:
+  L1: MEMORY.md at project root (hook-loaded, agent-writable)
+  L2: memory/understanding/ per-corpus knowledge (agent reads/writes)
+  L3: memory/journal/ + store/ (text files + SMAK vector index)
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import MemoryConfigManager
-from .episodic import EpisodicMemoryStore
-from .semantic import SemanticMemoryStore
-from .working import WorkingMemoryManager
 
 
 class MemoryInitializer:
-    """Creates the agent memory workspace."""
+    """Creates the agent memory system."""
 
     def initialize(self, root: Path) -> None:
-        """Bootstrap the memory subsystem at *root*.
-
-        Expects ``config.yaml`` to already exist (run ``allmight init`` first).
-        """
-        # 1. Create memory config (includes store definitions)
+        """Bootstrap the memory subsystem at *root*."""
+        # 1. Create memory config (defines journal store + SMAK config)
         cfg_mgr = MemoryConfigManager(root)
-        cfg = cfg_mgr.initialize()
+        cfg_mgr.initialize()
 
-        # 2. Initialise each memory layer
-        working = WorkingMemoryManager(root, budget=cfg.working_memory_budget)
-        working.initialize()
+        # 2. Create L1: MEMORY.md at project root
+        self._create_memory_md(root)
 
-        episodic = EpisodicMemoryStore(root)
-        episodic.initialize()
+        # 3. Create L2: understanding/ directory
+        (root / "memory" / "understanding").mkdir(parents=True, exist_ok=True)
 
-        semantic = SemanticMemoryStore(root)
-        semantic.initialize()
-
-        # 3. Create memory store directories
+        # 4. Create L3: journal/ directory + store/
+        (root / "memory" / "journal").mkdir(parents=True, exist_ok=True)
         (root / "memory" / "store").mkdir(parents=True, exist_ok=True)
 
-        # 4. Migrate: clean up legacy memory indices from workspace config.yaml
-        self._migrate_legacy_indices(root)
+        # 5. Generate hook scripts (nudge + L1 loader)
+        self._generate_hooks(root)
 
-        # 5. Generate memory skill
+        # 6. Generate memory skill section
         self._generate_memory_skill(root)
 
-        # 6. Generate memory commands
+        # 7. Generate memory commands (remember, recall, reflect)
         self._generate_memory_commands(root)
 
-        # 7. Update CLAUDE.md
+        # 8. Update CLAUDE.md
         self._update_claude_md(root)
 
-        # 8. Refresh OpenCode compatibility symlinks
+        # 9. Refresh OpenCode compatibility (symlinks + opencode.json hooks)
         self._refresh_opencode_compat(root)
 
+        # 10. Generate opencode.json with hooks for OpenCode
+        self._generate_opencode_json(root)
+
     # ------------------------------------------------------------------
-    # Migration
+    # L1: MEMORY.md
     # ------------------------------------------------------------------
 
-    def _migrate_legacy_indices(self, root: Path) -> None:
-        """Remove memory indices from workspace config.yaml if present.
+    def _create_memory_md(self, root: Path) -> None:
+        """Create MEMORY.md at project root (L1 cache).
 
-        Earlier versions incorrectly added ``episodes`` and
-        ``semantic_facts`` to the workspace config.  Clean them up.
+        This file is loaded every turn via hook. The agent updates it
+        as it learns about the project and the user.
         """
-        config_path = root / "config.yaml"
-        if not config_path.exists():
-            return
+        memory_md = root / "MEMORY.md"
+        if memory_md.exists():
+            return  # don't overwrite agent's work
 
-        try:
-            from ..config import ConfigManager
-            mgr = ConfigManager(root)
-            for name in ("episodes", "semantic_facts"):
-                if mgr.get_index(name) is not None:
-                    mgr.remove_index(name)
-        except Exception:
-            pass  # config.yaml may not be parseable
+        memory_md.write_text("""\
+# Project Memory
+
+## Project Map
+
+| Workspace | Description |
+|-----------|-------------|
+| *(no workspaces yet — run `/ingest` after creating one)* | |
+
+See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
+
+## User Preferences
+
+*(none recorded yet)*
+
+## Active Goals
+
+*(none set)*
+
+## Key Facts
+
+*(none recorded yet)*
+""")
+
+    # ------------------------------------------------------------------
+    # Hooks — Memory Nudge + L1 Loader
+    # ------------------------------------------------------------------
+
+    def _generate_hooks(self, root: Path) -> None:
+        """Generate hook scripts for active memory management.
+
+        Two hooks:
+        - memory-nudge.sh (Stop hook): reminds agent to update memory
+        - memory-load.sh (UserPromptSubmit hook): injects MEMORY.md into context
+        """
+        import os
+        import stat
+
+        hooks_dir = root / ".claude" / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+
+        # --- Stop hook: Memory Nudge ---
+        nudge_script = hooks_dir / "memory-nudge.sh"
+        nudge_script.write_text("""\
+#!/usr/bin/env bash
+# Memory Nudge — Stop hook
+# Fires every time the agent finishes a response.
+# Reminds it to update memory if it learned something.
+set -euo pipefail
+
+cat <<'NUDGE'
+[Memory Nudge] Before finishing, consider:
+- Did you learn something about a workspace? → Update memory/understanding/<workspace>.md
+- Did the user share a preference or correction? → Update MEMORY.md
+- Did you discover something worth logging? → Append to memory/journal/
+NUDGE
+exit 0
+""")
+        nudge_script.chmod(nudge_script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+        # --- UserPromptSubmit hook: L1 Loader ---
+        loader_script = hooks_dir / "memory-load.sh"
+        loader_script.write_text("""\
+#!/usr/bin/env bash
+# L1 Loader — UserPromptSubmit hook
+# Injects MEMORY.md content into agent context every turn.
+set -euo pipefail
+
+INPUT=$(cat)
+PROJECT_DIR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd','.'))" 2>/dev/null || echo ".")
+
+MEMORY_FILE="$PROJECT_DIR/MEMORY.md"
+if [ -f "$MEMORY_FILE" ]; then
+    echo "--- Project Memory (MEMORY.md) ---"
+    cat "$MEMORY_FILE"
+    echo "--- End Project Memory ---"
+fi
+exit 0
+""")
+        loader_script.chmod(loader_script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     # ------------------------------------------------------------------
     # Skill generation
     # ------------------------------------------------------------------
 
     def _generate_memory_skill(self, root: Path) -> None:
-        """Append memory section to the one-for-all SKILL.md.
-
-        Instead of creating a separate skill, we extend the unified
-        one-for-all skill with memory instructions.
-        """
+        """Append memory section to the one-for-all SKILL.md."""
         skill_path = root / ".claude" / "skills" / "one-for-all" / "SKILL.md"
         if not skill_path.exists():
             return
@@ -102,44 +159,68 @@ class MemoryInitializer:
         memory_section = f"""
 {marker}
 
-## Agent Memory
+## Agent Memory — L1 / L2 / L3
 
-Three-layer persistent memory for learning across sessions.
+Three-tier persistent memory, organized like cache/RAM/disk.
 
-| Layer | Store | Purpose |
-|-------|-------|---------|
-| **Working** | `memory/working/MEMORY.md` | Always in context — user model, environment, goals |
-| **Episodic** | `memory/episodes/` | Session history — observations, decisions |
-| **Semantic** | `memory/semantic/` | Consolidated facts — with confidence and decay |
+| Tier | Location | Loaded | Managed by |
+|------|----------|--------|------------|
+| **L1** | `MEMORY.md` (project root) | Every turn (hook) | Agent writes |
+| **L2** | `memory/understanding/<workspace>.md` | On workspace entry | Agent reads/writes |
+| **L3** | `memory/journal/` | Via `/recall` (SMAK search) | Agent appends |
+
+### L1 — MEMORY.md (Cache)
+
+Always in context. Contains:
+- **Project map** — brief intro for each workspace
+- **User preferences** — communication style, tools, conventions
+- **Active goals** — what the agent is currently working on
+- **Key facts** — cross-cutting knowledge
+
+Update `MEMORY.md` directly as you learn. Keep it concise.
+
+### L2 — Understanding (RAM)
+
+Per-corpus knowledge in `memory/understanding/<workspace>.md`:
+- Source code / document roadmap
+- Architecture overview and key files
+- Debug SOP and known issues
+- Patterns, conventions, and gotchas
+
+Read the relevant file when entering a workspace. Update as you work.
+Create new files for new workspaces.
+
+### L3 — Journal (Disk)
+
+Append-only text files in `memory/journal/`. Organized by workspace or topic:
+```
+memory/journal/
+├── stdcell/
+│   └── 2026-04-15-dq-clocking.md
+├── pll/
+│   └── 2026-04-15-lock-fsm.md
+└── general/
+    └── user-prefs.md
+```
+
+Searched via SMAK vector index (`memory/store/`).
 
 ### Memory Commands
 
 | Command | Purpose |
 |---------|---------|
-| `/remember` | Record an observation during this session |
-| `/recall` | Search past memories across all layers |
-| `/consolidate` | Convert session episodes into lasting facts |
+| `/remember` | Write to L2 understanding + append L3 journal entry |
+| `/recall` | Search L3 journal via SMAK |
+| `/reflect` | End-of-session review: tidy L1, update L2, log to L3 |
 
-### When to Remember
+### Memory Nudge (Stop Hook)
 
-Use `/remember "..."` when you encounter:
-- User corrections or preferences
-- Discovered patterns or conventions
-- Important decisions and their rationale
+A Stop hook at `.claude/hooks/memory-nudge.sh` fires after every agent
+response. It reminds you to update memory if you learned something.
+This is deterministic — it always fires, unlike advisory instructions.
 
-### When to Recall
-
-Use `/recall "..."` before:
-- Making assumptions about user preferences
-- Facing a problem that seems familiar
-- Starting work in a previously-visited area
-
-### Consolidation
-
-Run `/consolidate` periodically (weekly recommended) to extract lasting
-facts from session episodes. The agent can also update working memory
-sections (`user_model`, `environment`, `active_goals`, `pinned_memories`)
-by editing `memory/working/MEMORY.md` directly.
+A UserPromptSubmit hook at `.claude/hooks/memory-load.sh` injects
+`MEMORY.md` content into context every turn, making L1 truly always-loaded.
 """
         content = skill_path.read_text()
         if marker in content:
@@ -154,82 +235,80 @@ by editing `memory/working/MEMORY.md` directly.
     # ------------------------------------------------------------------
 
     def _generate_memory_commands(self, root: Path) -> None:
-        """Generate memory slash commands — thick operational guides."""
+        """Generate /remember and /recall commands."""
         commands_dir = root / ".claude" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
 
         (commands_dir / "remember.md").write_text("""\
-Record an observation worth persisting beyond this session.
+Record something worth persisting beyond this session.
 
 ## What to remember
 
+- **Corpus-specific knowledge**: architecture, patterns, key files, debug SOPs
 - **User corrections**: "User clarified that X means Y"
-- **Discovered patterns**: "All handlers follow middleware pattern Z"
 - **Important decisions**: "Chose Redis over Memcached for pub/sub"
 - **User preferences**: "User prefers concise answers"
 - **Environment facts**: "Build requires Node 18+"
 
 ## How to execute
 
-1. Write the observation as a YAML episode file in `memory/episodes/YYYY/MM/`:
+### 1. Update L2 understanding (primary)
 
-```yaml
-# memory/episodes/2026/04/sess_<session_id>.episode.yaml
-id: ep_<random_12hex>
-session_id: <current_session_id>
-started_at: <ISO timestamp>
-ended_at: <ISO timestamp>
-summary: "Brief session summary"
-observations:
-  - "The observation you want to remember"
-key_decisions: []
-files_touched: []
-topics: []
-outcome: ""
-importance: 0.5
-consolidated: false
+If the observation is about a specific workspace, update or create
+`memory/understanding/<workspace>.md`:
+
+```markdown
+## Architecture
+(what you learned about the codebase structure)
+
+## Key Files
+(important files and what they do)
+
+## Debug SOP
+(how to diagnose common issues)
 ```
 
-2. Or append to an existing episode file for this session if one exists.
+### 2. Append to L3 journal (for searchability)
 
-## What to expect
+Create a file in `memory/journal/<workspace>/` or `memory/journal/general/`:
 
-- The observation is stored as part of the session episode
-- It will surface when `/recall` searches for related queries
-- During `/consolidate`, recurring observations become lasting facts
-- Observations are append-only — never modify past episodes
+```markdown
+# <date> — <brief title>
 
-## When NOT to remember
+<What you learned, in your own words.>
+```
 
-- Trivial observations the agent can re-derive from code
+### 3. Update L1 MEMORY.md (if cross-cutting)
+
+If the observation is project-wide (user preference, environment fact,
+active goal), update `MEMORY.md` at the project root directly.
+
+## After remembering
+
+Run `smak ingest --config memory/smak_config.yaml` periodically to
+re-index the journal for `/recall` searches.
+
+## What NOT to remember
+
+- Trivial observations re-derivable from code
 - Information already captured in sidecar enrichment
 - Temporary debug notes
 """)
 
         (commands_dir / "recall.md").write_text("""\
-Search past memories across all layers.
+Search past memories across the journal.
 
 ## How to execute
 
-1. Search `memory/semantic/` for fact files (`.fact.yaml`) whose content
-   matches the query keywords.
-2. Search `memory/episodes/` for episode files (`.episode.yaml`) whose
-   summary or observations match.
-3. Score each result using composite scoring:
-   - **Recency** (30%): `e^(-hours_since_access / (168 * ln(1 + access_count)))`
-   - **Importance** (30%): the entry's stored importance (0–1)
-   - **Relevance** (40%): keyword overlap or semantic similarity
-4. Return top results sorted by composite score.
-5. For each returned fact, bump its `last_accessed` timestamp and
-   `access_count` in the YAML file (this makes it resist future decay).
+```bash
+smak search "<query>" --config memory/smak_config.yaml --index journal --top-k 5 --json
+```
 
 ## What to expect
 
-Results from two sources:
-- **Semantic facts** (`memory/semantic/fact_*.fact.yaml`): consolidated,
-  high-confidence knowledge with categories and source episodes
-- **Episodes** (`memory/episodes/YYYY/MM/*.episode.yaml`): raw session
-  records with observations, decisions, and file lists
+Results from `memory/journal/` text files. Each result contains:
+- File path and matched content
+- Relevance score
 
 ## When to recall
 
@@ -238,70 +317,64 @@ Results from two sources:
 - When starting work in an area visited in past sessions
 - When the user asks "did we discuss X before?"
 
-## Memory decay
+## Also check
 
-Memories that are never accessed decay over time. The Ebbinghaus
-forgetting curve `M(t) = e^(-t/S)` means:
-- Frequently accessed memories persist (high S from access_count)
-- Never-accessed memories fade after ~2 weeks
-- Decayed memories still exist on disk but score too low to surface
+- `MEMORY.md` (L1) — always in context, check first
+- `memory/understanding/<workspace>.md` (L2) — per-corpus knowledge
+- L3 journal is for things not captured in L1 or L2
 """)
 
-        (commands_dir / "consolidate.md").write_text("""\
-Convert session episodes into lasting semantic facts.
+        (commands_dir / "reflect.md").write_text("""\
+Structured self-reflection to maintain memory quality.
 
-## When to run
+Run periodically (end of session, after major work) to keep memory
+accurate and tidy.
 
-- After several productive sessions
-- When you notice recurring patterns across episodes
-- Periodically (weekly recommended)
-- When the user asks to consolidate knowledge
+## Steps
 
-## How to execute
+### 1. Review L1 — MEMORY.md
 
-1. List all episode files in `memory/episodes/` that have
-   `consolidated: false`.
-2. Extract recurring observations and decisions across episodes.
-3. For each extracted pattern, search existing facts in
-   `memory/semantic/` for overlap (Jaccard similarity >= 0.5).
-4. Based on the match:
-   - **No match**: create a new fact file in `memory/semantic/`:
-     ```yaml
-     # memory/semantic/fact_<random_12hex>.fact.yaml
-     id: fact_<random_12hex>
-     content: "The extracted pattern or knowledge"
-     category: "domain_knowledge"  # or: user_preference, convention,
-                                   #     correction, architecture_decision
-     confidence: 1.0
-     created_at: <ISO timestamp>
-     updated_at: <ISO timestamp>
-     last_accessed: <ISO timestamp>
-     access_count: 0
-     importance: 0.5
-     source_episodes:
-       - ep_<source_episode_id>
-     supersedes: null
-     namespace: default
-     ```
-   - **Match, consistent**: bump the existing fact's `confidence`
-     (min +0.1, max 1.0) and add the source episode to its list
-   - **Match, contradictory** (new info negates old): create a new fact
-     with `supersedes: <old_fact_id>`, reduce old fact's confidence to 30%
-5. Mark processed episodes as `consolidated: true`.
-6. Report: facts created, updated, superseded, conflicts detected.
+Read `MEMORY.md` at project root. Ask yourself:
+- Is the Project Map still accurate? Any new workspaces to add?
+- Are Active Goals still current? Remove completed ones.
+- Any Key Facts that are stale or wrong?
 
-## What to expect
+Update directly if anything changed.
 
-- New `.fact.yaml` files in `memory/semantic/`
-- Updated confidence scores on existing facts
-- Supersession chains for corrected knowledge
-- Episodes marked as consolidated (won't be reprocessed)
+### 2. Review L2 — Understanding
 
-## Working memory
+For each workspace you worked on this session, read
+`memory/understanding/<workspace>.md`. Ask:
+- Did I learn new architecture details? Add them.
+- Did I discover a debug SOP or gotcha? Document it.
+- Is the Key Files section still accurate?
 
-If consolidation produces high-importance facts relevant to the user
-model or environment, also update `memory/working/MEMORY.md` sections
-(`user_model`, `environment`, `active_goals`, `pinned_memories`).
+Create the file if it doesn't exist yet.
+
+### 3. Log to L3 — Journal
+
+Summarize what you learned this session as a journal entry in
+`memory/journal/<workspace>/` or `memory/journal/general/`:
+
+```markdown
+# <date> — <brief title>
+
+<Summary of discoveries, decisions, and insights.>
+```
+
+### 4. Re-index (if needed)
+
+If you added journal entries, re-index for `/recall`:
+```bash
+smak ingest --config memory/smak_config.yaml
+```
+
+## When to reflect
+
+- End of a productive session
+- After completing a major task
+- When the Memory Nudge reminds you
+- When the user asks you to consolidate what you learned
 """)
 
     # ------------------------------------------------------------------
@@ -314,29 +387,23 @@ model or environment, also update `memory/working/MEMORY.md` sections
         marker = "<!-- ALL-MIGHT-MEMORY -->"
 
         memory_section = f"""{marker}
-## Agent Memory System
+## Agent Memory
 
-This workspace has the **All-Might Agent Memory** subsystem enabled —
-a three-layer persistent memory architecture for agent learning.
+The agent can **remember things across sessions**: preferences,
+decisions, corrections, and learned patterns.
 
-### Memory Layers
+| Command | What it does |
+|---------|-------------|
+| `/remember` | Save knowledge to understanding files and journal |
+| `/recall` | Search past journal entries via SMAK |
+| `/reflect` | End-of-session review to keep memory tidy |
 
-| Layer | Location | Purpose |
-|-------|----------|---------|
-| Working Memory | `memory/working/MEMORY.md` | Always-in-context facts (user model, environment, goals) |
-| Episodic Memory | `memory/episodes/` | Append-only session records, searchable |
-| Semantic Memory | `memory/semantic/` | Consolidated facts with confidence scoring and decay |
+Memory is organized in three tiers:
+- **MEMORY.md** — always loaded, project map and user preferences
+- **memory/understanding/** — per-corpus knowledge, loaded on workspace entry
+- **memory/journal/** — searchable log, accessed via `/recall`
 
-### Memory Commands
-
-| Command | Purpose |
-|---------|---------|
-| `/remember` | Record an observation during this session |
-| `/recall` | Search past memories across all layers |
-| `/consolidate` | Convert session episodes into lasting facts |
-
-Memory entries have **decay** — frequently accessed memories persist longer.
-Run `/status` to check memory health alongside enrichment coverage.
+The `one-for-all` skill has the complete operational guide.
 """
         if claude_md.exists():
             content = claude_md.read_text()
@@ -353,17 +420,116 @@ Run `/status` to check memory health alongside enrichment coverage.
     # OpenCode compatibility
     # ------------------------------------------------------------------
 
-    def _refresh_opencode_compat(self, root: Path) -> None:
-        """Ensure ``AGENTS.md`` symlink exists after memory init.
+    def _generate_opencode_json(self, root: Path) -> None:
+        """Generate opencode.json with hooks for OpenCode compatibility.
 
-        Only creates ``AGENTS.md → CLAUDE.md``.  We do NOT touch the
-        ``.opencode/`` directory — it is OpenCode's own runtime dir
-        (node_modules, plugins, etc.) and pre-creating it causes
-        module-resolution errors.  OpenCode reads ``.claude/`` natively.
+        OpenCode's experimental config hooks support:
+        - ``session_completed`` — fires when a session ends (≈ Claude's Stop hook)
+        - ``file_edited`` — fires when files are edited
+
+        We configure ``session_completed`` to run the memory-nudge script.
+
+        For the L1 loader (MEMORY.md injection), OpenCode requires a plugin
+        since config hooks don't support a ``user_prompt_submit`` equivalent.
+        We generate a minimal plugin at ``.opencode/plugins/memory-load.ts``.
         """
+        import json
+
+        opencode_dir = root / ".opencode"
+        opencode_dir.mkdir(exist_ok=True)
+        opencode_json = opencode_dir / "opencode.json"
+
+        # Build the config — merge with existing if present
+        if opencode_json.exists():
+            try:
+                config = json.loads(opencode_json.read_text())
+            except (json.JSONDecodeError, OSError):
+                config = {}
+        else:
+            config = {}
+
+        # Ensure experimental.hook structure exists
+        experimental = config.setdefault("experimental", {})
+        hook = experimental.setdefault("hook", {})
+
+        # session_completed → memory-nudge.sh
+        hook["session_completed"] = [
+            {
+                "command": ["./.claude/hooks/memory-nudge.sh"],
+            }
+        ]
+
+        opencode_json.write_text(json.dumps(config, indent=2) + "\n")
+
+        # Generate L1 loader plugin for OpenCode
+        self._generate_opencode_memory_plugin(root)
+
+    def _generate_opencode_memory_plugin(self, root: Path) -> None:
+        """Generate OpenCode plugin that injects MEMORY.md into context.
+
+        OpenCode plugins are TypeScript files in ``.opencode/plugins/``.
+        The ``chat.message`` hook intercepts messages before they reach
+        the LLM, allowing us to prepend MEMORY.md content.
+        """
+        plugins_dir = root / ".opencode" / "plugins"
+        plugins_dir.mkdir(parents=True, exist_ok=True)
+
+        plugin_file = plugins_dir / "memory-load.ts"
+        plugin_file.write_text("""\
+/**
+ * Memory L1 Loader — OpenCode plugin
+ *
+ * Injects MEMORY.md content into agent context on every message,
+ * equivalent to Claude Code's UserPromptSubmit hook.
+ */
+import { readFileSync, existsSync } from "fs";
+import { join } from "path";
+
+export default {
+  name: "memory-load",
+  "chat.message": async (message: any, context: any) => {
+    const memoryPath = join(process.cwd(), "MEMORY.md");
+    if (existsSync(memoryPath)) {
+      const content = readFileSync(memoryPath, "utf-8");
+      const prefix = [
+        "--- Project Memory (MEMORY.md) ---",
+        content,
+        "--- End Project Memory ---",
+        "",
+      ].join("\\n");
+      if (typeof message.content === "string") {
+        message.content = prefix + message.content;
+      }
+    }
+    return message;
+  },
+};
+""")
+
+    def _refresh_opencode_compat(self, root: Path) -> None:
+        """Ensure OpenCode compatibility symlinks exist after memory init."""
         import os
 
+        # --- AGENTS.md → CLAUDE.md ---
         agents_md = root / "AGENTS.md"
         claude_md = root / "CLAUDE.md"
         if claude_md.exists() and not agents_md.exists():
             os.symlink("CLAUDE.md", str(agents_md))
+
+        # --- .opencode/ directory with symlinks into .claude/ ---
+        opencode_dir = root / ".opencode"
+        claude_dir = root / ".claude"
+
+        if not claude_dir.is_dir():
+            return
+
+        opencode_dir.mkdir(exist_ok=True)
+
+        for subdir in ("skills", "commands"):
+            source = claude_dir / subdir
+            target = opencode_dir / subdir
+            if source.is_dir() and not target.exists():
+                os.symlink(
+                    os.path.relpath(str(source), str(opencode_dir)),
+                    str(target),
+                )

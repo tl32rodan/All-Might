@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from ..core.domain import IndexSpec, PowerLevel, SymbolInfo
+from ..core.domain import IndexSpec, SymbolInfo
 from ..utils.yaml_io import load_config, load_indices, resolve_path, sidecar_to_source
 
 # Template directory is relative to this module
@@ -48,9 +48,6 @@ class OneForAllGenerator:
         # Scan sidecar files for enriched symbols
         symbols = self._scan_sidecars(root, indices)
 
-        # Calculate power level
-        power_level = self._calculate_power_level(symbols, indices)
-
         # Find key symbols (most enriched / most connected)
         key_symbols = self._find_key_symbols(symbols)
 
@@ -62,7 +59,6 @@ class OneForAllGenerator:
             frameworks=config.get("project", {}).get("frameworks", []),
             indices=indices,
             key_symbols=key_symbols,
-            power_level=power_level,
             smak_config_path="config.yaml",
             generated_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -107,35 +103,6 @@ class OneForAllGenerator:
 
         return symbols
 
-    def _calculate_power_level(
-        self, symbols: list[SymbolInfo], indices: list[IndexSpec]
-    ) -> PowerLevel:
-        """Calculate Power Level from scanned symbols."""
-        total = len(symbols)
-        enriched = sum(1 for s in symbols if s.has_intent)
-        coverage = (enriched / total * 100) if total > 0 else 0.0
-
-        by_index: dict[str, float] = {}
-        for idx in indices:
-            idx_symbols = [s for s in symbols if s.index == idx.name]
-            idx_enriched = sum(1 for s in idx_symbols if s.has_intent)
-            by_index[idx.name] = (idx_enriched / len(idx_symbols) * 100) if idx_symbols else 0.0
-
-        unique_files = len(set(s.file_path for s in symbols))
-        files_with_enrichment = len(set(s.file_path for s in symbols if s.has_intent))
-        total_relations = sum(s.relation_count for s in symbols)
-
-        return PowerLevel(
-            total_symbols=total,
-            enriched_symbols=enriched,
-            coverage_pct=coverage,
-            by_index=by_index,
-            total_files=unique_files,
-            files_with_sidecars=files_with_enrichment,
-            total_relations=total_relations,
-            timestamp=datetime.now(timezone.utc).isoformat(),
-        )
-
     def _find_key_symbols(self, symbols: list[SymbolInfo], limit: int = 20) -> list[SymbolInfo]:
         """Find the most important enriched symbols.
 
@@ -144,25 +111,3 @@ class OneForAllGenerator:
         enriched = [s for s in symbols if s.has_intent]
         return sorted(enriched, key=lambda s: s.relation_count, reverse=True)[:limit]
 
-    def _generate_enrichment_skill(
-        self, root: Path, indices: list[IndexSpec], power_level: PowerLevel
-    ) -> None:
-        """Regenerate the enrichment protocol skill."""
-        template = self.env.get_template("enrichment-protocol.md.j2")
-        content = template.render(
-            indices=indices,
-            power_level=power_level,
-        )
-        path = root / ".claude" / "skills" / "enrichment" / "SKILL.md"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
-
-    def _generate_commands(self, root: Path, smak_config_path: str) -> None:
-        """Regenerate command files."""
-        commands_dir = root / ".claude" / "commands"
-        commands_dir.mkdir(parents=True, exist_ok=True)
-
-        for cmd_name in ("power-level", "regenerate", "panorama"):
-            template = self.env.get_template(f"commands/{cmd_name}.md.j2")
-            content = template.render(smak_config_path=smak_config_path)
-            (commands_dir / f"{cmd_name}.md").write_text(content)

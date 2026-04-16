@@ -56,34 +56,6 @@ class SymbolInfo:
     relation_count: int = 0
 
 
-@dataclass
-class PowerLevel:
-    """Knowledge graph maturity metrics — the project's 戦力値.
-
-    Tracks how much of the codebase has been enriched with
-    human-curated intent and relations.
-    """
-
-    total_symbols: int = 0
-    enriched_symbols: int = 0
-    coverage_pct: float = 0.0
-    by_index: dict[str, float] = field(default_factory=dict)
-    total_files: int = 0
-    files_with_sidecars: int = 0
-    total_relations: int = 0
-    timestamp: str = ""
-
-
-@dataclass
-class EnrichmentTask:
-    """A single enrichment work item — a symbol that needs attention."""
-
-    file_path: str
-    symbol: str
-    index: str
-    reason: str  # e.g. "missing_intent", "no_relations", "stale"
-    priority: float = 0.0
-
 
 @dataclass
 class GraphNode:
@@ -178,71 +150,25 @@ class SemanticFact:
 
 @dataclass
 class MemoryStoreSpec:
-    """A memory store definition — lives in ``memory/config.yaml``.
+    """A memory store definition — lives in ``memory/config.yaml``."""
 
-    Memory stores use the search engine under the hood but are surfaced
-    as abstract "stores" to keep implementation details hidden from users.
-    """
-
-    name: str  # "episodes" or "semantic_facts"
-    path: str  # e.g. "./memory/episodes"
-    store_uri: str  # e.g. "./memory/store/episodes"
+    name: str  # "journal"
+    path: str  # e.g. "./memory/journal"
+    store_uri: str  # e.g. "./memory/store/journal"
 
 
 def _default_stores() -> dict[str, MemoryStoreSpec]:
     return {
-        "episodes": MemoryStoreSpec(
-            name="episodes",
-            path="./memory/episodes",
-            store_uri="./memory/store/episodes",
-        ),
-        "semantic_facts": MemoryStoreSpec(
-            name="semantic_facts",
-            path="./memory/semantic",
-            store_uri="./memory/store/semantic_facts",
+        "journal": MemoryStoreSpec(
+            name="journal",
+            path="./memory/journal",
+            store_uri="./memory/store/journal",
         ),
     }
 
 
 @dataclass
 class MemoryConfig:
-    """Configuration for the agent memory subsystem."""
+    """Configuration for the agent memory subsystem (L1/L2/L3)."""
 
-    working_memory_budget: int = 4000  # approximate token limit
-    episode_retention_days: int = 90
-    decay_rate: float = 0.05  # Ebbinghaus λ  (lower = slower decay)
-    consolidation_strategy: str = "async"  # "sync" | "async"
-    retrieval_weights: dict[str, float] = field(default_factory=lambda: {
-        "recency": 0.3,
-        "importance": 0.3,
-        "relevance": 0.4,
-    })
     stores: dict[str, MemoryStoreSpec] = field(default_factory=_default_stores)
-
-
-@dataclass
-class RetrievalResult:
-    """A scored memory retrieval result returned by UnifiedRetriever."""
-
-    memory_id: str
-    content: str
-    memory_type: str  # "episode" | "fact" | "observation"
-    score: float  # composite
-    recency_score: float = 0.0
-    importance_score: float = 0.0
-    relevance_score: float = 0.0
-    source: str = ""  # which store it came from
-
-
-@dataclass
-class MemoryHealth:
-    """Health metrics for the agent memory system — analogous to PowerLevel."""
-
-    total_episodes: int = 0
-    unconsolidated_episodes: int = 0
-    total_facts: int = 0
-    avg_fact_confidence: float = 0.0
-    dormant_entries: int = 0
-    working_memory_tokens: int = 0
-    working_memory_budget: int = 4000
-    timestamp: str = ""

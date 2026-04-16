@@ -14,7 +14,6 @@ This All-Might folder is a **standalone workspace hub** — it is NOT inside the
 ```
 <this folder>/                        ← All-Might hub (Claude Code project root)
 ├── config.yaml                       ← Project metadata + index definitions
-├── enrichment/tracker.yaml           ← Power tracker
 ├── panorama/                         ← Graph exports
 ├── smak/                             ← Search data (local, built by /ingest)
 └── .claude/skills/                   ← Skills loaded by agent
