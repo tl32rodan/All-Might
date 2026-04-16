@@ -111,8 +111,17 @@ class ProjectInitializer:
         commands_dir.mkdir(parents=True, exist_ok=True)
         (commands_dir / "sync.md").write_text(SYNC_COMMAND_BODY)
 
-    def _claude_md_section(self, manifest: ProjectManifest) -> str:
-        """Return the ALL-MIGHT section content for CLAUDE.md."""
+    def _claude_md_section(
+        self,
+        manifest: ProjectManifest,
+        linked_corpora: list[str] | None = None,
+    ) -> str:
+        """Return the ALL-MIGHT section content for CLAUDE.md.
+
+        Args:
+            manifest: The project manifest.
+            linked_corpora: Names of linked workspaces, if any.
+        """
         marker = "<!-- ALL-MIGHT -->"
         sos_prereq = ""
         if manifest.has_path_env:
@@ -122,6 +131,18 @@ class ProjectInitializer:
 This project uses **CliosoftSOS**. Set `$DDI_ROOT_PATH` before opening
 the project — it determines which source layer (online vs. version
 control) All-Might operates on.
+"""
+        linked_section = ""
+        if linked_corpora:
+            names = ", ".join(f"`{n}`" for n in linked_corpora)
+            linked_section = f"""
+### Linked Corpora
+
+Some corpora are **linked** from external locations and shared across
+projects: {names}.  These appear as symlinks in `knowledge_graph/`.
+Check `knowledge_graph/.links.yaml` for details.  Linked corpora may
+be **read-only** — do not run `/ingest` or `/enrich` on them unless
+they are marked writable.
 """
         return f"""{marker}
 ## All-Might: Active Knowledge Graph
@@ -149,7 +170,7 @@ code by meaning, annotate what it learns, and remember across sessions.
 
 Each command (`/search`, `/enrich`, `/ingest`) has a detailed operational
 guide in `.claude/commands/`.
-{sos_prereq}
+{sos_prereq}{linked_section}
 ### Getting Started
 
 1. `/ingest` — build the search index (first time)

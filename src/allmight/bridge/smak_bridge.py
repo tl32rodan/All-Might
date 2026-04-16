@@ -36,10 +36,12 @@ class SmakBridge:
         config: Path | str,
         smak_cmd: str = "smak",
         timeout: int = 300,
+        readonly: bool = False,
     ) -> None:
         self.config = str(Path(config).resolve())
         self.smak_cmd = smak_cmd
         self.timeout = timeout
+        self.readonly = readonly
 
     # ------------------------------------------------------------------
     # Search
@@ -80,6 +82,15 @@ class SmakBridge:
     # Enrichment
     # ------------------------------------------------------------------
 
+    def _check_writable(self, operation: str) -> None:
+        """Raise if this bridge is marked read-only."""
+        if self.readonly:
+            raise SmakBridgeError(
+                f"Workspace is read-only (linked corpus). "
+                f"Cannot run '{operation}'.",
+                returncode=-1,
+            )
+
     def enrich_symbol(
         self, file_path: str, symbol: str,
         intent: str | None = None,
@@ -88,6 +99,7 @@ class SmakBridge:
         bidirectional: bool = False,
     ) -> dict[str, Any]:
         """Annotate a symbol with intent and/or relations."""
+        self._check_writable("enrich")
         args = [
             "enrich",
             "--config", self.config,
@@ -108,6 +120,7 @@ class SmakBridge:
         self, file_path: str, index: str = "source_code",
     ) -> dict[str, Any]:
         """Sync a file's sidecar."""
+        self._check_writable("enrich-file")
         return self._run([
             "enrich-file",
             "--config", self.config,
@@ -121,6 +134,7 @@ class SmakBridge:
 
     def ingest(self, index: str | None = None) -> dict[str, Any]:
         """Re-ingest files into a vector store index."""
+        self._check_writable("ingest")
         args = [
             "ingest",
             "--config", self.config,

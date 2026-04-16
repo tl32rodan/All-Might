@@ -98,7 +98,8 @@ def init(path: str, sos: bool, force: bool):
 @click.option("--workspace", "-w", multiple=True, help="Only merge specific workspaces")
 @click.option("--dry-run", is_flag=True, help="Show what would be merged without copying")
 @click.option("--no-memory", is_flag=True, help="Skip memory merge")
-def merge(source: str, workspace: tuple[str, ...], dry_run: bool, no_memory: bool):
+@click.option("--copy-links", is_flag=True, help="Deep-copy linked workspaces instead of re-linking")
+def merge(source: str, workspace: tuple[str, ...], dry_run: bool, no_memory: bool, copy_links: bool):
     """Merge knowledge bases from another All-Might project.
 
     Copies workspaces and memory from SOURCE into the current project.
@@ -120,6 +121,7 @@ def merge(source: str, workspace: tuple[str, ...], dry_run: bool, no_memory: boo
         workspaces=ws_filter,
         dry_run=dry_run,
         no_memory=no_memory,
+        copy_links=copy_links,
     )
 
     prefix = "[DRY RUN] " if dry_run else ""
@@ -127,6 +129,8 @@ def merge(source: str, workspace: tuple[str, ...], dry_run: bool, no_memory: boo
 
     if report.workspaces_added:
         click.echo(f"  Workspaces added:      {', '.join(report.workspaces_added)}")
+    if report.workspaces_linked_skipped:
+        click.echo(f"  Linked (re-linked):    {', '.join(report.workspaces_linked_skipped)}")
     if report.workspaces_conflicting:
         click.echo(f"  Workspaces conflicting: {', '.join(report.workspaces_conflicting)}")
     if report.memory_files_added:
@@ -140,6 +144,112 @@ def merge(source: str, workspace: tuple[str, ...], dry_run: bool, no_memory: boo
         click.echo("")
         for action in report.action_needed:
             click.echo(f"  → {action}")
+
+
+# ------------------------------------------------------------------
+# Corpus Management (linked workspaces)
+# ------------------------------------------------------------------
+
+@main.group()
+def corpus():
+    """Manage linked corpora — share knowledge graphs across projects."""
+
+
+@corpus.command("link")
+@click.argument("source", type=click.Path(exists=True))
+@click.option("--name", "-n", default=None, help="Local alias (default: directory name)")
+@click.option("--readonly/--writable", default=True, help="Mark corpus as read-only")
+@click.option("--description", "-d", default="", help="Human-readable description")
+def corpus_link(source: str, name: str | None, readonly: bool, description: str):
+    """Link an external SMAK corpus into this project's knowledge graph.
+
+    SOURCE is the path to an existing SMAK workspace directory
+    (must contain a config.yaml).
+    """
+    from pathlib import Path as P
+
+    from .detroit_smak.linker import WorkspaceLinker
+
+    root = P(".").resolve()
+    kg_dir = root / "knowledge_graph"
+
+    if not kg_dir.is_dir():
+        click.echo("Error: no knowledge_graph/ directory. Run 'allmight init' first.", err=True)
+        raise SystemExit(1)
+
+    linker = WorkspaceLinker()
+    try:
+        lw = linker.link(
+            kg_dir=kg_dir,
+            source=P(source),
+            name=name,
+            readonly=readonly,
+            description=description,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1)
+
+    mode = "read-only" if lw.readonly else "writable"
+    click.echo(f"Linked corpus '{lw.name}' ({mode})")
+    click.echo(f"  {kg_dir / lw.name} -> {lw.source}")
+
+
+@corpus.command("unlink")
+@click.argument("name")
+def corpus_unlink(name: str):
+    """Remove a linked corpus (symlink only — source is untouched)."""
+    from pathlib import Path as P
+
+    from .detroit_smak.linker import WorkspaceLinker
+
+    root = P(".").resolve()
+    kg_dir = root / "knowledge_graph"
+
+    linker = WorkspaceLinker()
+    try:
+        linker.unlink(kg_dir, name)
+    except (FileNotFoundError, ValueError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1)
+
+    click.echo(f"Unlinked corpus '{name}' (source directory untouched).")
+
+
+@corpus.command("list")
+def corpus_list():
+    """Show all linked corpora and their status."""
+    from pathlib import Path as P
+
+    from .detroit_smak.linker import WorkspaceLinker
+
+    root = P(".").resolve()
+    kg_dir = root / "knowledge_graph"
+
+    if not kg_dir.is_dir():
+        click.echo("No knowledge_graph/ directory.")
+        return
+
+    linker = WorkspaceLinker()
+    links = linker.list_links(kg_dir)
+
+    if not links:
+        click.echo("No linked corpora.")
+        return
+
+    warnings = linker.validate_links(kg_dir)
+    warning_names = {w.split("'")[1] for w in warnings if "'" in w}
+
+    for lw in links:
+        mode = "ro" if lw.readonly else "rw"
+        status = "broken" if lw.name in warning_names else "ok"
+        desc = f"  {lw.description}" if lw.description else ""
+        click.echo(f"  {lw.name} [{mode}] [{status}] -> {lw.source}{desc}")
+
+    if warnings:
+        click.echo("")
+        for w in warnings:
+            click.echo(f"  WARNING: {w}")
 
 
 # ------------------------------------------------------------------
