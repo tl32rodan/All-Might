@@ -131,8 +131,21 @@ You are in an SOS workspace at `/users/john/ws_fix_timing/`. The search index wa
 
 1. Search: `/search "DQ serializer timing-critical path" --index rtl_code`
 2. Find related issue: `/search "timing closure ECO for DQ path" --index release_notes`
-3. Annotate: `/enrich --file rtl/phy/dq_serdes.v --symbol dq_serializer --intent "8:1 serializer for DQ lane. Timing-critical." --relation "$DDI_ROOT_PATH/doc/releases/eco_042.md::*"`
-4. After `sos check-in`: sidecar is committed to the canonical path (Layer 1 or 2),
+3. Preview the enrichment (dry-run — no file written):
+   ```bash
+   smak enrich --config config.yaml --index rtl_code \
+       --file rtl/phy/dq_serdes.v --symbol dq_serializer \
+       --intent "8:1 serializer for DQ lane. Timing-critical." \
+       --relation "$DDI_ROOT_PATH/doc/releases/eco_042.md::*" \
+       --dry-run --json
+   ```
+4. Check out or create the sidecar via `cliosoft-sos` MCP tools:
+   - Existing sidecar: use `sos_checkout` on the sidecar path from step 3
+   - New sidecar: skip checkout (file doesn't exist yet)
+5. Write the `sidecar_yaml` content from step 3 to the sidecar path
+6. Register new sidecars: use `sos_create` (first enrichment only)
+7. Check in via `cliosoft-sos` MCP tool `sos_checkin` with a descriptive log message
+8. After check-in: sidecar is committed to the canonical path (Layer 1 or 2),
    making it available for future `/ingest` and team-wide search
 
 ## 5. PATH MISMATCH WARNING
@@ -188,16 +201,20 @@ string** across online and all VC releases. Same log = same code change = featur
 
 ## 8. SOS + ENRICHMENT WORKFLOW
 
-All sidecar modifications in SOS workspaces go through **All-Might commands**:
+All sidecar modifications in SOS workspaces use `--dry-run` and `cliosoft-sos` MCP tools:
 
-1. Use `/enrich --file <relative_path> --symbol <name> --intent "..."` to annotate symbols
-2. Use `/enrich ... --relation <uid>` to add cross-references
-3. **Never** edit `.sidecar.yaml` files by hand — the `/enrich` command handles:
+1. Use `smak enrich --dry-run --json` to preview the sidecar content without writing
+2. Use `cliosoft-sos` MCP tool `sos_checkout` to check out existing sidecars,
+   or `sos_create` to register new ones after writing
+3. Write the `sidecar_yaml` from step 1 to the sidecar path
+4. Use `cliosoft-sos` MCP tool `sos_checkin` to commit the sidecar
+5. **Never** edit `.sidecar.yaml` files by hand — `/enrich --dry-run` handles:
    - Correct YAML schema and nesting
    - Proper UID format with `$DDI_ROOT_PATH` prefix where needed
    - Bidirectional relation management
-4. After `sos check-in`, sidecars are committed to the canonical path (Layer 1/2)
+6. After check-in, sidecars are committed to the canonical path (Layer 1/2)
    and become available for `/ingest` and team-wide search
+7. **Never** run `soscmd` directly — always use `cliosoft-sos` MCP tools
 
 For the full enrichment protocol, see the `enrichment-protocol` skill.
 

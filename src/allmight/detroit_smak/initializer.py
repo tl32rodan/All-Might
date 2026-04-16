@@ -198,54 +198,9 @@ JSON output with a `results` array. Each result contains:
 - Present results to the user in terms of "knowledge graph" — do not mention SMAK.
 """)
 
-        (commands_dir / "enrich.md").write_text("""\
-Annotate a code symbol with intent and/or relations.
-
-## How to execute
-
-Set intent (what the symbol does and why):
-```bash
-smak enrich --config config.yaml --index source_code \\
-    --file <relative_path> --symbol "<SymbolName>" \\
-    --intent "Human-readable description of purpose"
-```
-
-Add a relation to another symbol:
-```bash
-smak enrich --config config.yaml --index source_code \\
-    --file <relative_path> --symbol "<SymbolName>" \\
-    --relation "<other_file>::<OtherSymbol>" --bidirectional
-```
-
-## When to enrich
-
-- **Reading code**: symbol has no intent → add one
-- **Discovering relationships**: two entities are related → link them
-- **After modifying code**: existing intent may be stale → update it
-
-## Priority
-
-1. Entry points — main functions, API handlers, CLI commands
-2. Complex logic — algorithms, state machines, non-obvious flow
-3. Cross-cutting concerns — error handling, auth, logging
-4. Frequently modified files (high git activity)
-
-Skip auto-generated code, simple getters, and obvious boilerplate.
-
-## What to expect
-
-- A `.{filename}.sidecar.yaml` file is created/updated beside the source file
-- The sidecar contains structured YAML with `symbols[].intent` and `symbols[].relations`
-- Do NOT edit sidecar files by hand — always use `smak enrich`
-
-## UID format
-
-`<file_path>::<symbol_name>` — e.g., `src/auth.py::AuthHandler.validate`
-- File path is relative to project root
-- Dot notation for nested symbols: `ClassName.method_name`
-- Wildcard `*` for entire file: `path/to/file.py::*`
-- Never invent UIDs — use `/search` to discover valid ones
-""")
+        (commands_dir / "enrich.md").write_text(
+            self._enrich_command_body(manifest.has_path_env)
+        )
 
         (commands_dir / "ingest.md").write_text("""\
 Rebuild the search corpus from source files.
@@ -370,6 +325,103 @@ symbols, sidecar file format, and all CLI commands.
             claude_md.write_text(content)
         else:
             claude_md.write_text(f"# {manifest.name}\n\n{allmight_section}")
+
+    @staticmethod
+    def _enrich_command_body(has_path_env: bool) -> str:
+        """Return the enrich.md command content, SOS-aware when applicable."""
+        base = """\
+Annotate a code symbol with intent and/or relations.
+
+## How to execute
+
+Set intent (what the symbol does and why):
+```bash
+smak enrich --config config.yaml --index source_code \\
+    --file <relative_path> --symbol "<SymbolName>" \\
+    --intent "Human-readable description of purpose"
+```
+
+Add a relation to another symbol:
+```bash
+smak enrich --config config.yaml --index source_code \\
+    --file <relative_path> --symbol "<SymbolName>" \\
+    --relation "<other_file>::<OtherSymbol>" --bidirectional
+```
+
+## When to enrich
+
+- **Reading code**: symbol has no intent → add one
+- **Discovering relationships**: two entities are related → link them
+- **After modifying code**: existing intent may be stale → update it
+
+## Priority
+
+1. Entry points — main functions, API handlers, CLI commands
+2. Complex logic — algorithms, state machines, non-obvious flow
+3. Cross-cutting concerns — error handling, auth, logging
+4. Frequently modified files (high git activity)
+
+Skip auto-generated code, simple getters, and obvious boilerplate.
+
+## What to expect
+
+- A `.{filename}.sidecar.yaml` file is created/updated beside the source file
+- The sidecar contains structured YAML with `symbols[].intent` and `symbols[].relations`
+- Do NOT edit sidecar files by hand — always use `smak enrich`
+
+## UID format
+
+`<file_path>::<symbol_name>` — e.g., `src/auth.py::AuthHandler.validate`
+- File path is relative to project root
+- Dot notation for nested symbols: `ClassName.method_name`
+- Wildcard `*` for entire file: `path/to/file.py::*`
+- Never invent UIDs — use `/search` to discover valid ones
+"""
+        if not has_path_env:
+            return base
+
+        sos_section = """
+## SOS Environment (CliosoftSOS)
+
+In SOS environments, sidecar files are version-controlled objects.
+Use `--dry-run` with the `cliosoft-sos` MCP tools to enrich safely:
+
+### Recommended workflow: dry-run + cliosoft-sos MCP tools
+
+1. **Preview** the enriched sidecar (no write):
+   ```bash
+   smak enrich --config config.yaml --index source_code \\
+       --file <relative_path> --symbol "<SymbolName>" \\
+       --intent "description" --dry-run --json
+   ```
+   This returns `sidecar_yaml` (the full sidecar content) and
+   `sidecar_path` (where it belongs) without writing anything.
+
+2. **Check out** the sidecar via `cliosoft-sos` MCP tool:
+   - If the sidecar already exists: use `sos_checkout` on the sidecar path
+   - If this is the first enrichment for the file: skip this step
+
+3. **Write** the `sidecar_yaml` content to the sidecar path.
+
+4. **Register** new sidecars (first enrichment only):
+   - Use `sos_create` on the new sidecar file
+
+5. **Check in** via `cliosoft-sos` MCP tool:
+   - Use `sos_checkin` with a descriptive log message
+
+### Alternative: direct enrich with SOS checkout
+
+1. Use `sos_checkout` on the existing sidecar file
+2. Run `smak enrich` normally (writes to the now-writable file)
+3. Use `sos_checkin` to commit
+
+### Important
+
+- **Never** run `soscmd` directly — always use `cliosoft-sos` MCP tools
+- Path mismatch warnings in workspaces are normal (see `sos-smak` skill)
+- After check-in, re-ingest to update the search index
+"""
+        return base + sos_section
 
     def _create_opencode_compat(self, root: Path) -> None:
         """Create OpenCode-compatible symlinks.

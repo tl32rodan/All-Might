@@ -321,3 +321,41 @@ class TestProjectInitializer:
 
         assert (sample_project / "AGENTS.md").is_symlink()
         assert not (sample_project / ".opencode").exists()
+
+    def test_enrich_command_sos_has_dry_run(self, sample_project):
+        """SOS enrich.md references --dry-run and cliosoft-sos MCP tools."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        manifest.has_path_env = True
+
+        ProjectInitializer().initialize(manifest)
+
+        content = (sample_project / ".claude" / "commands" / "enrich.md").read_text()
+        assert "--dry-run" in content
+        assert "sos_checkout" in content
+        assert "sos_checkin" in content
+
+    def test_enrich_command_non_sos_unchanged(self, sample_project):
+        """Non-SOS enrich.md does NOT reference --dry-run or cliosoft-sos."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        manifest.has_path_env = False
+
+        ProjectInitializer().initialize(manifest)
+
+        content = (sample_project / ".claude" / "commands" / "enrich.md").read_text()
+        assert "--dry-run" not in content
+        assert "sos_checkout" not in content
+        assert "smak enrich" in content
+
+    def test_sos_skill_references_mcp_tools(self, sample_project):
+        """SOS skill body references cliosoft-sos MCP tools and --dry-run."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        manifest.has_path_env = True
+
+        ProjectInitializer().initialize(manifest)
+
+        content = (sample_project / ".claude" / "skills" / "sos-smak" / "SKILL.md").read_text()
+        assert "sos_checkin" in content
+        assert "--dry-run" in content
