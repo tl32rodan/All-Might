@@ -344,3 +344,43 @@ class TestReflectCommand:
         MemoryInitializer().initialize(project_root)
         skill = (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
         assert "/reflect" in skill
+
+
+class TestFeedbackLoop:
+    """Feedback loop — usage logging and enhanced /reflect."""
+
+    def test_creates_usage_log(self, project_root):
+        """memory/usage.log created during init."""
+        MemoryInitializer().initialize(project_root)
+        assert (project_root / "memory" / "usage.log").exists()
+
+    def test_remember_command_logs_usage(self, project_root):
+        """remember.md instructs agent to log usage."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        assert "usage.log" in content
+
+    def test_recall_command_logs_usage(self, project_root):
+        """recall.md instructs agent to log usage."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "commands" / "recall.md").read_text()
+        assert "usage.log" in content
+
+    def test_reflect_reads_usage_log(self, project_root):
+        """reflect.md includes usage review step."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        assert "usage.log" in content
+        assert "Usage Review" in content or "usage review" in content
+
+    def test_reflect_generates_insights(self, project_root):
+        """reflect.md has an insights generation step."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        assert "Insight" in content or "insight" in content
+
+    def test_skill_documents_feedback_loop(self, project_root):
+        """Skill section describes the feedback loop."""
+        MemoryInitializer().initialize(project_root)
+        skill = (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
+        assert "usage.log" in skill or "Feedback" in skill
