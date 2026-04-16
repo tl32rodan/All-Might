@@ -14,10 +14,7 @@ from allmight.memory.initializer import MemoryInitializer
 
 @pytest.fixture
 def project_root(tmp_path):
-    """A minimal project root with one-for-all SKILL.md."""
-    skill_dir = tmp_path / ".claude" / "skills" / "one-for-all"
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "SKILL.md").write_text("---\nname: one-for-all\n---\n\n# One For All\n")
+    """A minimal project root."""
     return tmp_path
 
 
@@ -126,30 +123,6 @@ class TestMemoryInitializer:
         content = (project_root / ".claude" / "commands" / "recall.md").read_text()
         assert "smak search" in content
 
-    # -- Skill section -------------------------------------------------
-
-    def test_appends_memory_to_skill(self, project_root):
-        """Memory section appended to one-for-all SKILL.md."""
-        MemoryInitializer().initialize(project_root)
-        skill = (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
-        assert "Memory" in skill
-        assert "/remember" in skill
-        assert "/recall" in skill
-
-    def test_skill_describes_hierarchy(self, project_root):
-        """Skill describes MEMORY.md, understanding/, journal/."""
-        MemoryInitializer().initialize(project_root)
-        skill = (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
-        assert "MEMORY.md" in skill
-        assert "understanding" in skill
-        assert "journal" in skill
-
-    def test_skill_no_consolidate(self, project_root):
-        """Skill should not reference /consolidate."""
-        MemoryInitializer().initialize(project_root)
-        skill = (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
-        assert "/consolidate" not in skill
-
     # -- CLAUDE.md update ----------------------------------------------
 
     def test_updates_claude_md(self, project_root):
@@ -189,7 +162,7 @@ class TestMemoryInitializer:
         """.opencode/ directory created with symlinks into .claude/."""
         MemoryInitializer().initialize(project_root)
         assert (project_root / ".opencode").is_dir()
-        assert (project_root / ".opencode" / "skills").is_symlink()
+        # commands/ symlink exists (memory init creates .claude/commands/)
         assert (project_root / ".opencode" / "commands").is_symlink()
 
     def test_opencode_compat_idempotent(self, project_root):
@@ -339,11 +312,6 @@ class TestReflectCommand:
         content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
         assert "## How" in content or "## Checklist" in content or "## Steps" in content
 
-    def test_skill_mentions_reflect(self, project_root):
-        """Skill section references /reflect command."""
-        MemoryInitializer().initialize(project_root)
-        skill = (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
-        assert "/reflect" in skill
 
 
 class TestFeedbackLoop:
@@ -379,8 +347,3 @@ class TestFeedbackLoop:
         content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
         assert "Insight" in content or "insight" in content
 
-    def test_skill_documents_feedback_loop(self, project_root):
-        """Skill section describes the feedback loop."""
-        MemoryInitializer().initialize(project_root)
-        skill = (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
-        assert "usage.log" in skill or "Feedback" in skill

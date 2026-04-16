@@ -33,14 +33,13 @@ def main():
 
 @main.command()
 @click.argument("path", default=".", type=click.Path(exists=True))
-@click.option("--smak-path", type=click.Path(exists=True), help="Path to SMAK installation (for skill copying)")
 @click.option("--sos", is_flag=True, help="Enable SOS/EDA environment support")
 @click.option("--force", is_flag=True, help="Overwrite all files (ignore user customizations)")
-def init(path: str, smak_path: str | None, sos: bool, force: bool):
-    """Bootstrap a workspace with skills, commands, and agent memory.
+def init(path: str, sos: bool, force: bool):
+    """Bootstrap a workspace with commands and agent memory.
 
-    Scans the project, creates knowledge_graph/, injects .claude/skills
-    and .claude/commands, and initializes the L1/L2/L3 memory system.
+    Scans the project, creates knowledge_graph/, injects
+    .claude/commands, and initializes the L1/L2/L3 memory system.
 
     On re-run (when .allmight/ exists), templates are staged to
     .allmight/templates/ instead of overwriting. Use --force to overwrite.
@@ -62,8 +61,7 @@ def init(path: str, smak_path: str | None, sos: bool, force: bool):
     is_reinit = allmight_dir.is_dir() and not force
 
     initializer = ProjectInitializer()
-    smak = P(smak_path).resolve() if smak_path else None
-    initializer.initialize(manifest, smak_path=smak, force=force)
+    initializer.initialize(manifest, force=force)
 
     MemoryInitializer().initialize(root, staging=is_reinit)
 

@@ -24,7 +24,6 @@ SYNC_SKILL_BODY = """\
 
 1. List all files in `.allmight/templates/`
 2. For each staged file, find the corresponding working file:
-   - `.allmight/templates/skills/one-for-all/SKILL.md` → `.claude/skills/one-for-all/SKILL.md`
    - `.allmight/templates/commands/search.md` → `.claude/commands/search.md`
    - `.allmight/templates/hooks/memory-nudge.sh` → `.claude/hooks/memory-nudge.sh`
    - `.allmight/templates/claude-md-section.md` → `CLAUDE.md` (within `<!-- ALL-MIGHT -->` markers)

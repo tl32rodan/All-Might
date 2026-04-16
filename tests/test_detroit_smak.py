@@ -61,7 +61,7 @@ class TestProjectInitializer:
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
+        initializer.initialize(manifest)
 
         assert (sample_project / "knowledge_graph").is_dir()
 
@@ -71,22 +71,11 @@ class TestProjectInitializer:
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
+        initializer.initialize(manifest)
 
         assert (sample_project / "knowledge_graph").is_dir()
         # config.yaml lives per-workspace, NOT at project root
         assert not (sample_project / "config.yaml").exists()
-
-    def test_creates_skills(self, sample_project):
-        scanner = ProjectScanner()
-        manifest = scanner.scan(sample_project)
-
-        initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
-
-        skills_dir = sample_project / ".claude" / "skills"
-        # Only one unified skill is generated
-        assert (skills_dir / "one-for-all" / "SKILL.md").exists()
 
     def test_does_not_install_smak_skill(self, sample_project):
         """Phase 7: agents use All-Might commands, not SMAK MCP tools directly."""
@@ -94,7 +83,7 @@ class TestProjectInitializer:
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
+        initializer.initialize(manifest)
 
         # SMAK skill should NOT be installed (agents go through All-Might)
         smak_skill = sample_project / ".claude" / "skills" / "smak" / "SKILL.md"
@@ -105,7 +94,7 @@ class TestProjectInitializer:
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
+        initializer.initialize(manifest)
 
         commands_dir = sample_project / ".claude" / "commands"
         # Core commands: search, enrich, ingest
@@ -123,7 +112,7 @@ class TestProjectInitializer:
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
+        initializer.initialize(manifest)
 
         claude_md = sample_project / "CLAUDE.md"
         assert claude_md.exists()
@@ -131,84 +120,19 @@ class TestProjectInitializer:
         assert "ALL-MIGHT" in content
         assert "/search" in content
 
-    def test_one_for_all_uses_allmight_commands(self, sample_project):
-        """One For All references All-Might commands and teaches smak CLI."""
-        scanner = ProjectScanner()
-        manifest = scanner.scan(sample_project)
-
-        initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
-
-        one_for_all = (sample_project / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
-        # Should reference core commands
-        assert "/search" in one_for_all
-        assert "/enrich" in one_for_all
-        assert "/ingest" in one_for_all
-        # Should teach smak CLI (skill = HOW layer)
-        assert "smak search" in one_for_all
-        assert "smak enrich" in one_for_all
-        assert "smak ingest" in one_for_all
-        # Should NOT reference SMAK MCP tools directly
-        assert "enrich_symbol(" not in one_for_all
-        assert "describe_workspace(" not in one_for_all
-
-    def test_sos_skill_bundled(self, sample_project):
-        """Test that SOS skill is generated from bundled content (no smak_path needed)."""
-        scanner = ProjectScanner()
-        manifest = scanner.scan(sample_project)
-        manifest.has_path_env = True  # Simulate SOS environment
-
-        initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
-
-        sos_skill = sample_project / ".claude" / "skills" / "sos-smak" / "SKILL.md"
-        assert sos_skill.exists()
-        content = sos_skill.read_text()
-        assert "CliosoftSOS" in content
-        assert "DDI_ROOT_PATH" in content
-
-    def test_claude_md_has_guardrails(self, sample_project):
-        """Test that CLAUDE.md contains guardrails against hand-editing."""
-        scanner = ProjectScanner()
-        manifest = scanner.scan(sample_project)
-
-        initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
-
-        claude_md = sample_project / "CLAUDE.md"
-        content = claude_md.read_text()
-        assert "/search" in content
-        assert "/enrich" in content
-        assert "one-for-all" in content.lower()
-
     def test_claude_md_is_what_not_how(self, sample_project):
-        """CLAUDE.md should say WHAT you can do, not HOW (that's in skills)."""
+        """CLAUDE.md should say WHAT you can do, not HOW (that's in commands)."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
+        initializer.initialize(manifest)
 
         claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
-        # Should point to skill for details
-        assert "one-for-all" in content
         # Should NOT contain SMAK implementation details
         assert "smak search" not in content
         assert "smak enrich" not in content
-
-    def test_sos_skill_enrichment_crossref(self, sample_project):
-        """Test that SOS skill cross-references the enrichment protocol."""
-        scanner = ProjectScanner()
-        manifest = scanner.scan(sample_project)
-        manifest.has_path_env = True  # Simulate SOS environment
-
-        initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
-
-        sos_skill = (sample_project / ".claude" / "skills" / "sos-smak" / "SKILL.md").read_text()
-        assert "/enrich" in sos_skill
-        assert "enrichment-protocol" in sos_skill
 
     def test_claude_md_has_getting_started(self, sample_project):
         """Test that CLAUDE.md has getting started steps."""
@@ -216,27 +140,12 @@ class TestProjectInitializer:
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
+        initializer.initialize(manifest)
 
         claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
         assert "Getting Started" in content
         assert "/ingest" in content
-
-    def test_sos_skill_has_standalone_hub_and_config_management(self, sample_project):
-        """Test that SOS skill includes standalone hub and config.yaml guidance."""
-        scanner = ProjectScanner()
-        manifest = scanner.scan(sample_project)
-        manifest.has_path_env = True
-
-        initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
-
-        sos_skill = (sample_project / ".claude" / "skills" / "sos-smak" / "SKILL.md").read_text()
-        assert "STANDALONE HUB" in sos_skill
-        assert "CONFIG.YAML" in sos_skill
-        assert "add-index" in sos_skill
-        assert "frozen" in sos_skill.lower() or "snapshot" in sos_skill.lower()
 
     def test_claude_md_has_online_vs_vc_awareness(self, sample_project):
         """Test that CLAUDE.md explains online-only indexing and VC log verification."""
@@ -244,27 +153,12 @@ class TestProjectInitializer:
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
+        initializer.initialize(manifest)
 
         claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
         assert "/search" in content
         assert "/enrich" in content
-
-    def test_sos_skill_has_online_first_workflow(self, sample_project):
-        """Test that SOS skill documents the online-first + log verification pattern."""
-        scanner = ProjectScanner()
-        manifest = scanner.scan(sample_project)
-        manifest.has_path_env = True
-
-        initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
-
-        sos_skill = (sample_project / ".claude" / "skills" / "sos-smak" / "SKILL.md").read_text()
-        assert "online" in sos_skill.lower()
-        assert "sos log" in sos_skill.lower()
-        assert "revision log" in sos_skill.lower()
-        assert "ONLINE-FIRST" in sos_skill
 
     def test_idempotent(self, sample_project):
         """Running init twice should not break anything."""
@@ -272,12 +166,11 @@ class TestProjectInitializer:
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
-        initializer.initialize(manifest, smak_path=None)
+        initializer.initialize(manifest)
+        initializer.initialize(manifest)
 
         # Should still work — no errors, files still exist
         assert (sample_project / "knowledge_graph").is_dir()
-        assert (sample_project / ".claude" / "skills" / "one-for-all" / "SKILL.md").exists()
 
     def test_opencode_agents_md_symlink(self, sample_project):
         """AGENTS.md symlink should be created pointing to CLAUDE.md."""
@@ -330,7 +223,6 @@ class TestProjectInitializer:
         init.initialize(manifest)
 
         assert (sample_project / "AGENTS.md").is_symlink()
-        assert not (sample_project / ".opencode").exists()
 
     def test_enrich_command_sos_has_dry_run(self, sample_project):
         """SOS enrich.md references --dry-run and cliosoft-sos MCP tools."""
@@ -358,14 +250,3 @@ class TestProjectInitializer:
         assert "sos_checkout" not in content
         assert "smak enrich" in content
 
-    def test_sos_skill_references_mcp_tools(self, sample_project):
-        """SOS skill body references cliosoft-sos MCP tools and --dry-run."""
-        scanner = ProjectScanner()
-        manifest = scanner.scan(sample_project)
-        manifest.has_path_env = True
-
-        ProjectInitializer().initialize(manifest)
-
-        content = (sample_project / ".claude" / "skills" / "sos-smak" / "SKILL.md").read_text()
-        assert "sos_checkin" in content
-        assert "--dry-run" in content

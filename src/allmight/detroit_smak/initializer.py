@@ -1,9 +1,7 @@
 """Detroit SMAK Initializer — one punch creates the entire workspace.
 
 Takes a ProjectManifest from the Scanner and generates:
-- config.yaml (merged project metadata + corpus definitions)
-- enrichment/ and panorama/ directories
-- .claude/skills/ (layered skill composition)
+- knowledge_graph/ directory
 - .claude/commands/ (slash commands)
 - Updates CLAUDE.md at project root
 """
@@ -21,14 +19,12 @@ class ProjectInitializer:
     def initialize(
         self,
         manifest: ProjectManifest,
-        smak_path: Path | None = None,
         force: bool = False,
     ) -> None:
         """Execute Detroit SMAK — bootstrap the entire workspace.
 
         Args:
             manifest: Project characteristics from the Scanner.
-            smak_path: Optional path to SMAK installation for skill copying.
             force: If True, overwrite everything even on re-init.
         """
         root = manifest.root_path
@@ -40,11 +36,9 @@ class ProjectInitializer:
 
         if is_reinit:
             # Re-init: stage templates, don't overwrite working files
-            self._stage_templates(root, manifest, smak_path)
+            self._stage_templates(root, manifest)
         else:
             # First init (or --force): write everything directly
-            self._install_smak_skills(root, manifest, smak_path)
-            self._generate_allmight_skills(root, manifest)
             self._generate_commands(root, manifest)
             self._update_claude_md(root, manifest)
             self._create_opencode_compat(root)
@@ -69,7 +63,6 @@ class ProjectInitializer:
         self,
         root: Path,
         manifest: ProjectManifest,
-        smak_path: Path | None,
     ) -> None:
         """Stage new templates to .allmight/templates/ for agent-driven /sync.
 
@@ -79,47 +72,10 @@ class ProjectInitializer:
         """
         tpl = root / ".allmight" / "templates"
 
-        # --- Skills ---
-        skills_tpl = tpl / "skills"
-        skills_tpl.mkdir(parents=True, exist_ok=True)
-
-        # one-for-all
-        self._write_skill(
-            skills_tpl / "one-for-all" / "SKILL.md",
-            name="one-for-all",
-            description=(
-                "All-Might knowledge guide. Project structure, corpus reference, "
-                "enrichment protocol, key symbols, and Power Level. "
-                "Auto-loaded when agent needs to understand the project."
-            ),
-            body=self._one_for_all_skill_body(manifest),
-        )
-
-        # SOS skill (if applicable)
-        if manifest.has_path_env:
-            from .sos_skill_content import SOS_SKILL_BODY
-            self._write_skill(
-                skills_tpl / "sos-smak" / "SKILL.md",
-                name="sos-smak-skill",
-                description=(
-                    "CliosoftSOS environment guide."
-                ),
-                body=SOS_SKILL_BODY,
-            )
-
         # --- Commands ---
         cmds_tpl = tpl / "commands"
         cmds_tpl.mkdir(parents=True, exist_ok=True)
 
-        # Re-generate the same command content that first-init writes
-        # Search command
-        (cmds_tpl / "search.md").write_text(
-            (root / ".claude" / "commands" / "search.md").read_text()
-            if (root / ".claude" / "commands" / "search.md").exists()
-            else ""
-        )
-        # For staging, we want the NEW template content, not the old content.
-        # Use a temporary ProjectInitializer to generate fresh content.
         self._stage_command_content(cmds_tpl, manifest)
 
         # --- CLAUDE.md sections ---
@@ -158,6 +114,15 @@ class ProjectInitializer:
     def _claude_md_section(self, manifest: ProjectManifest) -> str:
         """Return the ALL-MIGHT section content for CLAUDE.md."""
         marker = "<!-- ALL-MIGHT -->"
+        sos_prereq = ""
+        if manifest.has_path_env:
+            sos_prereq = """
+### SOS Environment Prerequisite
+
+This project uses **CliosoftSOS**. Set `$DDI_ROOT_PATH` before opening
+the project — it determines which source layer (online vs. version
+control) All-Might operates on.
+"""
         return f"""{marker}
 ## All-Might: Active Knowledge Graph
 
@@ -182,10 +147,9 @@ code by meaning, annotate what it learns, and remember across sessions.
 
 ### How to learn the details
 
-The `one-for-all` skill (auto-loaded in `.claude/skills/`) contains the
-complete operational guide: search engine commands, annotation workflow,
-sidecar file format, and troubleshooting.
-
+Each command (`/search`, `/enrich`, `/ingest`) has a detailed operational
+guide in `.claude/commands/`.
+{sos_prereq}
 ### Getting Started
 
 1. `/ingest` — build the search index (first time)
@@ -276,62 +240,11 @@ smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code
 - List available corpora: `smak describe --config knowledge_graph/<workspace>/config.yaml --json`
 """
 
-    def _install_smak_skills(
-        self,
-        root: Path,
-        manifest: ProjectManifest,
-        smak_path: Path | None,
-    ) -> None:
-        """Install environment skills into .claude/skills/.
-
-        Agents use All-Might commands for all operations. We only install
-        sos-smak/SKILL.md for SOS environments, since it provides path
-        resolution rules.
-
-        SOS skill content is bundled in All-Might — no runtime dependency
-        on external skill files being present on disk.
-        """
-        if not manifest.has_path_env:
-            return
-
-        from .sos_skill_content import SOS_SKILL_BODY
-
-        skills_dir = root / ".claude" / "skills"
-        skills_dir.mkdir(parents=True, exist_ok=True)
-
-        self._write_skill(
-            skills_dir / "sos-smak" / "SKILL.md",
-            name="sos-smak-skill",
-            description=(
-                "CliosoftSOS environment guide. Teaches agents the "
-                "internal EDA version control workflow — online vs. version "
-                "control vs. SOS workspace — and how to correctly use All-Might "
-                "(path_env, sidecar editing, ingestion) within this environment. "
-                "Load this skill when working in projects that use CliosoftSOS "
-                "and $DDI_ROOT_PATH."
-            ),
-            body=SOS_SKILL_BODY,
-        )
-
-    def _generate_allmight_skills(self, root: Path, manifest: ProjectManifest) -> None:
-        """Generate All-Might skill — one unified skill that covers everything."""
-        skills_dir = root / ".claude" / "skills"
-        skills_dir.mkdir(parents=True, exist_ok=True)
-
-        # one-for-all/SKILL.md — the single unified skill (auto-loaded)
-        self._write_skill(
-            skills_dir / "one-for-all" / "SKILL.md",
-            name="one-for-all",
-            description=(
-                "All-Might knowledge guide. Project structure, corpus reference, "
-                "enrichment protocol, key symbols, and Power Level. "
-                "Auto-loaded when agent needs to understand the project."
-            ),
-            body=self._one_for_all_skill_body(manifest),
-        )
-
     def _generate_commands(self, root: Path, manifest: ProjectManifest) -> None:
         """Generate .claude/commands/ — thick operational guides."""
+        # Ensure .claude/ structure exists (skills/ is a container for
+        # user-installed skills and the sync skill on re-init)
+        (root / ".claude" / "skills").mkdir(parents=True, exist_ok=True)
         commands_dir = root / ".claude" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
 
@@ -452,7 +365,7 @@ Use `--dry-run` with the `cliosoft-sos` MCP tools to enrich safely:
 ### Important
 
 - **Never** run `soscmd` directly — always use `cliosoft-sos` MCP tools
-- Path mismatch warnings in workspaces are normal (see `sos-smak` skill)
+- Path mismatch warnings in workspaces are normal — you're editing in a workspace while relations point to the canonical path
 - After check-in, re-ingest to update the search index
 """
         return base + sos_section
@@ -524,254 +437,3 @@ Use `--dry-run` with the `cliosoft-sos` MCP tools to enrich safely:
         content = "\n".join(frontmatter_lines) + "\n\n" + body
         path.write_text(content)
 
-    def _detroit_smak_skill_body(self, manifest: ProjectManifest) -> str:
-        """Generate the body for detroit-smak/SKILL.md."""
-        return f"""# Detroit — Project Bootstrap
-
-Re-initialize the All-Might workspace for **{manifest.name}**.
-
-## What this does
-
-1. Re-scan the project directory for structural changes
-2. Update `config.yaml` with new/changed directories and indices
-3. Regenerate all All-Might skills (one-for-all, enrichment)
-4. Optionally trigger `/ingest` for new indices
-
-## When to use
-
-- Project structure has significantly changed (new directories, languages)
-- New team members need a fresh workspace setup
-- After major refactoring
-
-## Steps
-
-1. Run `allmight init {manifest.root_path}` OR manually:
-   - Scan the project directory structure
-   - Compare with existing `config.yaml`
-   - Update indices in `config.yaml`
-   - Regenerate `.claude/skills/one-for-all/SKILL.md`
-   - Regenerate `.claude/skills/enrichment/SKILL.md`
-2. If new indices were added, run `/ingest` for each new index
-"""
-
-    def _one_for_all_skill_body(self, manifest: ProjectManifest) -> str:
-        """Generate the initial body for one-for-all/SKILL.md."""
-        dir_map = ""
-        if manifest.directory_map:
-            dir_map = "### Directory Structure\n\n"
-            for dirname, role in manifest.directory_map.items():
-                dir_map += f"- `{dirname}/` — {role}\n"
-
-        return f"""# One For All — {manifest.name}
-
-> **All-Might** is the active knowledge graph layer for this project.
-> It manages SMAK workspaces under `knowledge_graph/`, shared enrichment,
-> and agent memory. Use the commands below — Do NOT hand-edit sidecar or
-> config YAML files directly.
->
-> **Important**: SMAK indexes source files **in-place** at their original
-> paths. Do NOT copy source code or documentation into this project.
-> Only the vector index (`store/`) and SMAK config (`config.yaml`) live
-> inside `knowledge_graph/` workspaces.
-
-## Project Overview
-
-- **Name**: {manifest.name}
-- **Languages**: {', '.join(manifest.languages) or 'Not yet detected'}
-- **Frameworks**: {', '.join(manifest.frameworks) or 'Not yet detected'}
-
-{dir_map}
-## SMAK Workspaces
-
-Workspaces live under `knowledge_graph/`. Discover them:
-```bash
-ls knowledge_graph/
-```
-
-Each workspace has its own `config.yaml` (index definitions pointing to
-source paths) and `store/` (vector index data). Source files stay at
-their original paths — they are never copied.
-
-## SMAK CLI Reference
-
-All commands use `--config <workspace>/config.yaml`. Add `--json` for
-machine-readable output.
-
-**Search** — find code by semantic meaning:
-```bash
-smak search "authentication handler" --config knowledge_graph/main/config.yaml --index source_code --top-k 5 --json
-smak search-all "error handling" --config knowledge_graph/main/config.yaml --top-k 3 --json
-smak lookup "src/auth.py::AuthHandler" --config knowledge_graph/main/config.yaml --index source_code --json
-```
-
-**Enrich** — annotate a symbol with intent and relations:
-```bash
-smak enrich --config knowledge_graph/main/config.yaml --index source_code \\
-    --file src/auth.py --symbol "AuthHandler.validate" \\
-    --intent "Validates JWT tokens and extracts user claims"
-
-smak enrich --config knowledge_graph/main/config.yaml --index source_code \\
-    --file src/auth.py --symbol "AuthHandler.validate" \\
-    --relation "src/models.py::User" --bidirectional
-```
-
-**Ingest** — rebuild the vector index from source files:
-```bash
-smak ingest --config knowledge_graph/main/config.yaml                    # all corpora
-smak ingest --config knowledge_graph/main/config.yaml --index source_code  # specific corpus
-```
-
-**Diagnostics**:
-```bash
-smak health --config knowledge_graph/main/config.yaml --json
-smak describe --config knowledge_graph/main/config.yaml --json
-smak stats --config knowledge_graph/main/config.yaml --json
-```
-
-## Sidecar Files
-
-Sidecar files store enrichment metadata beside the source file they describe.
-They are named `.{{source_filename}}.sidecar.yaml`.
-
-```yaml
-# Example: .auth.py.sidecar.yaml  (beside src/auth.py)
-symbols:
-  - name: "AuthHandler.validate"
-    intent: "Validates JWT tokens and extracts user claims"
-    relations:
-      - "src/models.py::User"
-      - "tests/test_auth.py::test_validate"
-```
-
-**Important rules:**
-- NEVER edit .sidecar.yaml files by hand — always use `smak enrich`
-- UIDs follow the format `<file_path>::<symbol_name>`
-- Use dot notation for nested symbols: `ClassName.method_name`
-- The wildcard `*` means the entire file: `path/to/file.py::*`
-- Do NOT invent UIDs — use `smak search` to discover valid ones
-
-## Commands
-
-| Command | Purpose |
-|---------|---------|
-| `/search <query>` | Search the codebase semantically |
-| `/enrich` | Annotate a symbol with intent and relations |
-| `/ingest` | Rebuild the search corpus from source files |
-
-## Getting Started
-
-1. `/ingest` — build the search index (first time setup)
-2. `/search "query"` — explore the codebase
-3. `/enrich` — annotate symbols as you learn them
-"""
-
-    def _enrichment_skill_body(self) -> str:
-        """Generate the body for enrichment/SKILL.md."""
-        return """# Enrichment Protocol — Enrich As You Work
-
-> This is an **advisory** protocol. Follow it naturally as you work —
-> don't treat it as a mandatory checklist.
->
-> All enrichment goes through **All-Might commands**.
-
-## When to Enrich
-
-### On reading and understanding code
-When you read a symbol (function, class, module) and understand its purpose:
-- If the sidecar has no `intent` for this symbol → use `/enrich` to set it (do not edit the sidecar file directly)
-- Write intent as a **human-readable description** of what the code does and why
-
-### On discovering relationships
-When you notice that two entities are related:
-- Code ↔ Issue: a function relates to a bug report or feature request
-- Code ↔ Test: a function has specific test cases
-- Code ↔ Doc: a module is documented somewhere
-- Code ↔ Code: two modules collaborate or one depends on the other
-
-Link them via `/enrich --file <path> --symbol <name> --relation <target_uid>`.
-Use `/search` or `/explain` to find and verify UIDs before linking.
-
-### On modifying code
-After changing code:
-- Check if the sidecar intent is still accurate — use `/explain` to review, `/enrich` to update (do not edit the sidecar file directly)
-- Update intent if the purpose changed
-- Add relations to any new dependencies you introduced
-
-## How to Enrich
-
-Use the `/enrich` command (or `allmight enrich` CLI):
-
-```bash
-# 1. Set intent for a symbol you understood
-allmight enrich --file src/module.py --symbol "ClassName.method_name" \\
-    --intent "Validates user input and returns sanitized data"
-
-# 2. Link a code symbol to a related issue
-allmight enrich --file src/module.py --symbol "ClassName.method_name" \\
-    --relation "./issues/bug-123.md::*"
-
-# 3. Create bidirectional relation
-allmight enrich --file src/module.py --symbol "ClassName.method_name" \\
-    --relation "src/other.py::OtherClass" --bidirectional
-```
-
-## Sidecar File Schema (Reference Only)
-
-> **Do NOT edit sidecar files by hand.** This schema is shown for understanding only.
-> All modifications MUST go through `/enrich` or `allmight enrich`.
-
-Sidecar files are named `.{source_filename}.sidecar.yaml` and sit beside their source file
-at the **source code path** (not in the All-Might workspace folder).
-In SOS environments, sidecars are created in the SOS workspace (Layer 3) and checked in
-to the canonical path (Layer 1/2) via `sos check-in`.
-
-```yaml
-# Example: .module.py.sidecar.yaml
-symbols:
-  - name: "ClassName.method_name"      # Symbol identifier
-    intent: "Human-readable purpose"    # What this code does and WHY
-    relations:                          # Links to other symbols (by UID)
-      - "src/other.py::OtherClass"
-      - "./tests/test_module.py::test_method"
-```
-
-### UID Format
-
-A symbol UID is: `<relative_file_path>::<symbol_name>`
-
-- File path is relative to the project root (or uses `$ENV_VAR/...` in SOS environments)
-- Symbol name uses dot notation for nested symbols: `ClassName.method_name`
-- The wildcard `*` refers to the entire file: `path/to/file.py::*`
-
-**Common mistakes** (all handled automatically by `/enrich`):
-- Wrong nesting (putting `intent` outside `symbols` array)
-- Missing `name` field
-- Using absolute paths instead of relative paths in UIDs
-- Inventing UIDs that don't correspond to actual symbols
-
-## Useful Commands
-
-| Command | When to use |
-|---------|-------------|
-| `/search <query>` | Find symbols to enrich |
-| `/enrich` | Add intent and/or relations |
-
-## Priority Guidelines
-
-Focus enrichment on:
-1. **Entry points** — main functions, API handlers, CLI commands
-2. **Complex logic** — algorithms, state machines, non-obvious control flow
-3. **Cross-cutting concerns** — error handling, auth, logging patterns
-4. **Frequently modified** — hot files that change often (high git commit count)
-
-Don't bother enriching:
-- Auto-generated code
-- Simple getters/setters
-- Boilerplate that's obvious from naming
-
-## Quality over Quantity
-
-- A few well-written intents are worth more than many shallow ones
-- Intent should answer "what does this do and **why**"
-- Relations should capture **meaningful** connections, not trivial ones
-"""

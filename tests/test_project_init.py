@@ -48,11 +48,6 @@ class TestProjectInit:
         assert agents.is_symlink()
         assert agents.resolve() == (project_root / "CLAUDE.md").resolve()
 
-    def test_creates_skill(self, project_root):
-        """.claude/skills/one-for-all/SKILL.md created."""
-        _init(project_root)
-        assert (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").exists()
-
     def test_creates_core_commands(self, project_root):
         """3 core commands: search.md, enrich.md, ingest.md."""
         _init(project_root)
@@ -82,20 +77,11 @@ class TestProjectInit:
         assert "smak search" not in content
         assert "smak enrich" not in content
 
-    def test_skill_teaches_smak(self, project_root):
-        """one-for-all SKILL.md contains smak CLI commands."""
-        _init(project_root)
-        skill = (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
-        assert "smak search" in skill
-        assert "smak enrich" in skill
-        assert "smak ingest" in skill
-
     def test_init_idempotent(self, project_root):
         """Running init twice doesn't break anything."""
         _init(project_root)
         _init(project_root)
         assert (project_root / "CLAUDE.md").exists()
-        assert (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").exists()
         assert (project_root / "knowledge_graph").is_dir()
 
 
@@ -114,14 +100,6 @@ class TestProjectInitIncludesMemory:
         cmds = project_root / ".claude" / "commands"
         assert (cmds / "remember.md").exists()
         assert (cmds / "recall.md").exists()
-
-    def test_appends_memory_to_skill(self, project_root):
-        """init appends memory section to one-for-all SKILL.md."""
-        _init_with_memory(project_root)
-        skill = (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
-        assert "Memory" in skill
-        assert "/remember" in skill
-        assert "/recall" in skill
 
     def test_memory_not_inside_knowledge_graph(self, project_root):
         """memory/ lives at project root, NOT inside knowledge_graph/."""

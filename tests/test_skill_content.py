@@ -21,27 +21,6 @@ def project_root(tmp_path):
     return tmp_path
 
 
-class TestSkillContent:
-
-    def test_skill_contains_smak_commands(self, project_root):
-        """one-for-all SKILL.md teaches agent about smak CLI."""
-        skill = (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
-        assert "smak search" in skill
-        assert "smak enrich" in skill
-        assert "smak ingest" in skill
-
-    def test_skill_explains_sidecar_format(self, project_root):
-        """Skill explains sidecar YAML format."""
-        skill = (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
-        assert "sidecar" in skill.lower()
-        assert ".sidecar.yaml" in skill
-
-    def test_skill_has_guardrails(self, project_root):
-        """Skill has guardrails (do NOT edit sidecars by hand, etc.)."""
-        skill = (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
-        assert "Do NOT" in skill or "NEVER" in skill
-
-
 class TestCommandContent:
 
     def test_commands_are_thick_guides(self, project_root):
@@ -76,11 +55,6 @@ class TestClaudeMdContent:
         assert "smak search" not in content
         assert "smak enrich" not in content
         assert "smak ingest" not in content
-
-    def test_claude_md_references_skill(self, project_root):
-        """CLAUDE.md points to one-for-all skill for details."""
-        content = (project_root / "CLAUDE.md").read_text()
-        assert "one-for-all" in content
 
     def test_claude_md_lists_commands(self, project_root):
         """CLAUDE.md lists the slash commands."""
