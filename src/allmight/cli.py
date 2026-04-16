@@ -98,8 +98,7 @@ def init(path: str, sos: bool, force: bool):
 @click.option("--workspace", "-w", multiple=True, help="Only merge specific workspaces")
 @click.option("--dry-run", is_flag=True, help="Show what would be merged without copying")
 @click.option("--no-memory", is_flag=True, help="Skip memory merge")
-@click.option("--copy-links", is_flag=True, help="Deep-copy linked workspaces instead of re-linking")
-def merge(source: str, workspace: tuple[str, ...], dry_run: bool, no_memory: bool, copy_links: bool):
+def merge(source: str, workspace: tuple[str, ...], dry_run: bool, no_memory: bool):
     """Merge knowledge bases from another All-Might project.
 
     Copies workspaces and memory from SOURCE into the current project.
@@ -121,7 +120,6 @@ def merge(source: str, workspace: tuple[str, ...], dry_run: bool, no_memory: boo
         workspaces=ws_filter,
         dry_run=dry_run,
         no_memory=no_memory,
-        copy_links=copy_links,
     )
 
     prefix = "[DRY RUN] " if dry_run else ""
@@ -129,8 +127,6 @@ def merge(source: str, workspace: tuple[str, ...], dry_run: bool, no_memory: boo
 
     if report.workspaces_added:
         click.echo(f"  Workspaces added:      {', '.join(report.workspaces_added)}")
-    if report.workspaces_linked_skipped:
-        click.echo(f"  Linked (re-linked):    {', '.join(report.workspaces_linked_skipped)}")
     if report.workspaces_conflicting:
         click.echo(f"  Workspaces conflicting: {', '.join(report.workspaces_conflicting)}")
     if report.memory_files_added:
