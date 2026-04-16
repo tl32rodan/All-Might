@@ -97,27 +97,41 @@ don't duplicate.
 
 ### Step 3: Enrich via All-Might Command
 
-Use the `/enrich` command — **never** edit sidecar YAML by hand:
+Use `smak enrich --dry-run --json` to preview the sidecar content without writing:
 
-```
-/enrich --file <relative_path> --symbol <symbol_name> \
+```bash
+smak enrich --config config.yaml --index <index_name> \
+  --file <relative_path> --symbol <symbol_name> \
   --intent "Description of what this symbol does and why" \
-  --relation "$DDI_ROOT_PATH/other/file.py::RelatedSymbol"
+  --relation "$DDI_ROOT_PATH/other/file.py::RelatedSymbol" \
+  --dry-run --json
 ```
+
+The `--dry-run` flag returns the enriched sidecar content (`sidecar_yaml`)
+and target path (`sidecar_path`) without writing to disk.  This is essential
+in SOS environments where files must be checked out before editing.
 
 The `/enrich` command handles:
 - Correct YAML schema and nesting
 - Proper UID format with `$DDI_ROOT_PATH` prefix
-- Creating the sidecar file if it doesn't exist
-- Appending to existing sidecar if it does
+- Syncing with current source symbols
+- Computing the complete sidecar content
 
-### Step 4: SOS Check-In
+### Step 4: SOS Check-Out, Write, and Check-In
 
-After enriching, commit the sidecar to the canonical path:
+Use the `cliosoft-sos` MCP tools to manage SOS operations:
 
-```bash
-sos check-in <sidecar_file>
-```
+1. **Check out** existing sidecar (skip if new):
+   Use `sos_checkout` on the sidecar path from step 3.
+
+2. **Write** the `sidecar_yaml` content to the sidecar path.
+
+3. **Register** new sidecars (first enrichment only):
+   Use `sos_create` on the new sidecar file.
+
+4. **Check in** the sidecar:
+   Use `sos_checkin` with a descriptive log message, e.g.:
+   `"Enrich <symbol_name>: <brief description>"`
 
 After check-in:
 - The sidecar is committed to Layer 1 (online) or Layer 2 (VC)
@@ -156,10 +170,11 @@ Do NOT:
 ## Strict Rules
 
 1. **NEVER** edit `.sidecar.yaml` files by hand — not in online, not in VC, not
-   in a workspace.  Always use `/enrich`.
+   in a workspace.  Always use `/enrich` (or `smak enrich --dry-run`).
 2. **NEVER** hardcode absolute paths in relations.  Always use `$DDI_ROOT_PATH/...`.
 3. **ALWAYS** set `$DDI_ROOT_PATH` before running All-Might commands.
-4. **ALWAYS** `sos check-in` after enrichment to make sidecars available team-wide.
+4. **ALWAYS** use `cliosoft-sos` MCP tools (`sos_checkout`, `sos_checkin`, `sos_create`)
+   for SOS operations — do not run `soscmd` directly.
 5. **ALWAYS** re-ingest after enrichment to update search indices.
 
 ## Interaction with Other Skills
