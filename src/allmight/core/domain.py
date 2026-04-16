@@ -44,6 +44,27 @@ class ProjectManifest:
 
 
 @dataclass
+class LinkedWorkspace:
+    """A corpus linked from an external location into knowledge_graph/.
+
+    The symlink ``knowledge_graph/<name>`` points to ``source``.
+    Metadata is persisted in ``knowledge_graph/.links.yaml``.
+    """
+
+    name: str  # symlink name inside knowledge_graph/
+    source: str  # absolute path to the external corpus directory
+    readonly: bool = True
+    description: str = ""
+
+
+@dataclass
+class LinksManifest:
+    """Tracks all linked corpora in ``knowledge_graph/.links.yaml``."""
+
+    links: list[LinkedWorkspace] = field(default_factory=list)
+
+
+@dataclass
 class SymbolInfo:
     """A symbol extracted from a sidecar YAML file."""
 
@@ -189,5 +210,6 @@ class MergeReport:
     workspaces_conflicting: list[str] = field(default_factory=list)
     memory_files_added: list[str] = field(default_factory=list)
     memory_conflicts: list[str] = field(default_factory=list)
+    workspaces_linked_skipped: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     action_needed: list[str] = field(default_factory=list)
