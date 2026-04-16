@@ -40,20 +40,6 @@ description: >-
 > No symbols enriched yet. Use `/enrich` as you work to grow the knowledge graph.
 {% endif %}
 
-## Power Level
-
-- **Coverage**: {{ "%.1f" | format(power_level.coverage_pct) }}%
-- **Enriched**: {{ power_level.enriched_symbols }} / {{ power_level.total_symbols }} symbols
-- **Relations**: {{ power_level.total_relations }}
-
-{% if power_level.by_index %}
-| Corpus | Coverage |
-|--------|----------|
-{% for name, pct in power_level.by_index.items() %}
-| `{{ name }}` | {{ "%.1f" | format(pct) }}% |
-{% endfor %}
-{% endif %}
-
 ---
 
 ## How the Knowledge Graph Works
@@ -149,15 +135,6 @@ code↔code, code↔doc) via `--relation`.
 **Priority**: entry points > complex logic > cross-cutting concerns > hot files.
 Skip auto-generated code, trivial getters, and obvious boilerplate.
 
-### Enrichment Coverage (Power Level)
-
-To compute coverage, scan all sidecar files across corpora:
-1. Count total symbols vs symbols with non-empty `intent`
-2. Calculate percentage: `enriched / total × 100`
-3. Optionally update `enrichment/tracker.yaml` with the snapshot
-
-The `enrichment/tracker.yaml` file stores historical coverage data.
-
 ---
 
 ## Commands
@@ -167,4 +144,3 @@ The `enrichment/tracker.yaml` file stores historical coverage data.
 | `/search` | Search the codebase semantically |
 | `/enrich` | Annotate a symbol with intent and relations |
 | `/ingest` | Rebuild the search corpus from source files |
-| `/status` | Show enrichment coverage and system health |

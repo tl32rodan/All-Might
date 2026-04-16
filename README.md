@@ -3,58 +3,58 @@
 Turn your codebase into a knowledge graph that AI agents can search,
 learn from, and remember across sessions.
 
+## How It Works
+
+All-Might builds three layers of understanding on top of your code:
+
+**Search** — The agent can search your code by meaning, not just keywords.
+Ask "how does authentication work?" and it finds the relevant modules,
+even if they never use the word "authentication".
+
+**Annotation** — As the agent reads and understands code, it writes down
+what each function/class does and how things connect. These notes persist
+across sessions, so the next agent (or the same one later) starts with
+that understanding already built.
+
+**Memory** (optional) — The agent remembers things across sessions:
+your preferences, past decisions, corrections you've made. Over time,
+frequently-used memories stick; forgotten ones fade naturally.
+
 ## Setup
 
 ```bash
 pip install allmight
 cd /path/to/your/project
-allmight init .                # knowledge graph only
-allmight init . --with-memory  # + agent memory (recommended)
+allmight init .                # search + annotation + agent memory
 ```
 
-Then open the folder in **Claude Code** or **OpenCode** and start talking.
+Then open the folder in **Claude Code** or **OpenCode**.
 
 ## Talking to the Agent
 
-### Explore
+### Search the code
 
 > "Search for how authentication works"
 >
 > "What does the AuthHandler class do?"
 >
-> "Find all error handling patterns in this project"
+> "Find all error handling patterns"
 
-The agent uses `/search` to find code by meaning, then explains what it found.
+### Build understanding
 
-### Enrich
-
-> "Annotate the AuthHandler with its purpose"
+> "Annotate the AuthHandler — write down what it does and why"
 >
 > "Link the login function to its test file"
 >
-> "Enrich the top 5 most important entry points"
+Each annotation makes future searches and questions more useful.
 
-The agent uses `/enrich` to record what code does and how it connects.
-This builds the knowledge graph over time.
+### Remember things (if memory enabled)
 
-### Track Progress
-
-> "How much of the codebase is annotated?"
->
-> "Show me the knowledge graph health"
-
-The agent uses `/status` to report enrichment coverage.
-
-### Remember (if memory enabled)
-
-> "Remember that the user prefers TypeScript over JavaScript"
+> "Remember that I prefer TypeScript over JavaScript"
 >
 > "What did we discuss about the auth module last time?"
 >
 > "Consolidate what you've learned from recent sessions"
-
-The agent uses `/remember`, `/recall`, and `/consolidate` to persist
-knowledge across sessions.
 
 ## What You Need to Do
 
@@ -62,25 +62,33 @@ knowledge across sessions.
 |------|----------------|
 | **First time** | "Run /ingest to build the search index" |
 | **Exploring** | Ask questions about the code |
-| **Learning something** | "Enrich this symbol with what you just learned" |
-| **Checking progress** | "Show me the status" |
-| **Weekly (memory)** | "Consolidate recent sessions" |
+| **Agent learns something** | "Annotate this with what you just learned" |
 | **After big changes** | "Re-run /ingest" |
 
-Everything else is automatic. The agent reads its skills on startup and
-knows how to operate the knowledge graph.
+Everything else is automatic.
 
 ## Commands
 
-| Command | What to tell the agent |
-|---------|----------------------|
+These are slash commands you can type (or just ask the agent in
+natural language — it knows what to do).
+
+| Command | Plain English |
+|---------|--------------|
 | `/search` | "Search for ..." |
 | `/enrich` | "Annotate this symbol" |
-| `/ingest` | "Build/rebuild the search index" |
-| `/status` | "Show knowledge graph health" |
+| `/ingest` | "Build the search index" |
 | `/remember` | "Remember that ..." |
-| `/recall` | "What do you remember about ...?" |
-| `/consolidate` | "Consolidate recent sessions" |
+| `/recall` | "What do you know about ...?" |
+| `/reflect` | "Review and tidy up what you've learned" |
+
+## Glossary
+
+| Term | What it means |
+|------|--------------|
+| **Knowledge graph** | The accumulated understanding: code annotations + their connections |
+| **Annotation** (enrichment) | A note describing what a function/class does and what it relates to |
+| **Corpus** | A searchable index of your source code, built by `/ingest` |
+| **Memory** | Agent's persistent knowledge across sessions (preferences, decisions, facts) |
 
 ## Compatibility
 

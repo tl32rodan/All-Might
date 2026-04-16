@@ -63,18 +63,19 @@ class TestProjectInitializer:
         initializer = ProjectInitializer()
         initializer.initialize(manifest, smak_path=None)
 
-        assert (sample_project / "config.yaml").exists()
-        assert (sample_project / "enrichment" / "tracker.yaml").exists()
-        assert (sample_project / "panorama").is_dir()
+        assert (sample_project / "knowledge_graph").is_dir()
 
-    def test_creates_config_yaml(self, sample_project):
+    def test_creates_knowledge_graph_dir(self, sample_project):
+        """knowledge_graph/ is created — SMAK workspaces live here."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
         initializer.initialize(manifest, smak_path=None)
 
-        assert (sample_project / "config.yaml").exists()
+        assert (sample_project / "knowledge_graph").is_dir()
+        # config.yaml lives per-workspace, NOT at project root
+        assert not (sample_project / "config.yaml").exists()
 
     def test_creates_skills(self, sample_project):
         scanner = ProjectScanner()
@@ -107,11 +108,11 @@ class TestProjectInitializer:
         initializer.initialize(manifest, smak_path=None)
 
         commands_dir = sample_project / ".claude" / "commands"
-        # Simplified command set: 4 core commands only
+        # Core commands: search, enrich, ingest
         assert (commands_dir / "search.md").exists()
         assert (commands_dir / "enrich.md").exists()
         assert (commands_dir / "ingest.md").exists()
-        assert (commands_dir / "status.md").exists()
+        assert not (commands_dir / "status.md").exists()
         # Old commands should NOT exist
         assert not (commands_dir / "explain.md").exists()
         assert not (commands_dir / "power-level.md").exists()
@@ -128,10 +129,10 @@ class TestProjectInitializer:
         assert claude_md.exists()
         content = claude_md.read_text()
         assert "ALL-MIGHT" in content
-        assert "/status" in content
+        assert "/search" in content
 
     def test_one_for_all_uses_allmight_commands(self, sample_project):
-        """Phase 7: One For All references All-Might commands, not SMAK MCP."""
+        """One For All references All-Might commands and teaches smak CLI."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
@@ -139,30 +140,17 @@ class TestProjectInitializer:
         initializer.initialize(manifest, smak_path=None)
 
         one_for_all = (sample_project / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
-        # Should reference All-Might commands
+        # Should reference core commands
         assert "/search" in one_for_all
         assert "/enrich" in one_for_all
-        assert "/explain" in one_for_all
+        assert "/ingest" in one_for_all
+        # Should teach smak CLI (skill = HOW layer)
+        assert "smak search" in one_for_all
+        assert "smak enrich" in one_for_all
+        assert "smak ingest" in one_for_all
         # Should NOT reference SMAK MCP tools directly
         assert "enrich_symbol(" not in one_for_all
         assert "describe_workspace(" not in one_for_all
-
-    def test_config_yaml_has_uri(self, sample_project):
-        """Test that generated config.yaml includes uri for each index."""
-        import yaml
-
-        scanner = ProjectScanner()
-        manifest = scanner.scan(sample_project)
-
-        initializer = ProjectInitializer()
-        initializer.initialize(manifest, smak_path=None)
-
-        with open(sample_project / "config.yaml") as f:
-            config = yaml.safe_load(f)
-
-        for idx in config["indices"]:
-            assert "uri" in idx, f"Index '{idx['name']}' missing uri"
-            assert idx["uri"].startswith("./smak/")
 
     def test_sos_skill_bundled(self, sample_project):
         """Test that SOS skill is generated from bundled content (no smak_path needed)."""
@@ -288,7 +276,7 @@ class TestProjectInitializer:
         initializer.initialize(manifest, smak_path=None)
 
         # Should still work — no errors, files still exist
-        assert (sample_project / "config.yaml").exists()
+        assert (sample_project / "knowledge_graph").is_dir()
         assert (sample_project / ".claude" / "skills" / "one-for-all" / "SKILL.md").exists()
 
     def test_opencode_agents_md_symlink(self, sample_project):
@@ -303,13 +291,35 @@ class TestProjectInitializer:
         assert agents_md.is_symlink()
         assert agents_md.resolve() == claude_md.resolve()
 
-    def test_opencode_no_dotdir_created(self, sample_project):
-        """.opencode/ should NOT be created — it is OpenCode's runtime dir."""
+    def test_opencode_dotdir_created(self, sample_project):
+        """.opencode/ directory created with symlinks into .claude/."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
         ProjectInitializer().initialize(manifest)
 
-        assert not (sample_project / ".opencode").exists()
+        assert (sample_project / ".opencode").is_dir()
+
+    def test_opencode_skills_symlink(self, sample_project):
+        """.opencode/skills/ symlinks to .claude/skills/."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        ProjectInitializer().initialize(manifest)
+
+        target = sample_project / ".opencode" / "skills"
+        source = sample_project / ".claude" / "skills"
+        assert target.is_symlink()
+        assert target.resolve() == source.resolve()
+
+    def test_opencode_commands_symlink(self, sample_project):
+        """.opencode/commands/ symlinks to .claude/commands/."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        ProjectInitializer().initialize(manifest)
+
+        target = sample_project / ".opencode" / "commands"
+        source = sample_project / ".claude" / "commands"
+        assert target.is_symlink()
+        assert target.resolve() == source.resolve()
 
     def test_opencode_compat_idempotent(self, sample_project):
         """Running init twice should not duplicate or break symlinks."""
@@ -320,4 +330,6 @@ class TestProjectInitializer:
         init.initialize(manifest)
 
         assert (sample_project / "AGENTS.md").is_symlink()
-        assert not (sample_project / ".opencode").exists()
+        assert (sample_project / ".opencode").is_dir()
+        assert (sample_project / ".opencode" / "skills").is_symlink()
+        assert (sample_project / ".opencode" / "commands").is_symlink()

@@ -10,10 +10,7 @@ Takes a ProjectManifest from the Scanner and generates:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
-
-import yaml
 
 from ..core.domain import ProjectManifest
 
@@ -53,56 +50,13 @@ class ProjectInitializer:
         self._create_opencode_compat(root)
 
     def _create_metadata(self, root: Path, manifest: ProjectManifest) -> None:
-        """Create config.yaml, enrichment/, and panorama/ at the project root."""
-        # Build index dicts
-        indices = []
-        for idx in manifest.indices:
-            entry: dict = {
-                "name": idx.name,
-                "uri": idx.uri or f"./smak/{idx.name}",
-                "description": idx.description,
-                "paths": idx.paths,
-            }
-            if idx.path_env:
-                entry["path_env"] = idx.path_env
-            indices.append(entry)
+        """Create knowledge_graph/ at the project root.
 
-        # Merged config.yaml
-        config = {
-            "project": {
-                "name": manifest.name,
-                "root": str(manifest.root_path),
-                "languages": manifest.languages,
-                "frameworks": manifest.frameworks,
-            },
-            "enrichment": {
-                "strategy": "advisory",
-            },
-            "indices": indices,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        _write_yaml(root / "config.yaml", config)
-
-        # enrichment/tracker.yaml — initial Power Level (all 0%)
-        enrichment_dir = root / "enrichment"
-        enrichment_dir.mkdir(exist_ok=True)
-        tracker = {
-            "power_level": {
-                "total_symbols": 0,
-                "enriched_symbols": 0,
-                "coverage_pct": 0.0,
-                "by_index": {},
-                "total_files": 0,
-                "files_with_sidecars": 0,
-                "total_relations": 0,
-            },
-            "history": [],
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-        _write_yaml(enrichment_dir / "tracker.yaml", tracker)
-
-        # panorama/ — output directory
-        (root / "panorama").mkdir(exist_ok=True)
+        Note: config.yaml is NOT created here — it belongs to SMAK workspaces
+        under knowledge_graph/*/config.yaml, not the All-Might project root.
+        """
+        # knowledge_graph/ — workspace container (SMAK workspaces live here)
+        (root / "knowledge_graph").mkdir(exist_ok=True)
 
     def _install_smak_skills(
         self,
@@ -166,20 +120,23 @@ class ProjectInitializer:
         (commands_dir / "search.md").write_text("""\
 Search the codebase by semantic meaning.
 
+SMAK searches the vector index — source files are never copied.
+Results point back to files at their original paths.
+
 ## How to execute
 
 ```bash
-smak search "<query>" --config config.yaml --index source_code --top-k 5 --json
+smak search "<query>" --config knowledge_graph/<workspace>/config.yaml --index source_code --top-k 5 --json
 ```
 
 To search across all corpora at once:
 ```bash
-smak search-all "<query>" --config config.yaml --top-k 3 --json
+smak search-all "<query>" --config knowledge_graph/<workspace>/config.yaml --top-k 3 --json
 ```
 
 To look up a specific symbol by UID:
 ```bash
-smak lookup "<file_path>::<symbol_name>" --config config.yaml --index source_code --json
+smak lookup "<file_path>::<symbol_name>" --config knowledge_graph/<workspace>/config.yaml --index source_code --json
 ```
 
 ## What to expect
@@ -201,18 +158,21 @@ JSON output with a `results` array. Each result contains:
         (commands_dir / "enrich.md").write_text("""\
 Annotate a code symbol with intent and/or relations.
 
+Enrichment creates `.sidecar.yaml` files beside the source code at its
+original path. Nothing is copied into the All-Might project.
+
 ## How to execute
 
 Set intent (what the symbol does and why):
 ```bash
-smak enrich --config config.yaml --index source_code \\
+smak enrich --config knowledge_graph/<workspace>/config.yaml --index source_code \\
     --file <relative_path> --symbol "<SymbolName>" \\
     --intent "Human-readable description of purpose"
 ```
 
 Add a relation to another symbol:
 ```bash
-smak enrich --config config.yaml --index source_code \\
+smak enrich --config knowledge_graph/<workspace>/config.yaml --index source_code \\
     --file <relative_path> --symbol "<SymbolName>" \\
     --relation "<other_file>::<OtherSymbol>" --bidirectional
 ```
@@ -248,81 +208,44 @@ Skip auto-generated code, simple getters, and obvious boilerplate.
 """)
 
         (commands_dir / "ingest.md").write_text("""\
-Rebuild the search corpus from source files.
+Build the SMAK vector index from source files.
+
+SMAK indexes source files **in-place** at their original paths.
+No files are copied — only the vector index (in `store/`) is created
+inside the workspace.
 
 ## When to run
 
 - **First time**: after `allmight init` to build the initial index
 - **After significant changes**: new files added, major refactoring
-- **After adding a corpus**: to populate the new index
+- **After adding a workspace**: to populate the new index
 
 You do NOT need to re-ingest after enrichment — sidecars are separate
 from the search index.
 
 ## How to execute
 
-Rebuild all corpora:
+Rebuild all corpora in a workspace:
 ```bash
-smak ingest --config config.yaml --json
+smak ingest --config knowledge_graph/<workspace>/config.yaml --json
 ```
 
 Rebuild a specific corpus:
 ```bash
-smak ingest --config config.yaml --index source_code --json
+smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code --json
 ```
 
 ## What to expect
 
-- The `./smak/<corpus_name>/` directory is populated with search index data
-- `/search` will return results from the newly ingested files
-- Ingestion may take a few minutes for large codebases
+- The `store/` directory inside the workspace is populated with vector index data
+- `/search` will return results from the indexed files
+- Source files remain at their original paths — nothing is copied
 
 ## Troubleshooting
 
 - If `smak` is not found, ensure SMAK is installed and on PATH
-- Check `smak health --config config.yaml --json` for diagnostics
-- List available corpora: `smak describe --config config.yaml --json`
-""")
-
-        (commands_dir / "status.md").write_text("""\
-Show the knowledge graph coverage and system health.
-
-## How to execute
-
-1. Scan all sidecar YAML files (`.*.sidecar.yaml`) across all paths
-   defined in `config.yaml` indices.
-2. For each sidecar, count symbols and check which have non-empty `intent`.
-3. Calculate coverage: `enriched_symbols / total_symbols * 100`.
-4. Read `enrichment/tracker.yaml` for historical data.
-5. If `memory/config.yaml` exists (memory system enabled), also report:
-   - Working memory: count words in `memory/working/MEMORY.md`
-   - Episodic memory: count files in `memory/episodes/`
-   - Semantic memory: count files in `memory/semantic/`
-
-## What to report
-
-```
-Power Level: XX.X%
-  source_code: XX.X% (N/M symbols enriched)
-  tests:       XX.X% (N/M symbols enriched)
-  Total relations: N
-
-Memory (if enabled):
-  Episodes: N total, M unconsolidated
-  Facts: N total, avg confidence X.XX
-```
-
-## When to run
-
-- After enrichment work to see progress
-- Periodically to track coverage trends
-- When the user asks "how healthy is the knowledge graph?"
-
-## After checking status
-
-- If coverage is low, prioritize `/enrich` on entry points
-- If many episodes are unconsolidated, suggest `/consolidate`
-- Update `enrichment/tracker.yaml` with the new snapshot
+- Check `smak health --config knowledge_graph/<workspace>/config.yaml --json` for diagnostics
+- List available corpora: `smak describe --config knowledge_graph/<workspace>/config.yaml --json`
 """)
 
     def _update_claude_md(self, root: Path, manifest: ProjectManifest) -> None:
@@ -333,30 +256,36 @@ Memory (if enabled):
         allmight_section = f"""{marker}
 ## All-Might: Active Knowledge Graph
 
-This project has an **All-Might knowledge graph** — semantic search,
-symbol enrichment, and graph intelligence across the codebase.
+This project has an **All-Might knowledge graph** — the agent can search
+code by meaning, annotate what it learns, and remember across sessions.
 
-### What you can do
+### Capabilities
 
 | Command | What it does |
 |---------|-------------|
-| `/search <query>` | Search the codebase by meaning |
-| `/enrich` | Annotate a symbol with intent and relations |
-| `/ingest` | Rebuild the search corpus |
-| `/status` | Check enrichment coverage and health |
+| `/search <query>` | Search code by meaning (not just keywords) |
+| `/enrich` | Annotate a symbol — record what it does and what it relates to |
+| `/ingest` | Build or rebuild the search index from source files |
 
-### How to learn more
+### Concepts
+
+- **Corpus** = a vector index built from source files by `/ingest`. Source
+  files are indexed **in-place** — nothing is copied into this project.
+  Only the vector index (in `knowledge_graph/<workspace>/store/`) is local.
+- **Annotation** = a note on a code symbol (function, class) describing its
+  purpose and connections. Stored in `.sidecar.yaml` files beside the source code.
+
+### How to learn the details
 
 The `one-for-all` skill (auto-loaded in `.claude/skills/`) contains the
-complete operational guide: how the search engine works, how to enrich
-symbols, sidecar file format, and all CLI commands.
+complete operational guide: search engine commands, annotation workflow,
+sidecar file format, and troubleshooting.
 
 ### Getting Started
 
-1. `/ingest` — build the search corpus (first time)
+1. `/ingest` — build the search index (first time)
 2. `/search "query"` — explore the codebase
 3. `/enrich` — annotate symbols as you learn them
-4. `/status` — track progress
 """
 
         if claude_md.exists():
@@ -374,27 +303,46 @@ symbols, sidecar file format, and all CLI commands.
     def _create_opencode_compat(self, root: Path) -> None:
         """Create OpenCode-compatible symlinks.
 
-        OpenCode prefers ``AGENTS.md`` over ``CLAUDE.md`` as its rules
-        file.  We create a single symlink so both tools read the same
-        content.
+        OpenCode prefers ``AGENTS.md`` over ``CLAUDE.md`` and looks in
+        ``.opencode/`` alongside ``.claude/``.  We create symlinks so
+        that a single set of files serves both tools.
 
-        We do **NOT** create a ``.opencode/`` directory — that is
-        OpenCode's own runtime directory (node_modules, plugins, etc.)
-        and pre-creating it interferes with OpenCode's initialisation.
-        OpenCode already reads ``.claude/skills/`` and ``.claude/CLAUDE.md``
-        natively as a compatibility fallback, so no directory-level
-        symlinks are needed.
+        Symlinks created::
 
-        Symlink created::
+            AGENTS.md            → CLAUDE.md
+            .opencode/skills/    → .claude/skills/
+            .opencode/commands/  → .claude/commands/
 
-            AGENTS.md → CLAUDE.md
+        OpenCode also reads ``.claude/`` natively as a compatibility
+        fallback, so the symlinks are an optimisation, not a hard
+        requirement.
         """
         import os
 
+        # --- AGENTS.md → CLAUDE.md ---
         agents_md = root / "AGENTS.md"
         claude_md = root / "CLAUDE.md"
         if claude_md.exists() and not agents_md.exists():
             os.symlink("CLAUDE.md", str(agents_md))
+
+        # --- .opencode/ directory with symlinks into .claude/ ---
+        opencode_dir = root / ".opencode"
+        claude_dir = root / ".claude"
+
+        if not claude_dir.is_dir():
+            return  # Nothing to link to
+
+        opencode_dir.mkdir(exist_ok=True)
+
+        for subdir in ("skills", "commands"):
+            source = claude_dir / subdir
+            target = opencode_dir / subdir
+            if source.is_dir() and not target.exists():
+                # Relative symlink: .opencode/skills → ../.claude/skills
+                os.symlink(
+                    os.path.relpath(str(source), str(opencode_dir)),
+                    str(target),
+                )
 
     def _write_skill(
         self,
@@ -451,11 +399,6 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 
     def _one_for_all_skill_body(self, manifest: ProjectManifest) -> str:
         """Generate the initial body for one-for-all/SKILL.md."""
-        index_table = "| Index | Description | Paths |\n|-------|-------------|-------|\n"
-        for idx in manifest.indices:
-            paths_str = ", ".join(idx.paths)
-            index_table += f"| `{idx.name}` | {idx.description} | `{paths_str}` |\n"
-
         dir_map = ""
         if manifest.directory_map:
             dir_map = "### Directory Structure\n\n"
@@ -464,11 +407,15 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 
         return f"""# One For All — {manifest.name}
 
-> **All-Might** is the active knowledge graph layer that indexes this codebase,
-> providing commands, enrichment, and graph intelligence.
+> **All-Might** is the active knowledge graph layer for this project.
+> It manages SMAK workspaces under `knowledge_graph/`, shared enrichment,
+> and agent memory. Use the commands below — Do NOT hand-edit sidecar or
+> config YAML files directly.
 >
-> All knowledge graph operations go through **All-Might commands** (`/search`, `/enrich`, `/explain`, etc.).
-> Do NOT hand-edit sidecar or config YAML files.
+> **Important**: SMAK indexes source files **in-place** at their original
+> paths. Do NOT copy source code or documentation into this project.
+> Only the vector index (`store/`) and SMAK config (`config.yaml`) live
+> inside `knowledge_graph/` workspaces.
 
 ## Project Overview
 
@@ -477,55 +424,88 @@ Re-initialize the All-Might workspace for **{manifest.name}**.
 - **Frameworks**: {', '.join(manifest.frameworks) or 'Not yet detected'}
 
 {dir_map}
+## SMAK Workspaces
 
-## Corpus Reference
+Workspaces live under `knowledge_graph/`. Discover them:
+```bash
+ls knowledge_graph/
+```
 
-{index_table}
+Each workspace has its own `config.yaml` (index definitions pointing to
+source paths) and `store/` (vector index data). Source files stay at
+their original paths — they are never copied.
 
-Use `/list-indices` to verify indices are active.
+## SMAK CLI Reference
 
-> **Note:** This workspace is a standalone hub — source code is at external paths
-> listed in the "Paths" column above. Search data is stored locally in `./smak/`.
-> Sidecar files live beside the source files at those external paths, not here.
-> **Indices are built from online (Layer 1) only.** To verify features in version control
-> releases, use SOS revision log matching (see `sos-smak` skill).
+All commands use `--config <workspace>/config.yaml`. Add `--json` for
+machine-readable output.
 
-## Key Symbols
+**Search** — find code by semantic meaning:
+```bash
+smak search "authentication handler" --config knowledge_graph/main/config.yaml --index source_code --top-k 5 --json
+smak search-all "error handling" --config knowledge_graph/main/config.yaml --top-k 3 --json
+smak lookup "src/auth.py::AuthHandler" --config knowledge_graph/main/config.yaml --index source_code --json
+```
 
-> No symbols have been enriched yet. As you work with this project and use
-> `/enrich` to annotate code, this section will be populated when you
-> run `/regenerate`.
+**Enrich** — annotate a symbol with intent and relations:
+```bash
+smak enrich --config knowledge_graph/main/config.yaml --index source_code \\
+    --file src/auth.py --symbol "AuthHandler.validate" \\
+    --intent "Validates JWT tokens and extracts user claims"
 
-## Power Level
+smak enrich --config knowledge_graph/main/config.yaml --index source_code \\
+    --file src/auth.py --symbol "AuthHandler.validate" \\
+    --relation "src/models.py::User" --bidirectional
+```
 
-- **Coverage**: 0% (fresh workspace)
-- **Enriched symbols**: 0
-- **Total relations**: 0
+**Ingest** — rebuild the vector index from source files:
+```bash
+smak ingest --config knowledge_graph/main/config.yaml                    # all corpora
+smak ingest --config knowledge_graph/main/config.yaml --index source_code  # specific corpus
+```
 
-Run `/power-level` to get current metrics, or `/regenerate` to update this skill.
+**Diagnostics**:
+```bash
+smak health --config knowledge_graph/main/config.yaml --json
+smak describe --config knowledge_graph/main/config.yaml --json
+smak stats --config knowledge_graph/main/config.yaml --json
+```
 
-## All-Might Commands
+## Sidecar Files
+
+Sidecar files store enrichment metadata beside the source file they describe.
+They are named `.{{source_filename}}.sidecar.yaml`.
+
+```yaml
+# Example: .auth.py.sidecar.yaml  (beside src/auth.py)
+symbols:
+  - name: "AuthHandler.validate"
+    intent: "Validates JWT tokens and extracts user claims"
+    relations:
+      - "src/models.py::User"
+      - "tests/test_auth.py::test_validate"
+```
+
+**Important rules:**
+- NEVER edit .sidecar.yaml files by hand — always use `smak enrich`
+- UIDs follow the format `<file_path>::<symbol_name>`
+- Use dot notation for nested symbols: `ClassName.method_name`
+- The wildcard `*` means the entire file: `path/to/file.py::*`
+- Do NOT invent UIDs — use `smak search` to discover valid ones
+
+## Commands
 
 | Command | Purpose |
 |---------|---------|
-| `/search <query>` | Semantic search with graph context |
-| `/explain <uid>` | Full graph context for a symbol |
-| `/enrich` | Annotate a symbol with intent/relations |
-| `/ingest` | Rebuild corpus |
-| `/power-level` | Check knowledge coverage metrics |
-| `/regenerate` | Update this skill with latest state |
-| `/panorama` | Export knowledge graph visualization |
-| `/graph-report` | Graph intelligence report |
-| `/add-index` | Add a new corpus |
-| `/remove-index` | Remove an index |
-| `/list-indices` | List all configured indices |
+| `/search <query>` | Search the codebase semantically |
+| `/enrich` | Annotate a symbol with intent and relations |
+| `/ingest` | Rebuild the search corpus from source files |
 
 ## Getting Started
 
-1. Use `/search "..."` to explore the codebase semantically
-2. Use `/explain "path::symbol"` for deep context on any symbol
-3. When you understand a symbol's purpose, use `/enrich` (see `enrichment-protocol` skill)
-4. Run `/power-level` periodically to track progress
+1. `/ingest` — build the search index (first time setup)
+2. `/search "query"` — explore the codebase
+3. `/enrich` — annotate symbols as you learn them
 """
 
     def _enrichment_skill_body(self) -> str:
@@ -617,10 +597,7 @@ A symbol UID is: `<relative_file_path>::<symbol_name>`
 | Command | When to use |
 |---------|-------------|
 | `/search <query>` | Find symbols to enrich |
-| `/explain <uid>` | Check existing enrichment for a symbol |
 | `/enrich` | Add intent and/or relations |
-| `/power-level` | Check overall enrichment progress |
-| `/graph-report` | See which areas need attention |
 
 ## Priority Guidelines
 
@@ -641,10 +618,3 @@ Don't bother enriching:
 - Intent should answer "what does this do and **why**"
 - Relations should capture **meaningful** connections, not trivial ones
 """
-
-
-def _write_yaml(path: Path, data: dict) -> None:
-    """Write a YAML file with consistent formatting."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
