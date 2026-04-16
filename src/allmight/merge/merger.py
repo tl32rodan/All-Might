@@ -7,7 +7,6 @@ via ``/sync``.
 
 from __future__ import annotations
 
-import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,7 +14,6 @@ from pathlib import Path
 import yaml
 
 from ..core.domain import MergeReport
-from ..utils.links import add_link, load_links_manifest
 from .path_rewriter import PathRewriter
 
 
@@ -37,7 +35,6 @@ class ProjectMerger:
         workspaces: list[str] | None = None,
         dry_run: bool = False,
         no_memory: bool = False,
-        copy_links: bool = False,
     ) -> MergeReport:
         """Merge source project into target.
 
@@ -66,7 +63,7 @@ class ProjectMerger:
         )
 
         # Phase 2: Copy workspaces
-        self._merge_workspaces(source, target, report, workspaces, dry_run, copy_links)
+        self._merge_workspaces(source, target, report, workspaces, dry_run)
 
         # Phase 3: Merge memory
         if not no_memory:
@@ -96,14 +93,8 @@ class ProjectMerger:
         report: MergeReport,
         filter_names: list[str] | None,
         dry_run: bool,
-        copy_links: bool = False,
     ) -> None:
-        """Copy knowledge_graph workspaces from source to target.
-
-        Linked (symlinked) workspaces are re-created as symlinks in the
-        target unless *copy_links* is True, in which case their contents
-        are deep-copied.
-        """
+        """Copy knowledge_graph workspaces from source to target."""
         source_kg = source / "knowledge_graph"
         target_kg = target / "knowledge_graph"
 
@@ -121,21 +112,6 @@ class ProjectMerger:
                 continue
 
             target_ws = target_kg / ws_dir.name
-
-            # Handle linked (symlinked) workspaces
-            if ws_dir.is_symlink() and not copy_links:
-                report.workspaces_linked_skipped.append(ws_dir.name)
-                if not dry_run and not target_ws.exists() and not target_ws.is_symlink():
-                    link_target = os.readlink(str(ws_dir))
-                    os.symlink(link_target, str(target_ws))
-                    # Copy manifest entry to target
-                    source_manifest = load_links_manifest(source_kg)
-                    for lw in source_manifest.links:
-                        if lw.name == ws_dir.name:
-                            add_link(target_kg, lw)
-                            break
-                    report.workspaces_added.append(f"{ws_dir.name} (linked)")
-                continue
 
             if target_ws.exists():
                 # Conflict — copy as .incoming
