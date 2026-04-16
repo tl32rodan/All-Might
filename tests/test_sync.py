@@ -31,7 +31,7 @@ def sample_project(tmp_path):
     return tmp_path
 
 
-def _full_init(root, force=False):
+def _full_init(root, force=False, writable=False):
     """Run the full init sequence: ProjectInitializer + MemoryInitializer.
 
     Mirrors the logic in ``cli.py``: detect re-init before calling
@@ -40,7 +40,7 @@ def _full_init(root, force=False):
     scanner = ProjectScanner()
     manifest = scanner.scan(root)
     is_reinit = (root / ".allmight").is_dir() and not force
-    ProjectInitializer().initialize(manifest, force=force)
+    ProjectInitializer().initialize(manifest, force=force, writable=writable)
     MemoryInitializer().initialize(root, staging=is_reinit)
     return manifest
 
@@ -63,7 +63,7 @@ class TestFirstInit:
         assert not (sample_project / ".allmight" / "templates").exists()
 
     def test_first_init_writes_commands_directly(self, sample_project):
-        _full_init(sample_project)
+        _full_init(sample_project, writable=True)
         commands = sample_project / ".claude" / "commands"
         assert (commands / "search.md").exists()
         assert (commands / "enrich.md").exists()

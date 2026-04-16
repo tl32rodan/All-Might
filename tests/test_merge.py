@@ -387,3 +387,41 @@ class TestMergeInstallsSync:
 
         assert (target_project / ".claude" / "commands" / "sync.md").exists()
         assert (target_project / ".claude" / "skills" / "sync" / "SKILL.md").exists()
+
+
+# ======================================================================
+# Merge with Symlinks (from cloned projects)
+# ======================================================================
+
+
+class TestMergeWithSymlinks:
+    """Merging from a clone (source has symlinked workspaces)."""
+
+    def test_merge_from_clone_copies_actual_content(self, tmp_path, target_project, merger):
+        """When merging from a clone, shutil.copytree follows symlinks
+        and copies actual directory contents, not symlinks."""
+        import os
+
+        # Create "original" project with a real workspace
+        original = tmp_path / "original"
+        _make_allmight_project(
+            original, workspaces={"pll": {"rtl": ["./src"]}}
+        )
+
+        # Create "clone" project with symlinked workspace
+        clone = tmp_path / "clone"
+        _make_allmight_project(clone)
+        os.symlink(
+            str(original / "knowledge_graph" / "pll"),
+            str(clone / "knowledge_graph" / "pll"),
+        )
+
+        # Merge clone into target
+        _make_allmight_project(target_project)
+        merger.merge(source=clone, target=target_project)
+
+        # Target should have a real directory, not a symlink
+        pll = target_project / "knowledge_graph" / "pll"
+        assert pll.is_dir()
+        assert not pll.is_symlink()
+        assert (pll / "config.yaml").exists()

@@ -4,6 +4,7 @@ All-Might is an **agent harness**, not a CLI tool.  The CLI exists only
 for the one operation that cannot be agent-driven:
 
     allmight init [path]            — Bootstrap a workspace (includes memory)
+    allmight clone <source> [path]  — Clone an All-Might project (read-only)
     allmight memory init [path]     — Re-initialize agent memory subsystem
 
 Everything else is agent-driven through .claude/skills and commands.
@@ -35,11 +36,15 @@ def main():
 @click.argument("path", default=".", type=click.Path(exists=True))
 @click.option("--sos", is_flag=True, help="Enable SOS/EDA environment support")
 @click.option("--force", is_flag=True, help="Overwrite all files (ignore user customizations)")
-def init(path: str, sos: bool, force: bool):
+@click.option("--writable", is_flag=True, help="Full access mode: enable ingest, enrich, annotation")
+def init(path: str, sos: bool, force: bool, writable: bool):
     """Bootstrap a workspace with commands and agent memory.
 
     Scans the project, creates knowledge_graph/, injects
     .claude/commands, and initializes the L1/L2/L3 memory system.
+
+    Default mode is read-only (search only). Use --writable for full
+    access (ingest, enrich, annotate).
 
     On re-run (when .allmight/ exists), templates are staged to
     .allmight/templates/ instead of overwriting. Use --force to overwrite.
@@ -61,9 +66,11 @@ def init(path: str, sos: bool, force: bool):
     is_reinit = allmight_dir.is_dir() and not force
 
     initializer = ProjectInitializer()
-    initializer.initialize(manifest, force=force)
+    initializer.initialize(manifest, force=force, writable=writable)
 
     MemoryInitializer().initialize(root, staging=is_reinit)
+
+    mode_label = "writable" if writable else "read-only"
 
     if is_reinit:
         # Count staged files
@@ -75,18 +82,59 @@ def init(path: str, sos: bool, force: bool):
         click.echo("  Run /sync in your agent to merge with your customizations.")
         click.echo("  Or run 'allmight init --force' to overwrite everything.")
     else:
-        click.echo(f"All-Might! Project '{manifest.name}' initialized.")
+        click.echo(f"All-Might! Project '{manifest.name}' initialized ({mode_label}).")
         click.echo(f"  Languages: {', '.join(manifest.languages) or 'none detected'}")
         click.echo(f"  Corpora:   {len(manifest.indices)}")
         click.echo(f"  Memory:    L1 (MEMORY.md) + L2 (understanding/) + L3 (journal/)")
         click.echo("")
         click.echo("What's next:")
         click.echo("  1. Open this folder in Claude Code or OpenCode")
-        click.echo("  2. Run /ingest to build the search index")
-        click.echo("  3. Run /search \"<query>\" to explore your codebase")
-        click.echo("  4. Run /enrich to annotate symbols as you learn")
+        if writable:
+            click.echo("  2. Run /ingest to build the search index")
+            click.echo("  3. Run /search \"<query>\" to explore your codebase")
+            click.echo("  4. Run /enrich to annotate symbols as you learn")
+        else:
+            click.echo("  2. Run /search \"<query>\" to explore the codebase")
         click.echo("")
         click.echo("All-Might skills auto-load — just start asking questions.")
+
+
+# ------------------------------------------------------------------
+# Clone
+# ------------------------------------------------------------------
+
+@main.command()
+@click.argument("source", type=click.Path(exists=True))
+@click.argument("path", default=".", type=click.Path())
+def clone(source: str, path: str):
+    """Clone an existing All-Might project (read-only).
+
+    Creates a read-only clone where knowledge_graph/ workspaces are
+    symlinks to the source project. Memory is fresh (new L1/L2/L3).
+
+    The clone can search the source's corpora but cannot ingest or
+    enrich. File-system permissions control write access.
+    """
+    from pathlib import Path as P
+
+    from .clone.cloner import ProjectCloner
+
+    source_path = P(source).resolve()
+    target_path = P(path).resolve()
+
+    cloner = ProjectCloner()
+    report = cloner.clone(source_path, target_path)
+
+    click.echo(f"All-Might! Cloned from '{source_path.name}' (read-only).")
+    if report.workspaces_linked:
+        click.echo(f"  Workspaces: {', '.join(report.workspaces_linked)}")
+    click.echo(f"  Memory:     L1 (MEMORY.md) + L2 (understanding/) + L3 (journal/)")
+    click.echo("")
+    click.echo("What's next:")
+    click.echo("  1. Open this folder in Claude Code or OpenCode")
+    click.echo("  2. Run /search \"<query>\" to explore the codebase")
+    click.echo("")
+    click.echo("All-Might skills auto-load — just start asking questions.")
 
 
 # ------------------------------------------------------------------
