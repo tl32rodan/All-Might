@@ -64,7 +64,6 @@ class TestProjectInitializer:
         initializer.initialize(manifest, smak_path=None)
 
         assert (sample_project / "knowledge_graph").is_dir()
-        assert (sample_project / "enrichment" / "tracker.yaml").exists()
 
     def test_creates_knowledge_graph_dir(self, sample_project):
         """knowledge_graph/ is created — SMAK workspaces live here."""
@@ -109,11 +108,11 @@ class TestProjectInitializer:
         initializer.initialize(manifest, smak_path=None)
 
         commands_dir = sample_project / ".claude" / "commands"
-        # Simplified command set: 4 core commands only
+        # Core commands: search, enrich, ingest
         assert (commands_dir / "search.md").exists()
         assert (commands_dir / "enrich.md").exists()
         assert (commands_dir / "ingest.md").exists()
-        assert (commands_dir / "status.md").exists()
+        assert not (commands_dir / "status.md").exists()
         # Old commands should NOT exist
         assert not (commands_dir / "explain.md").exists()
         assert not (commands_dir / "power-level.md").exists()
@@ -130,7 +129,7 @@ class TestProjectInitializer:
         assert claude_md.exists()
         content = claude_md.read_text()
         assert "ALL-MIGHT" in content
-        assert "/status" in content
+        assert "/search" in content
 
     def test_one_for_all_uses_allmight_commands(self, sample_project):
         """One For All references All-Might commands and teaches smak CLI."""

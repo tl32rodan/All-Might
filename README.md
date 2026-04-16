@@ -46,8 +46,6 @@ Then open the folder in **Claude Code** or **OpenCode**.
 >
 > "Link the login function to its test file"
 >
-> "What's the annotation coverage so far?"
-
 Each annotation makes future searches and questions more useful.
 
 ### Remember things (if memory enabled)
@@ -65,9 +63,7 @@ Each annotation makes future searches and questions more useful.
 | **First time** | "Run /ingest to build the search index" |
 | **Exploring** | Ask questions about the code |
 | **Agent learns something** | "Annotate this with what you just learned" |
-| **Check progress** | "Show me the status" |
 | **After big changes** | "Re-run /ingest" |
-| **Weekly (memory)** | "Consolidate recent sessions" |
 
 Everything else is automatic.
 
@@ -81,10 +77,9 @@ natural language — it knows what to do).
 | `/search` | "Search for ..." |
 | `/enrich` | "Annotate this symbol" |
 | `/ingest` | "Build the search index" |
-| `/status` | "How healthy is the knowledge graph?" |
 | `/remember` | "Remember that ..." |
 | `/recall` | "What do you know about ...?" |
-| `/consolidate` | "Turn recent session notes into lasting knowledge" |
+| `/reflect` | "Review and tidy up what you've learned" |
 
 ## Glossary
 
@@ -93,9 +88,7 @@ natural language — it knows what to do).
 | **Knowledge graph** | The accumulated understanding: code annotations + their connections |
 | **Annotation** (enrichment) | A note describing what a function/class does and what it relates to |
 | **Corpus** | A searchable index of your source code, built by `/ingest` |
-| **Power Level** | Percentage of code symbols that have been annotated |
 | **Memory** | Agent's persistent knowledge across sessions (preferences, decisions, facts) |
-| **Consolidation** | Turning raw session notes into lasting facts |
 
 ## Compatibility
 

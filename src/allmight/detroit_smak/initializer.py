@@ -10,10 +10,7 @@ Takes a ProjectManifest from the Scanner and generates:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
-
-import yaml
 
 from ..core.domain import ProjectManifest
 
@@ -53,31 +50,13 @@ class ProjectInitializer:
         self._create_opencode_compat(root)
 
     def _create_metadata(self, root: Path, manifest: ProjectManifest) -> None:
-        """Create enrichment/, knowledge_graph/ at the project root.
+        """Create knowledge_graph/ at the project root.
 
         Note: config.yaml is NOT created here — it belongs to SMAK workspaces
         under knowledge_graph/*/config.yaml, not the All-Might project root.
         """
         # knowledge_graph/ — workspace container (SMAK workspaces live here)
         (root / "knowledge_graph").mkdir(exist_ok=True)
-
-        # enrichment/tracker.yaml — initial Power Level (all 0%)
-        enrichment_dir = root / "enrichment"
-        enrichment_dir.mkdir(exist_ok=True)
-        tracker = {
-            "power_level": {
-                "total_symbols": 0,
-                "enriched_symbols": 0,
-                "coverage_pct": 0.0,
-                "by_index": {},
-                "total_files": 0,
-                "files_with_sidecars": 0,
-                "total_relations": 0,
-            },
-            "history": [],
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-        _write_yaml(enrichment_dir / "tracker.yaml", tracker)
 
     def _install_smak_skills(
         self,
@@ -269,47 +248,6 @@ smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code
 - List available corpora: `smak describe --config knowledge_graph/<workspace>/config.yaml --json`
 """)
 
-        (commands_dir / "status.md").write_text("""\
-Show the knowledge graph coverage and system health.
-
-## How to execute
-
-1. Scan all sidecar YAML files (`.*.sidecar.yaml`) across all paths
-   defined in each workspace's `config.yaml` indices.
-2. For each sidecar, count symbols and check which have non-empty `intent`.
-3. Calculate coverage: `enriched_symbols / total_symbols * 100`.
-4. Read `enrichment/tracker.yaml` for historical data.
-5. If `memory/config.yaml` exists (memory system enabled), also report:
-   - Working memory: count words in `memory/working/MEMORY.md`
-   - Episodic memory: count files in `memory/episodes/`
-   - Semantic memory: count files in `memory/semantic/`
-
-## What to report
-
-```
-Power Level: XX.X%
-  source_code: XX.X% (N/M symbols enriched)
-  tests:       XX.X% (N/M symbols enriched)
-  Total relations: N
-
-Memory (if enabled):
-  Episodes: N total, M unconsolidated
-  Facts: N total, avg confidence X.XX
-```
-
-## When to run
-
-- After enrichment work to see progress
-- Periodically to track coverage trends
-- When the user asks "how healthy is the knowledge graph?"
-
-## After checking status
-
-- If coverage is low, prioritize `/enrich` on entry points
-- If many episodes are unconsolidated, suggest `/consolidate`
-- Update `enrichment/tracker.yaml` with the new snapshot
-""")
-
     def _update_claude_md(self, root: Path, manifest: ProjectManifest) -> None:
         """Append All-Might baseline instructions to CLAUDE.md at project root."""
         claude_md = root / "CLAUDE.md"
@@ -328,7 +266,6 @@ code by meaning, annotate what it learns, and remember across sessions.
 | `/search <query>` | Search code by meaning (not just keywords) |
 | `/enrich` | Annotate a symbol — record what it does and what it relates to |
 | `/ingest` | Build or rebuild the search index from source files |
-| `/status` | Show how much of the codebase has been annotated |
 
 ### Concepts
 
@@ -337,7 +274,6 @@ code by meaning, annotate what it learns, and remember across sessions.
   Only the vector index (in `knowledge_graph/<workspace>/store/`) is local.
 - **Annotation** = a note on a code symbol (function, class) describing its
   purpose and connections. Stored in `.sidecar.yaml` files beside the source code.
-- **Power Level** = percentage of symbols that have annotations. Higher = better.
 
 ### How to learn the details
 
@@ -350,7 +286,6 @@ sidecar file format, and troubleshooting.
 1. `/ingest` — build the search index (first time)
 2. `/search "query"` — explore the codebase
 3. `/enrich` — annotate symbols as you learn them
-4. `/status` — track progress
 """
 
         if claude_md.exists():
@@ -565,14 +500,12 @@ symbols:
 | `/search <query>` | Search the codebase semantically |
 | `/enrich` | Annotate a symbol with intent and relations |
 | `/ingest` | Rebuild the search corpus from source files |
-| `/status` | Show enrichment coverage and system health |
 
 ## Getting Started
 
 1. `/ingest` — build the search index (first time setup)
 2. `/search "query"` — explore the codebase
 3. `/enrich` — annotate symbols as you learn them
-4. `/status` — track enrichment progress
 """
 
     def _enrichment_skill_body(self) -> str:
@@ -664,10 +597,7 @@ A symbol UID is: `<relative_file_path>::<symbol_name>`
 | Command | When to use |
 |---------|-------------|
 | `/search <query>` | Find symbols to enrich |
-| `/explain <uid>` | Check existing enrichment for a symbol |
 | `/enrich` | Add intent and/or relations |
-| `/power-level` | Check overall enrichment progress |
-| `/graph-report` | See which areas need attention |
 
 ## Priority Guidelines
 
@@ -688,10 +618,3 @@ Don't bother enriching:
 - Intent should answer "what does this do and **why**"
 - Relations should capture **meaningful** connections, not trivial ones
 """
-
-
-def _write_yaml(path: Path, data: dict) -> None:
-    """Write a YAML file with consistent formatting."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)

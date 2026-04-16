@@ -47,7 +47,7 @@ class TestCommandContent:
     def test_commands_are_thick_guides(self, project_root):
         """Each command has 'How to execute' and 'What to expect'."""
         cmds = project_root / ".claude" / "commands"
-        for cmd_name in ("search.md", "enrich.md", "ingest.md", "status.md"):
+        for cmd_name in ("search.md", "enrich.md", "ingest.md"):
             content = (cmds / cmd_name).read_text()
             assert "How to execute" in content or "## How" in content, f"{cmd_name} missing HOW section"
             assert "What to expect" in content or "## What" in content, f"{cmd_name} missing WHAT section"
@@ -88,4 +88,3 @@ class TestClaudeMdContent:
         assert "/search" in content
         assert "/enrich" in content
         assert "/ingest" in content
-        assert "/status" in content

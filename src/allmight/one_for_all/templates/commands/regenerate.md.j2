@@ -1,15 +1,11 @@
 Regenerate the One For All skill with the latest project state.
 
-1. Read `config.yaml` for project configuration.
-2. Read `{{ smak_config_path }}` for corpus definitions.
-3. Scan all sidecar YAML files to find enriched symbols.
-4. Calculate current Power Level.
-5. Regenerate `.claude/skills/one-for-all/SKILL.md` with:
+1. Read `{{ smak_config_path }}` for corpus definitions.
+2. Scan all sidecar YAML files to find enriched symbols.
+3. Regenerate `.claude/skills/one-for-all/SKILL.md` with:
    - Updated project overview
    - Current index reference with descriptions
    - Key enriched symbols summary (top symbols by relation count)
-   - Current Power Level metrics
    - Updated architecture notes from high-coverage areas
-6. Update `enrichment/tracker.yaml` with new metrics.
 
 Report what changed in the regenerated skill.

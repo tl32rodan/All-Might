@@ -45,11 +45,8 @@ For each workspace in the registry:
 
 1. **Read `.claude/CLAUDE.md`** — what domain knowledge is documented?
 2. **Read `.claude/skills/`** — any domain-specific skills?
-3. **Check enrichment health** — run `allmight power-level <workspace>` or read
-   `workspaces/<name>/enrichment/tracker.yaml` to see:
-   - Coverage percentage (what fraction of symbols have sidecar annotations)
-   - History (is coverage trending up or stagnating?)
-   - Last enrichment date
+3. **Check enrichment state** — scan sidecar files in the workspace to see
+   how many symbols have intent annotations
 
 ### Phase 2: Analyze
 
@@ -121,17 +118,6 @@ Present findings as a structured report:
 
 **IMPORTANT**: Always ask for user approval before modifying hub CLAUDE.md or
 propagating knowledge to workspaces.  Present the diff and explain why.
-
-## Hub-Level Power Tracking
-
-Aggregate power level across all workspaces:
-
-| Metric | How to compute |
-|--------|---------------|
-| **Hub coverage** | Average power level across all workspaces |
-| **Weakest workspace** | Workspace with lowest power level |
-| **Knowledge density** | Total `.claude/` entries across all workspaces |
-| **Coverage trend** | Compare current vs. last audit |
 
 ## What This Skill Does NOT Do
 

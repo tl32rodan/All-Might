@@ -79,7 +79,6 @@ class TestOneForAllGenerator:
         assert "One For All" in content
         assert "source_code" in content
         assert "No symbols enriched yet" in content
-        assert "0.0%" in content
 
     def test_generate_with_sidecars(self, project_with_sidecars):
         """Test that enriched symbols appear in generated SKILL.md."""
@@ -122,15 +121,6 @@ class TestOneForAllGenerator:
         assert skill_path.exists()
         assert "one-for-all" in skill_path.read_text()
 
-    def test_power_level_calculation(self, project_with_sidecars):
-        """Test that power level is correctly calculated from sidecars."""
-        config_path = project_with_sidecars / "config.yaml"
-        generator = OneForAllGenerator()
-        content = generator.generate(config_path)
-
-        # 2 symbols total, 2 with intent = 100%
-        assert "100.0%" in content
-
     def test_uses_allmight_commands(self, initialized_project):
         """Test that One For All references All-Might commands, not SMAK MCP."""
         config_path = initialized_project / "config.yaml"
@@ -141,7 +131,6 @@ class TestOneForAllGenerator:
         assert "/search" in content
         assert "/enrich" in content
         assert "/ingest" in content
-        assert "/status" in content
 
     def test_idempotent_regeneration(self, initialized_project):
         """Test that regenerating twice produces consistent results."""

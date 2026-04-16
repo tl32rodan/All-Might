@@ -54,18 +54,13 @@ class TestProjectInit:
         assert (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").exists()
 
     def test_creates_core_commands(self, project_root):
-        """4 core commands: search.md, enrich.md, ingest.md, status.md."""
+        """3 core commands: search.md, enrich.md, ingest.md."""
         _init(project_root)
         cmds = project_root / ".claude" / "commands"
         assert (cmds / "search.md").exists()
         assert (cmds / "enrich.md").exists()
         assert (cmds / "ingest.md").exists()
-        assert (cmds / "status.md").exists()
-
-    def test_creates_enrichment_tracker(self, project_root):
-        """enrichment/tracker.yaml created at project level (shared)."""
-        _init(project_root)
-        assert (project_root / "enrichment" / "tracker.yaml").exists()
+        assert not (cmds / "status.md").exists()
 
     def test_creates_knowledge_graph_dir(self, project_root):
         """knowledge_graph/ directory created."""

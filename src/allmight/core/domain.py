@@ -56,34 +56,6 @@ class SymbolInfo:
     relation_count: int = 0
 
 
-@dataclass
-class PowerLevel:
-    """Knowledge graph maturity metrics — the project's 戦力値.
-
-    Tracks how much of the codebase has been enriched with
-    human-curated intent and relations.
-    """
-
-    total_symbols: int = 0
-    enriched_symbols: int = 0
-    coverage_pct: float = 0.0
-    by_index: dict[str, float] = field(default_factory=dict)
-    total_files: int = 0
-    files_with_sidecars: int = 0
-    total_relations: int = 0
-    timestamp: str = ""
-
-
-@dataclass
-class EnrichmentTask:
-    """A single enrichment work item — a symbol that needs attention."""
-
-    file_path: str
-    symbol: str
-    index: str
-    reason: str  # e.g. "missing_intent", "no_relations", "stale"
-    priority: float = 0.0
-
 
 @dataclass
 class GraphNode:

@@ -16,7 +16,7 @@ All-Might/                          ← This repo (the framework)
 │   ├── bridge/                     ← SMAK CLI subprocess wrapper (internal)
 │   ├── config/                     ← config.yaml manager
 │   ├── core/                       ← Domain models + protocols
-│   ├── enrichment/                 ← Power Level tracker + planner
+│   ├── enrichment/                 ← Enrichment policy (advisory)
 │   ├── one_for_all/                ← Skill template generator
 │   ├── hub/                        ← Multi-workspace hub templates
 │   └── cli.py                      ← CLI entry point (init only)
@@ -63,14 +63,11 @@ my-chip-project/                          ← One All-Might project
 │       ├── search.md                     ← /search operational guide
 │       ├── enrich.md                     ← /enrich operational guide
 │       ├── ingest.md                     ← /ingest operational guide
-│       ├── status.md                     ← /status operational guide
 │       ├── remember.md                   ← /remember (memory)
 │       └── recall.md                     ← /recall (memory)
 │
 ├── MEMORY.md                             ← L1: project map + user prefs (hook-loaded)
 │
-├── enrichment/                           ← Shared: annotation coverage across ALL workspaces
-│   └── tracker.yaml
 │
 ├── memory/                               ← Shared: agent memory across ALL workspaces
 │   ├── config.yaml                       ← Memory settings
@@ -109,7 +106,7 @@ the All-Might project. Only the vector index (`store/`) and SMAK config
 | **Skills/Commands** | Agent | Low-level HOW | SMAK CLI commands, YAML schemas, troubleshooting |
 | **README.md** | Human | Conversational | "Tell the agent to search for..." |
 
-- **CLAUDE.md** knows about `/search`, `/enrich`, `/status` but NOT about `smak search --config ...`
+- **CLAUDE.md** knows about `/search`, `/enrich` but NOT about `smak search --config ...`
 - **Skills** know about SMAK internals but never expose them to the human user
 - **README.md** doesn't mention SMAK, sidecars, or YAML — only natural-language examples
 
@@ -142,7 +139,6 @@ by their directory structure, not by a registry file.
 | Component | Scope | Why |
 |-----------|-------|-----|
 | `MEMORY.md` | Project-wide | L1 cache: project map, user prefs (hook-loaded) |
-| `enrichment/` | Project-wide | Annotation coverage spans all workspaces |
 | `memory/understanding/` | Project-wide | L2: per-corpus knowledge (agent reads/writes) |
 | `memory/journal/` | Project-wide | L3: searchable log (SMAK indexed) |
 | `.claude/skills/` | Project-wide | One skill teaches agent about all workspaces |
