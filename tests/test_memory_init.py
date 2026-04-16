@@ -185,11 +185,19 @@ class TestMemoryInitializer:
         assert agents_md.is_symlink()
         assert agents_md.resolve() == claude_md.resolve()
 
+    def test_opencode_dotdir_created(self, project_root):
+        """.opencode/ directory created with symlinks into .claude/."""
+        MemoryInitializer().initialize(project_root)
+        assert (project_root / ".opencode").is_dir()
+        assert (project_root / ".opencode" / "skills").is_symlink()
+        assert (project_root / ".opencode" / "commands").is_symlink()
+
     def test_opencode_compat_idempotent(self, project_root):
         init = MemoryInitializer()
         init.initialize(project_root)
         init.initialize(project_root)
         assert (project_root / "AGENTS.md").is_symlink()
+        assert (project_root / ".opencode").is_dir()
 
 
 class TestMemoryConfigManager:

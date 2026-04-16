@@ -368,27 +368,46 @@ sidecar file format, and troubleshooting.
     def _create_opencode_compat(self, root: Path) -> None:
         """Create OpenCode-compatible symlinks.
 
-        OpenCode prefers ``AGENTS.md`` over ``CLAUDE.md`` as its rules
-        file.  We create a single symlink so both tools read the same
-        content.
+        OpenCode prefers ``AGENTS.md`` over ``CLAUDE.md`` and looks in
+        ``.opencode/`` alongside ``.claude/``.  We create symlinks so
+        that a single set of files serves both tools.
 
-        We do **NOT** create a ``.opencode/`` directory — that is
-        OpenCode's own runtime directory (node_modules, plugins, etc.)
-        and pre-creating it interferes with OpenCode's initialisation.
-        OpenCode already reads ``.claude/skills/`` and ``.claude/CLAUDE.md``
-        natively as a compatibility fallback, so no directory-level
-        symlinks are needed.
+        Symlinks created::
 
-        Symlink created::
+            AGENTS.md            → CLAUDE.md
+            .opencode/skills/    → .claude/skills/
+            .opencode/commands/  → .claude/commands/
 
-            AGENTS.md → CLAUDE.md
+        OpenCode also reads ``.claude/`` natively as a compatibility
+        fallback, so the symlinks are an optimisation, not a hard
+        requirement.
         """
         import os
 
+        # --- AGENTS.md → CLAUDE.md ---
         agents_md = root / "AGENTS.md"
         claude_md = root / "CLAUDE.md"
         if claude_md.exists() and not agents_md.exists():
             os.symlink("CLAUDE.md", str(agents_md))
+
+        # --- .opencode/ directory with symlinks into .claude/ ---
+        opencode_dir = root / ".opencode"
+        claude_dir = root / ".claude"
+
+        if not claude_dir.is_dir():
+            return  # Nothing to link to
+
+        opencode_dir.mkdir(exist_ok=True)
+
+        for subdir in ("skills", "commands"):
+            source = claude_dir / subdir
+            target = opencode_dir / subdir
+            if source.is_dir() and not target.exists():
+                # Relative symlink: .opencode/skills → ../.claude/skills
+                os.symlink(
+                    os.path.relpath(str(source), str(opencode_dir)),
+                    str(target),
+                )
 
     def _write_skill(
         self,

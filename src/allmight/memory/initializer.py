@@ -418,10 +418,29 @@ The `one-for-all` skill has the complete operational guide.
     # ------------------------------------------------------------------
 
     def _refresh_opencode_compat(self, root: Path) -> None:
-        """Ensure AGENTS.md symlink exists after memory init."""
+        """Ensure OpenCode compatibility symlinks exist after memory init."""
         import os
 
+        # --- AGENTS.md → CLAUDE.md ---
         agents_md = root / "AGENTS.md"
         claude_md = root / "CLAUDE.md"
         if claude_md.exists() and not agents_md.exists():
             os.symlink("CLAUDE.md", str(agents_md))
+
+        # --- .opencode/ directory with symlinks into .claude/ ---
+        opencode_dir = root / ".opencode"
+        claude_dir = root / ".claude"
+
+        if not claude_dir.is_dir():
+            return
+
+        opencode_dir.mkdir(exist_ok=True)
+
+        for subdir in ("skills", "commands"):
+            source = claude_dir / subdir
+            target = opencode_dir / subdir
+            if source.is_dir() and not target.exists():
+                os.symlink(
+                    os.path.relpath(str(source), str(opencode_dir)),
+                    str(target),
+                )

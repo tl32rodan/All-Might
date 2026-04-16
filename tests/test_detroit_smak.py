@@ -292,13 +292,35 @@ class TestProjectInitializer:
         assert agents_md.is_symlink()
         assert agents_md.resolve() == claude_md.resolve()
 
-    def test_opencode_no_dotdir_created(self, sample_project):
-        """.opencode/ should NOT be created — it is OpenCode's runtime dir."""
+    def test_opencode_dotdir_created(self, sample_project):
+        """.opencode/ directory created with symlinks into .claude/."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
         ProjectInitializer().initialize(manifest)
 
-        assert not (sample_project / ".opencode").exists()
+        assert (sample_project / ".opencode").is_dir()
+
+    def test_opencode_skills_symlink(self, sample_project):
+        """.opencode/skills/ symlinks to .claude/skills/."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        ProjectInitializer().initialize(manifest)
+
+        target = sample_project / ".opencode" / "skills"
+        source = sample_project / ".claude" / "skills"
+        assert target.is_symlink()
+        assert target.resolve() == source.resolve()
+
+    def test_opencode_commands_symlink(self, sample_project):
+        """.opencode/commands/ symlinks to .claude/commands/."""
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        ProjectInitializer().initialize(manifest)
+
+        target = sample_project / ".opencode" / "commands"
+        source = sample_project / ".claude" / "commands"
+        assert target.is_symlink()
+        assert target.resolve() == source.resolve()
 
     def test_opencode_compat_idempotent(self, sample_project):
         """Running init twice should not duplicate or break symlinks."""
@@ -309,4 +331,6 @@ class TestProjectInitializer:
         init.initialize(manifest)
 
         assert (sample_project / "AGENTS.md").is_symlink()
-        assert not (sample_project / ".opencode").exists()
+        assert (sample_project / ".opencode").is_dir()
+        assert (sample_project / ".opencode" / "skills").is_symlink()
+        assert (sample_project / ".opencode" / "commands").is_symlink()
