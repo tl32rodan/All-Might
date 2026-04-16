@@ -32,6 +32,11 @@ class MemoryInitializer:
         (root / "memory" / "journal").mkdir(parents=True, exist_ok=True)
         (root / "memory" / "store").mkdir(parents=True, exist_ok=True)
 
+        # 4b. Create usage.log for feedback loop
+        usage_log = root / "memory" / "usage.log"
+        if not usage_log.exists():
+            usage_log.write_text("")
+
         # 5. Generate hook scripts (nudge + L1 loader)
         self._generate_hooks(root)
 
@@ -213,6 +218,24 @@ Searched via SMAK vector index (`memory/store/`).
 | `/recall` | Search L3 journal via SMAK |
 | `/reflect` | End-of-session review: tidy L1, update L2, log to L3 |
 
+### Feedback Loop (`memory/usage.log`)
+
+Every `/remember`, `/recall`, and `/reflect` logs a line to `memory/usage.log`:
+
+```
+2026-04-16T10:30:00Z recall "auth patterns" results=3 used=2
+2026-04-16T10:35:00Z remember workspace=pll "lock FSM uses 3 states"
+2026-04-16T11:00:00Z reflect insights=3
+```
+
+During `/reflect`, you read this log and generate insights:
+- Topics recalled often → promote to L2 understanding
+- Recalls with 0 results → knowledge gaps to fill
+- Workspaces remembered often → verify L2 is up to date
+- Sessions with no enrichment → missed opportunities?
+
+This closes the loop: **use → measure → improve**.
+
 ### Memory Nudge (Stop Hook)
 
 A Stop hook at `.claude/hooks/memory-nudge.sh` fires after every agent
@@ -285,8 +308,13 @@ active goal), update `MEMORY.md` at the project root directly.
 
 ## After remembering
 
-Run `smak ingest --config memory/smak_config.yaml` periodically to
-re-index the journal for `/recall` searches.
+1. Log what you remembered to `memory/usage.log`:
+```
+<ISO-8601> remember workspace=<name> "<brief description>"
+```
+
+2. Run `smak ingest --config memory/smak_config.yaml` periodically to
+   re-index the journal for `/recall` searches.
 
 ## What NOT to remember
 
@@ -316,6 +344,13 @@ Results from `memory/journal/` text files. Each result contains:
 - When facing a problem that seems familiar
 - When starting work in an area visited in past sessions
 - When the user asks "did we discuss X before?"
+
+## After recalling
+
+Log the recall to `memory/usage.log`:
+```
+<ISO-8601> recall "<query>" results=<N> used=<how many were relevant>
+```
 
 ## Also check
 
@@ -362,11 +397,52 @@ Summarize what you learned this session as a journal entry in
 <Summary of discoveries, decisions, and insights.>
 ```
 
-### 4. Re-index (if needed)
+### 4. Usage Review — Feedback Loop
+
+Read `memory/usage.log` and analyze this session's activity:
+
+- **Recalls**: How many `/recall` searches? Were results useful (`used` > 0)?
+  - If a topic was recalled often → consider promoting it to L2 understanding
+  - If recalls returned 0 results → knowledge gap, write it to journal
+- **Remembers**: What categories? Are you remembering broadly or narrowly?
+  - All in one workspace → good depth
+  - Scattered across many → check if L1 project map needs updating
+- **Enrichments**: Did you `/enrich` any symbols this session?
+  - If you read code but didn't enrich → were there opportunities missed?
+- **Stale L2**: List `memory/understanding/*.md` files. Any not loaded this
+  session that haven't been updated in a while? Flag them.
+
+### 5. Generate Insights
+
+Based on your usage review, write 2-3 actionable insights to
+`memory/journal/general/` as a reflection entry:
+
+```markdown
+# <date> — Reflection Insights
+
+## Usage Summary
+- Recalls: N (M useful)
+- Remembers: N (topics: ...)
+- Enrichments: N symbols
+
+## Insights
+- <what worked well>
+- <what could improve>
+- <knowledge gaps discovered>
+```
+
+### 6. Re-index (if needed)
 
 If you added journal entries, re-index for `/recall`:
 ```bash
 smak ingest --config memory/smak_config.yaml
+```
+
+### 7. Log the reflection
+
+Append to `memory/usage.log`:
+```
+<ISO-8601> reflect insights=<N>
 ```
 
 ## When to reflect
