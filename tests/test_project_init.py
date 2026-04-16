@@ -26,6 +26,14 @@ def _init(root):
     ProjectInitializer().initialize(manifest)
 
 
+def _init_with_memory(root):
+    """Mirrors what `allmight init` does: project init + memory init."""
+    from allmight.memory.initializer import MemoryInitializer
+
+    _init(root)
+    MemoryInitializer().initialize(root)
+
+
 class TestProjectInit:
 
     def test_creates_claude_md(self, project_root):
@@ -96,30 +104,25 @@ class TestProjectInit:
         assert (project_root / "knowledge_graph").is_dir()
 
 
-class TestProjectInitWithMemory:
+class TestProjectInitIncludesMemory:
+    """Memory is always initialized as part of `allmight init`."""
 
     def test_creates_memory_dir(self, project_root):
-        """--with-memory creates memory/ at project level."""
-        _init(project_root)
-        from allmight.memory.initializer import MemoryInitializer
-        MemoryInitializer().initialize(project_root)
+        """init creates memory/ at project level."""
+        _init_with_memory(project_root)
         assert (project_root / "memory").is_dir()
         assert (project_root / "MEMORY.md").exists()
 
     def test_creates_memory_commands(self, project_root):
-        """--with-memory adds remember.md and recall.md."""
-        _init(project_root)
-        from allmight.memory.initializer import MemoryInitializer
-        MemoryInitializer().initialize(project_root)
+        """init adds remember.md and recall.md."""
+        _init_with_memory(project_root)
         cmds = project_root / ".claude" / "commands"
         assert (cmds / "remember.md").exists()
         assert (cmds / "recall.md").exists()
 
     def test_appends_memory_to_skill(self, project_root):
-        """--with-memory appends memory section to one-for-all SKILL.md."""
-        _init(project_root)
-        from allmight.memory.initializer import MemoryInitializer
-        MemoryInitializer().initialize(project_root)
+        """init appends memory section to one-for-all SKILL.md."""
+        _init_with_memory(project_root)
         skill = (project_root / ".claude" / "skills" / "one-for-all" / "SKILL.md").read_text()
         assert "Memory" in skill
         assert "/remember" in skill
@@ -127,9 +130,7 @@ class TestProjectInitWithMemory:
 
     def test_memory_not_inside_knowledge_graph(self, project_root):
         """memory/ lives at project root, NOT inside knowledge_graph/."""
-        _init(project_root)
-        from allmight.memory.initializer import MemoryInitializer
-        MemoryInitializer().initialize(project_root)
+        _init_with_memory(project_root)
         assert (project_root / "memory").is_dir()
         # Should NOT be per-workspace
         for ws_dir in (project_root / "knowledge_graph").iterdir():

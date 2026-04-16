@@ -157,9 +157,8 @@ The `allmight` CLI does ONE thing: `allmight init`.
 Everything else is agent-driven through skills and commands.
 
 ```
-allmight init .                  → creates the project structure
-allmight init . --with-memory    → also adds memory subsystem
-allmight memory init             → add memory to existing project
+allmight init .                  → creates the project structure (includes memory)
+allmight memory init             → re-initialize memory on existing project
 ```
 
 The agent calls `smak` CLI directly (taught by skills), NOT `allmight` wrappers.

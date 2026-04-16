@@ -25,8 +25,7 @@ frequently-used memories stick; forgotten ones fade naturally.
 ```bash
 pip install allmight
 cd /path/to/your/project
-allmight init .                # search + annotation
-allmight init . --with-memory  # + agent memory (recommended)
+allmight init .                # search + annotation + agent memory
 ```
 
 Then open the folder in **Claude Code** or **OpenCode**.

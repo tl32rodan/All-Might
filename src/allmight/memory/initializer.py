@@ -44,8 +44,11 @@ class MemoryInitializer:
         # 8. Update CLAUDE.md
         self._update_claude_md(root)
 
-        # 9. Refresh OpenCode compatibility symlinks
+        # 9. Refresh OpenCode compatibility (symlinks + opencode.json hooks)
         self._refresh_opencode_compat(root)
+
+        # 10. Generate opencode.json with hooks for OpenCode
+        self._generate_opencode_json(root)
 
     # ------------------------------------------------------------------
     # L1: MEMORY.md
@@ -416,6 +419,90 @@ The `one-for-all` skill has the complete operational guide.
     # ------------------------------------------------------------------
     # OpenCode compatibility
     # ------------------------------------------------------------------
+
+    def _generate_opencode_json(self, root: Path) -> None:
+        """Generate opencode.json with hooks for OpenCode compatibility.
+
+        OpenCode's experimental config hooks support:
+        - ``session_completed`` — fires when a session ends (≈ Claude's Stop hook)
+        - ``file_edited`` — fires when files are edited
+
+        We configure ``session_completed`` to run the memory-nudge script.
+
+        For the L1 loader (MEMORY.md injection), OpenCode requires a plugin
+        since config hooks don't support a ``user_prompt_submit`` equivalent.
+        We generate a minimal plugin at ``.opencode/plugins/memory-load.ts``.
+        """
+        import json
+
+        opencode_json = root / "opencode.json"
+
+        # Build the config — merge with existing if present
+        if opencode_json.exists():
+            try:
+                config = json.loads(opencode_json.read_text())
+            except (json.JSONDecodeError, OSError):
+                config = {}
+        else:
+            config = {}
+
+        # Ensure experimental.hook structure exists
+        experimental = config.setdefault("experimental", {})
+        hook = experimental.setdefault("hook", {})
+
+        # session_completed → memory-nudge.sh
+        hook["session_completed"] = [
+            {
+                "command": ["./.claude/hooks/memory-nudge.sh"],
+            }
+        ]
+
+        opencode_json.write_text(json.dumps(config, indent=2) + "\n")
+
+        # Generate L1 loader plugin for OpenCode
+        self._generate_opencode_memory_plugin(root)
+
+    def _generate_opencode_memory_plugin(self, root: Path) -> None:
+        """Generate OpenCode plugin that injects MEMORY.md into context.
+
+        OpenCode plugins are TypeScript files in ``.opencode/plugins/``.
+        The ``chat.message`` hook intercepts messages before they reach
+        the LLM, allowing us to prepend MEMORY.md content.
+        """
+        plugins_dir = root / ".opencode" / "plugins"
+        plugins_dir.mkdir(parents=True, exist_ok=True)
+
+        plugin_file = plugins_dir / "memory-load.ts"
+        plugin_file.write_text("""\
+/**
+ * Memory L1 Loader — OpenCode plugin
+ *
+ * Injects MEMORY.md content into agent context on every message,
+ * equivalent to Claude Code's UserPromptSubmit hook.
+ */
+import { readFileSync, existsSync } from "fs";
+import { join } from "path";
+
+export default {
+  name: "memory-load",
+  "chat.message": async (message: any, context: any) => {
+    const memoryPath = join(process.cwd(), "MEMORY.md");
+    if (existsSync(memoryPath)) {
+      const content = readFileSync(memoryPath, "utf-8");
+      const prefix = [
+        "--- Project Memory (MEMORY.md) ---",
+        content,
+        "--- End Project Memory ---",
+        "",
+      ].join("\\n");
+      if (typeof message.content === "string") {
+        message.content = prefix + message.content;
+      }
+    }
+    return message;
+  },
+};
+""")
 
     def _refresh_opencode_compat(self, root: Path) -> None:
         """Ensure OpenCode compatibility symlinks exist after memory init."""

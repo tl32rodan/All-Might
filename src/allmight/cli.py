@@ -3,8 +3,8 @@
 All-Might is an **agent harness**, not a CLI tool.  The CLI exists only
 for the one operation that cannot be agent-driven:
 
-    allmight init [path]            — Bootstrap a workspace
-    allmight memory init [path]     — Add agent memory subsystem
+    allmight init [path]            — Bootstrap a workspace (includes memory)
+    allmight memory init [path]     — Re-initialize agent memory subsystem
 
 Everything else is agent-driven through .claude/skills and commands.
 The skills teach the agent how to call the underlying tools (smak CLI)
@@ -35,17 +35,17 @@ def main():
 @click.argument("path", default=".", type=click.Path(exists=True))
 @click.option("--smak-path", type=click.Path(exists=True), help="Path to SMAK installation (for skill copying)")
 @click.option("--sos", is_flag=True, help="Enable SOS/EDA environment support")
-@click.option("--with-memory", is_flag=True, help="Also initialize the agent memory subsystem")
-def init(path: str, smak_path: str | None, sos: bool, with_memory: bool):
-    """Bootstrap a workspace with skills and commands.
+def init(path: str, smak_path: str | None, sos: bool):
+    """Bootstrap a workspace with skills, commands, and agent memory.
 
-    Scans the project, creates config.yaml, and injects .claude/skills
-    and .claude/commands that teach the agent how to operate.
+    Scans the project, creates knowledge_graph/, injects .claude/skills
+    and .claude/commands, and initializes the L1/L2/L3 memory system.
     """
     from pathlib import Path as P
 
     from .detroit_smak.initializer import ProjectInitializer
     from .detroit_smak.scanner import ProjectScanner
+    from .memory.initializer import MemoryInitializer
 
     root = P(path).resolve()
     scanner = ProjectScanner()
@@ -58,15 +58,12 @@ def init(path: str, smak_path: str | None, sos: bool, with_memory: bool):
     smak = P(smak_path).resolve() if smak_path else None
     initializer.initialize(manifest, smak_path=smak)
 
+    MemoryInitializer().initialize(root)
+
     click.echo(f"All-Might! Project '{manifest.name}' initialized.")
     click.echo(f"  Languages: {', '.join(manifest.languages) or 'none detected'}")
     click.echo(f"  Corpora:   {len(manifest.indices)}")
-    if with_memory:
-        from .memory.initializer import MemoryInitializer
-
-        MemoryInitializer().initialize(root)
-        click.echo("  Memory:    agent memory system enabled")
-
+    click.echo(f"  Memory:    L1 (MEMORY.md) + L2 (understanding/) + L3 (journal/)")
     click.echo("")
     click.echo("What's next:")
     click.echo("  1. Open this folder in Claude Code or OpenCode")

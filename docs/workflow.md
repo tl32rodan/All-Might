@@ -7,7 +7,7 @@ Human                                Agent
 ──────                               ──────
 
 Phase 0: Bootstrap
-  allmight init [--with-memory]  →
+  allmight init .                →
   /ingest                       →
 
 Phase 1: Explore
