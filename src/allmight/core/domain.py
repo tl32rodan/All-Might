@@ -172,3 +172,22 @@ class MemoryConfig:
     """Configuration for the agent memory subsystem (L1/L2/L3)."""
 
     stores: dict[str, MemoryStoreSpec] = field(default_factory=_default_stores)
+
+
+# ---------------------------------------------------------------------------
+# Merge — combining knowledge bases from separate projects
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MergeReport:
+    """Result of merging one All-Might project into another."""
+
+    source: str  # source project path
+    timestamp: str  # ISO 8601
+    workspaces_added: list[str] = field(default_factory=list)
+    workspaces_conflicting: list[str] = field(default_factory=list)
+    memory_files_added: list[str] = field(default_factory=list)
+    memory_conflicts: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    action_needed: list[str] = field(default_factory=list)

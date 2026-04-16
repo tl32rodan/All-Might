@@ -35,11 +35,15 @@ def main():
 @click.argument("path", default=".", type=click.Path(exists=True))
 @click.option("--smak-path", type=click.Path(exists=True), help="Path to SMAK installation (for skill copying)")
 @click.option("--sos", is_flag=True, help="Enable SOS/EDA environment support")
-def init(path: str, smak_path: str | None, sos: bool):
+@click.option("--force", is_flag=True, help="Overwrite all files (ignore user customizations)")
+def init(path: str, smak_path: str | None, sos: bool, force: bool):
     """Bootstrap a workspace with skills, commands, and agent memory.
 
     Scans the project, creates knowledge_graph/, injects .claude/skills
     and .claude/commands, and initializes the L1/L2/L3 memory system.
+
+    On re-run (when .allmight/ exists), templates are staged to
+    .allmight/templates/ instead of overwriting. Use --force to overwrite.
     """
     from pathlib import Path as P
 
@@ -54,24 +58,90 @@ def init(path: str, smak_path: str | None, sos: bool):
     if sos:
         manifest.has_path_env = True
 
+    allmight_dir = root / ".allmight"
+    is_reinit = allmight_dir.is_dir() and not force
+
     initializer = ProjectInitializer()
     smak = P(smak_path).resolve() if smak_path else None
-    initializer.initialize(manifest, smak_path=smak)
+    initializer.initialize(manifest, smak_path=smak, force=force)
 
-    MemoryInitializer().initialize(root)
+    MemoryInitializer().initialize(root, staging=is_reinit)
 
-    click.echo(f"All-Might! Project '{manifest.name}' initialized.")
-    click.echo(f"  Languages: {', '.join(manifest.languages) or 'none detected'}")
-    click.echo(f"  Corpora:   {len(manifest.indices)}")
-    click.echo(f"  Memory:    L1 (MEMORY.md) + L2 (understanding/) + L3 (journal/)")
-    click.echo("")
-    click.echo("What's next:")
-    click.echo("  1. Open this folder in Claude Code or OpenCode")
-    click.echo("  2. Run /ingest to build the search index")
-    click.echo("  3. Run /search \"<query>\" to explore your codebase")
-    click.echo("  4. Run /enrich to annotate symbols as you learn")
-    click.echo("")
-    click.echo("All-Might skills auto-load — just start asking questions.")
+    if is_reinit:
+        # Count staged files
+        tpl_dir = root / ".allmight" / "templates"
+        file_count = sum(1 for _ in tpl_dir.rglob("*") if _.is_file()) if tpl_dir.exists() else 0
+        click.echo(f"All-Might! Project '{manifest.name}' — new templates staged.")
+        click.echo(f"  Templates:  .allmight/templates/ ({file_count} files)")
+        click.echo("")
+        click.echo("  Run /sync in your agent to merge with your customizations.")
+        click.echo("  Or run 'allmight init --force' to overwrite everything.")
+    else:
+        click.echo(f"All-Might! Project '{manifest.name}' initialized.")
+        click.echo(f"  Languages: {', '.join(manifest.languages) or 'none detected'}")
+        click.echo(f"  Corpora:   {len(manifest.indices)}")
+        click.echo(f"  Memory:    L1 (MEMORY.md) + L2 (understanding/) + L3 (journal/)")
+        click.echo("")
+        click.echo("What's next:")
+        click.echo("  1. Open this folder in Claude Code or OpenCode")
+        click.echo("  2. Run /ingest to build the search index")
+        click.echo("  3. Run /search \"<query>\" to explore your codebase")
+        click.echo("  4. Run /enrich to annotate symbols as you learn")
+        click.echo("")
+        click.echo("All-Might skills auto-load — just start asking questions.")
+
+
+# ------------------------------------------------------------------
+# Merge
+# ------------------------------------------------------------------
+
+@main.command()
+@click.argument("source", type=click.Path(exists=True))
+@click.option("--workspace", "-w", multiple=True, help="Only merge specific workspaces")
+@click.option("--dry-run", is_flag=True, help="Show what would be merged without copying")
+@click.option("--no-memory", is_flag=True, help="Skip memory merge")
+def merge(source: str, workspace: tuple[str, ...], dry_run: bool, no_memory: bool):
+    """Merge knowledge bases from another All-Might project.
+
+    Copies workspaces and memory from SOURCE into the current project.
+    Conflicts are staged for agent-driven resolution via /sync.
+    """
+    from pathlib import Path as P
+
+    from .merge.merger import ProjectMerger
+
+    source_path = P(source).resolve()
+    target_path = P(".").resolve()
+
+    merger = ProjectMerger()
+    ws_filter = list(workspace) if workspace else None
+
+    report = merger.merge(
+        source=source_path,
+        target=target_path,
+        workspaces=ws_filter,
+        dry_run=dry_run,
+        no_memory=no_memory,
+    )
+
+    prefix = "[DRY RUN] " if dry_run else ""
+    click.echo(f"{prefix}All-Might merge complete.")
+
+    if report.workspaces_added:
+        click.echo(f"  Workspaces added:      {', '.join(report.workspaces_added)}")
+    if report.workspaces_conflicting:
+        click.echo(f"  Workspaces conflicting: {', '.join(report.workspaces_conflicting)}")
+    if report.memory_files_added:
+        click.echo(f"  Memory files added:    {len(report.memory_files_added)}")
+    if report.memory_conflicts:
+        click.echo(f"  Memory conflicts:      {len(report.memory_conflicts)}")
+    if report.warnings:
+        click.echo(f"  Path warnings:         {len(report.warnings)}")
+
+    if report.action_needed:
+        click.echo("")
+        for action in report.action_needed:
+            click.echo(f"  → {action}")
 
 
 # ------------------------------------------------------------------
