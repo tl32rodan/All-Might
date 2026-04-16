@@ -39,6 +39,20 @@ SYNC_SKILL_BODY = """\
    - Never touch content outside the markers
 5. After all files are merged, delete `.allmight/templates/`
 
+### Mode-aware cleanup (after mode change)
+
+If `.allmight/mode` exists, check whether the project's access mode has changed:
+
+1. Read `.allmight/mode` to determine the current access mode (`read-only` or `writable`)
+2. If `.allmight/templates/remove.txt` exists:
+   - Read the list of command files to remove (one filename per line)
+   - Delete each listed file from `.claude/commands/`
+   - Delete `remove.txt` when done
+3. Verify only commands appropriate for the current mode remain:
+   - **read-only**: only `search.md` (remove `enrich.md`, `ingest.md` if present)
+   - **writable**: `search.md`, `enrich.md`, `ingest.md`
+4. Update the CLAUDE.md ALL-MIGHT section to match the staged `claude-md-section.md`
+
 ### Merge conflict resolution (after `allmight merge`)
 
 1. Read `.allmight/merge-report.yaml` for the merge summary

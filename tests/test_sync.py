@@ -287,3 +287,89 @@ class TestSyncSkillContent:
 
         content = (sample_project / ".claude" / "commands" / "sync.md").read_text()
         assert "sync" in content.lower()
+
+    def test_sync_skill_mentions_mode_cleanup(self, sample_project):
+        """Sync skill instructs agent to check .allmight/mode and remove
+        commands that don't belong to the current mode."""
+        _full_init(sample_project)
+        _full_init(sample_project)
+
+        content = (sample_project / ".claude" / "skills" / "sync" / "SKILL.md").read_text()
+        assert ".allmight/mode" in content
+
+
+# ======================================================================
+# Mode Transitions — re-init with different mode
+# ======================================================================
+
+
+class TestModeTransitions:
+    """Mode transition rules on re-init.
+
+    Legal:   writable → read-only, same → same
+    Illegal: read-only → writable
+    """
+
+    # -- Legal: same mode --
+
+    def test_reinit_readonly_to_readonly(self, sample_project):
+        """Re-init read-only → read-only is fine."""
+        _full_init(sample_project, writable=False)
+        _full_init(sample_project, writable=False)
+        assert (sample_project / ".allmight" / "mode").read_text().strip() == "read-only"
+
+    def test_reinit_writable_to_writable(self, sample_project):
+        """Re-init writable → writable is fine."""
+        _full_init(sample_project, writable=True)
+        _full_init(sample_project, writable=True)
+        assert (sample_project / ".allmight" / "mode").read_text().strip() == "writable"
+
+    # -- Legal: writable → read-only (downgrade) --
+
+    def test_writable_to_readonly_allowed(self, sample_project):
+        """Re-init writable → read-only is allowed (downgrade)."""
+        _full_init(sample_project, writable=True)
+        _full_init(sample_project, writable=False)  # should not raise
+
+    def test_writable_to_readonly_updates_mode(self, sample_project):
+        """Downgrade updates .allmight/mode to read-only."""
+        _full_init(sample_project, writable=True)
+        _full_init(sample_project, writable=False)
+        assert (sample_project / ".allmight" / "mode").read_text().strip() == "read-only"
+
+    def test_writable_to_readonly_stages_readonly_templates(self, sample_project):
+        """Downgrade stages read-only templates (no enrich/ingest)."""
+        _full_init(sample_project, writable=True)
+        _full_init(sample_project, writable=False)
+        tpl = sample_project / ".allmight" / "templates" / "commands"
+        assert (tpl / "search.md").exists()
+        assert not (tpl / "enrich.md").exists()
+        assert not (tpl / "ingest.md").exists()
+
+    def test_writable_to_readonly_stages_removal_list(self, sample_project):
+        """Downgrade stages a remove.txt listing commands to delete."""
+        _full_init(sample_project, writable=True)
+        _full_init(sample_project, writable=False)
+        remove_file = sample_project / ".allmight" / "templates" / "remove.txt"
+        assert remove_file.exists()
+        content = remove_file.read_text()
+        assert "enrich.md" in content
+        assert "ingest.md" in content
+
+    # -- Illegal: read-only → writable (upgrade) --
+
+    def test_readonly_to_writable_rejected(self, sample_project):
+        """Re-init read-only → writable is rejected."""
+        _full_init(sample_project, writable=False)
+        with pytest.raises(ValueError, match="read-only.*writable"):
+            scanner = ProjectScanner()
+            manifest = scanner.scan(sample_project)
+            ProjectInitializer().initialize(manifest, writable=True)
+
+    def test_force_readonly_to_writable_also_rejected(self, sample_project):
+        """Even --force cannot upgrade read-only → writable."""
+        _full_init(sample_project, writable=False)
+        with pytest.raises(ValueError, match="read-only.*writable"):
+            scanner = ProjectScanner()
+            manifest = scanner.scan(sample_project)
+            ProjectInitializer().initialize(manifest, force=True, writable=True)

@@ -34,12 +34,38 @@ class ProjectInitializer:
         allmight_dir = root / ".allmight"
         is_reinit = allmight_dir.is_dir() and not force
 
+        # Validate mode transition (applies to both re-init and --force)
+        mode_file = allmight_dir / "mode"
+        if mode_file.exists():
+            current_mode = mode_file.read_text().strip()
+            if current_mode == "read-only" and writable:
+                raise ValueError(
+                    "Cannot upgrade from read-only to writable mode. "
+                    "Read-only projects cannot be converted to writable."
+                )
+
         # 1. Create knowledge_graph/ (always safe — mkdir exist_ok)
         self._create_metadata(root, manifest)
 
         if is_reinit:
+            # Detect mode downgrade before staging
+            current_mode = (
+                mode_file.read_text().strip() if mode_file.exists() else None
+            )
+
             # Re-init: stage templates, don't overwrite working files
             self._stage_templates(root, manifest, writable=writable)
+
+            # If downgrading writable → read-only, stage removal list
+            if current_mode == "writable" and not writable:
+                tpl = root / ".allmight" / "templates"
+                tpl.mkdir(parents=True, exist_ok=True)
+                (tpl / "remove.txt").write_text("enrich.md\ningest.md\n")
+
+            # Update mode file
+            (allmight_dir / "mode").write_text(
+                "writable" if writable else "read-only"
+            )
         else:
             # First init (or --force): write everything directly
             self._generate_commands(root, manifest, writable=writable)
