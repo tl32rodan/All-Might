@@ -90,6 +90,50 @@ natural language — it knows what to do).
 | **Corpus** | A searchable index of your source code, built by `/ingest` |
 | **Memory** | Agent's persistent knowledge across sessions (preferences, decisions, facts) |
 
+## Updating
+
+When you upgrade All-Might and re-run `init`, your customizations are
+preserved:
+
+```bash
+pip install --upgrade allmight
+allmight init .                # stages new templates, doesn't overwrite
+```
+
+The agent will see new templates in `.allmight/templates/`. Tell it:
+
+> "Run /sync to merge the latest All-Might templates"
+
+It reads both versions (your customized files and the new templates)
+and merges them intelligently.
+
+To skip merging and overwrite everything:
+
+```bash
+allmight init . --force
+```
+
+**Note:** `MEMORY.md` is never overwritten — it contains accumulated
+agent knowledge (project map, user preferences, key facts). A version
+update only touches skills, commands, and hooks.
+
+## Combining Projects
+
+Merge knowledge from another All-Might project into yours:
+
+```bash
+allmight merge /path/to/other-project
+```
+
+New workspaces are copied directly. If both projects have a workspace
+with the same name, it's saved as `<name>.incoming/` for the agent to
+resolve via `/sync`.
+
+Options:
+- `--workspace pll` — only merge specific workspaces
+- `--no-memory` — skip merging memory files
+- `--dry-run` — preview what would happen
+
 ## Compatibility
 
 | Tool | Status |
