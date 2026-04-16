@@ -22,32 +22,39 @@ class ProjectInitializer:
         self,
         manifest: ProjectManifest,
         smak_path: Path | None = None,
+        force: bool = False,
     ) -> None:
         """Execute Detroit SMAK — bootstrap the entire workspace.
 
         Args:
             manifest: Project characteristics from the Scanner.
             smak_path: Optional path to SMAK installation for skill copying.
+            force: If True, overwrite everything even on re-init.
         """
         root = manifest.root_path
+        allmight_dir = root / ".allmight"
+        is_reinit = allmight_dir.is_dir() and not force
 
-        # 1. Create config.yaml, enrichment/, panorama/
+        # 1. Create knowledge_graph/ (always safe — mkdir exist_ok)
         self._create_metadata(root, manifest)
 
-        # 3. Install SMAK skills (layered composition — HOW layer)
-        self._install_smak_skills(root, manifest, smak_path)
+        if is_reinit:
+            # Re-init: stage templates, don't overwrite working files
+            self._stage_templates(root, manifest, smak_path)
+        else:
+            # First init (or --force): write everything directly
+            self._install_smak_skills(root, manifest, smak_path)
+            self._generate_allmight_skills(root, manifest)
+            self._generate_commands(root, manifest)
+            self._update_claude_md(root, manifest)
+            self._create_opencode_compat(root)
 
-        # 4. Generate All-Might skills (WHAT + WHEN/WHY layers)
-        self._generate_allmight_skills(root, manifest)
-
-        # 5. Generate commands
-        self._generate_commands(root, manifest)
-
-        # 6. Update CLAUDE.md
-        self._update_claude_md(root, manifest)
-
-        # 7. Create OpenCode compatibility symlinks
-        self._create_opencode_compat(root)
+            # Create .allmight/ marker (clean up any stale templates)
+            allmight_dir.mkdir(exist_ok=True)
+            templates_dir = allmight_dir / "templates"
+            if templates_dir.exists():
+                import shutil
+                shutil.rmtree(templates_dir)
 
     def _create_metadata(self, root: Path, manifest: ProjectManifest) -> None:
         """Create knowledge_graph/ at the project root.
@@ -57,6 +64,217 @@ class ProjectInitializer:
         """
         # knowledge_graph/ — workspace container (SMAK workspaces live here)
         (root / "knowledge_graph").mkdir(exist_ok=True)
+
+    def _stage_templates(
+        self,
+        root: Path,
+        manifest: ProjectManifest,
+        smak_path: Path | None,
+    ) -> None:
+        """Stage new templates to .allmight/templates/ for agent-driven /sync.
+
+        Called on re-init when .allmight/ already exists.  Writes the same
+        content that first-init would write, but to .allmight/templates/
+        instead of the working locations.
+        """
+        tpl = root / ".allmight" / "templates"
+
+        # --- Skills ---
+        skills_tpl = tpl / "skills"
+        skills_tpl.mkdir(parents=True, exist_ok=True)
+
+        # one-for-all
+        self._write_skill(
+            skills_tpl / "one-for-all" / "SKILL.md",
+            name="one-for-all",
+            description=(
+                "All-Might knowledge guide. Project structure, corpus reference, "
+                "enrichment protocol, key symbols, and Power Level. "
+                "Auto-loaded when agent needs to understand the project."
+            ),
+            body=self._one_for_all_skill_body(manifest),
+        )
+
+        # SOS skill (if applicable)
+        if manifest.has_path_env:
+            from .sos_skill_content import SOS_SKILL_BODY
+            self._write_skill(
+                skills_tpl / "sos-smak" / "SKILL.md",
+                name="sos-smak-skill",
+                description=(
+                    "CliosoftSOS environment guide."
+                ),
+                body=SOS_SKILL_BODY,
+            )
+
+        # --- Commands ---
+        cmds_tpl = tpl / "commands"
+        cmds_tpl.mkdir(parents=True, exist_ok=True)
+
+        # Re-generate the same command content that first-init writes
+        # Search command
+        (cmds_tpl / "search.md").write_text(
+            (root / ".claude" / "commands" / "search.md").read_text()
+            if (root / ".claude" / "commands" / "search.md").exists()
+            else ""
+        )
+        # For staging, we want the NEW template content, not the old content.
+        # Use a temporary ProjectInitializer to generate fresh content.
+        self._stage_command_content(cmds_tpl, manifest)
+
+        # --- CLAUDE.md sections ---
+        marker_am = "<!-- ALL-MIGHT -->"
+        allmight_section = self._claude_md_section(manifest)
+        (tpl / "claude-md-section.md").write_text(allmight_section)
+
+        # --- Install /sync skill + command (directly, not staged) ---
+        self._install_sync_skill(root)
+
+    def _stage_command_content(self, cmds_tpl: Path, manifest: ProjectManifest) -> None:
+        """Write fresh command template content to staging dir."""
+        (cmds_tpl / "search.md").write_text(self._search_command_body())
+        (cmds_tpl / "enrich.md").write_text(
+            self._enrich_command_body(manifest.has_path_env)
+        )
+        (cmds_tpl / "ingest.md").write_text(self._ingest_command_body())
+
+    def _install_sync_skill(self, root: Path) -> None:
+        """Install /sync skill and command directly (not staged)."""
+        from .sync_skill_content import SYNC_SKILL_BODY, SYNC_COMMAND_BODY
+
+        self._write_skill(
+            root / ".claude" / "skills" / "sync" / "SKILL.md",
+            name="sync",
+            description=(
+                "Reconcile staged All-Might templates or merge conflicts. "
+                "Run after allmight init (re-init) or allmight merge."
+            ),
+            body=SYNC_SKILL_BODY,
+        )
+        commands_dir = root / ".claude" / "commands"
+        commands_dir.mkdir(parents=True, exist_ok=True)
+        (commands_dir / "sync.md").write_text(SYNC_COMMAND_BODY)
+
+    def _claude_md_section(self, manifest: ProjectManifest) -> str:
+        """Return the ALL-MIGHT section content for CLAUDE.md."""
+        marker = "<!-- ALL-MIGHT -->"
+        return f"""{marker}
+## All-Might: Active Knowledge Graph
+
+This project has an **All-Might knowledge graph** — the agent can search
+code by meaning, annotate what it learns, and remember across sessions.
+
+### Capabilities
+
+| Command | What it does |
+|---------|-------------|
+| `/search <query>` | Search code by meaning (not just keywords) |
+| `/enrich` | Annotate a symbol — record what it does and what it relates to |
+| `/ingest` | Build or rebuild the search index from source files |
+
+### Concepts
+
+- **Corpus** = a vector index built from source files by `/ingest`. Source
+  files are indexed **in-place** — nothing is copied into this project.
+  Only the vector index (in `knowledge_graph/<workspace>/store/`) is local.
+- **Annotation** = a note on a code symbol (function, class) describing its
+  purpose and connections. Stored in `.sidecar.yaml` files beside the source code.
+
+### How to learn the details
+
+The `one-for-all` skill (auto-loaded in `.claude/skills/`) contains the
+complete operational guide: search engine commands, annotation workflow,
+sidecar file format, and troubleshooting.
+
+### Getting Started
+
+1. `/ingest` — build the search index (first time)
+2. `/search "query"` — explore the codebase
+3. `/enrich` — annotate symbols as you learn them
+"""
+
+    def _search_command_body(self) -> str:
+        """Return search.md command content."""
+        return """\
+Search the codebase by semantic meaning.
+
+SMAK searches the vector index — source files are never copied.
+Results point back to files at their original paths.
+
+## How to execute
+
+```bash
+smak search "<query>" --config knowledge_graph/<workspace>/config.yaml --index source_code --top-k 5 --json
+```
+
+To search across all corpora at once:
+```bash
+smak search-all "<query>" --config knowledge_graph/<workspace>/config.yaml --top-k 3 --json
+```
+
+To look up a specific symbol by UID:
+```bash
+smak lookup "<file_path>::<symbol_name>" --config knowledge_graph/<workspace>/config.yaml --index source_code --json
+```
+
+## What to expect
+
+JSON output with a `results` array. Each result contains:
+- `id` — the matched chunk/symbol identifier
+- `text` or `content` — the matched source code
+- `score` — relevance score (0–1)
+- `metadata` — file path, symbol name, etc.
+
+## After searching
+
+- If a result has a sidecar (`.{filename}.sidecar.yaml` beside it), read the
+  sidecar to see its enriched intent and relations.
+- If a result has NO sidecar or missing intent, consider enriching it with `/enrich`.
+- Present results to the user in terms of "knowledge graph" — do not mention SMAK.
+"""
+
+    def _ingest_command_body(self) -> str:
+        """Return ingest.md command content."""
+        return """\
+Build the SMAK vector index from source files.
+
+SMAK indexes source files **in-place** at their original paths.
+No files are copied — only the vector index (in `store/`) is created
+inside the workspace.
+
+## When to run
+
+- **First time**: after `allmight init` to build the initial index
+- **After significant changes**: new files added, major refactoring
+- **After adding a workspace**: to populate the new index
+
+You do NOT need to re-ingest after enrichment — sidecars are separate
+from the search index.
+
+## How to execute
+
+Rebuild all corpora in a workspace:
+```bash
+smak ingest --config knowledge_graph/<workspace>/config.yaml --json
+```
+
+Rebuild a specific corpus:
+```bash
+smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code --json
+```
+
+## What to expect
+
+- The `store/` directory inside the workspace is populated with vector index data
+- `/search` will return results from the indexed files
+- Source files remain at their original paths — nothing is copied
+
+## Troubleshooting
+
+- If `smak` is not found, ensure SMAK is installed and on PATH
+- Check `smak health --config knowledge_graph/<workspace>/config.yaml --json` for diagnostics
+- List available corpora: `smak describe --config knowledge_graph/<workspace>/config.yaml --json`
+"""
 
     def _install_smak_skills(
         self,
@@ -117,128 +335,18 @@ class ProjectInitializer:
         commands_dir = root / ".claude" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
 
-        (commands_dir / "search.md").write_text("""\
-Search the codebase by semantic meaning.
-
-SMAK searches the vector index — source files are never copied.
-Results point back to files at their original paths.
-
-## How to execute
-
-```bash
-smak search "<query>" --config knowledge_graph/<workspace>/config.yaml --index source_code --top-k 5 --json
-```
-
-To search across all corpora at once:
-```bash
-smak search-all "<query>" --config knowledge_graph/<workspace>/config.yaml --top-k 3 --json
-```
-
-To look up a specific symbol by UID:
-```bash
-smak lookup "<file_path>::<symbol_name>" --config knowledge_graph/<workspace>/config.yaml --index source_code --json
-```
-
-## What to expect
-
-JSON output with a `results` array. Each result contains:
-- `id` — the matched chunk/symbol identifier
-- `text` or `content` — the matched source code
-- `score` — relevance score (0–1)
-- `metadata` — file path, symbol name, etc.
-
-## After searching
-
-- If a result has a sidecar (`.{filename}.sidecar.yaml` beside it), read the
-  sidecar to see its enriched intent and relations.
-- If a result has NO sidecar or missing intent, consider enriching it with `/enrich`.
-- Present results to the user in terms of "knowledge graph" — do not mention SMAK.
-""")
-
+        (commands_dir / "search.md").write_text(self._search_command_body())
         (commands_dir / "enrich.md").write_text(
             self._enrich_command_body(manifest.has_path_env)
         )
-
-        (commands_dir / "ingest.md").write_text("""\
-Build the SMAK vector index from source files.
-
-SMAK indexes source files **in-place** at their original paths.
-No files are copied — only the vector index (in `store/`) is created
-inside the workspace.
-
-## When to run
-
-- **First time**: after `allmight init` to build the initial index
-- **After significant changes**: new files added, major refactoring
-- **After adding a workspace**: to populate the new index
-
-You do NOT need to re-ingest after enrichment — sidecars are separate
-from the search index.
-
-## How to execute
-
-Rebuild all corpora in a workspace:
-```bash
-smak ingest --config knowledge_graph/<workspace>/config.yaml --json
-```
-
-Rebuild a specific corpus:
-```bash
-smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code --json
-```
-
-## What to expect
-
-- The `store/` directory inside the workspace is populated with vector index data
-- `/search` will return results from the indexed files
-- Source files remain at their original paths — nothing is copied
-
-## Troubleshooting
-
-- If `smak` is not found, ensure SMAK is installed and on PATH
-- Check `smak health --config knowledge_graph/<workspace>/config.yaml --json` for diagnostics
-- List available corpora: `smak describe --config knowledge_graph/<workspace>/config.yaml --json`
-""")
+        (commands_dir / "ingest.md").write_text(self._ingest_command_body())
 
     def _update_claude_md(self, root: Path, manifest: ProjectManifest) -> None:
         """Append All-Might baseline instructions to CLAUDE.md at project root."""
         claude_md = root / "CLAUDE.md"
 
         marker = "<!-- ALL-MIGHT -->"
-        allmight_section = f"""{marker}
-## All-Might: Active Knowledge Graph
-
-This project has an **All-Might knowledge graph** — the agent can search
-code by meaning, annotate what it learns, and remember across sessions.
-
-### Capabilities
-
-| Command | What it does |
-|---------|-------------|
-| `/search <query>` | Search code by meaning (not just keywords) |
-| `/enrich` | Annotate a symbol — record what it does and what it relates to |
-| `/ingest` | Build or rebuild the search index from source files |
-
-### Concepts
-
-- **Corpus** = a vector index built from source files by `/ingest`. Source
-  files are indexed **in-place** — nothing is copied into this project.
-  Only the vector index (in `knowledge_graph/<workspace>/store/`) is local.
-- **Annotation** = a note on a code symbol (function, class) describing its
-  purpose and connections. Stored in `.sidecar.yaml` files beside the source code.
-
-### How to learn the details
-
-The `one-for-all` skill (auto-loaded in `.claude/skills/`) contains the
-complete operational guide: search engine commands, annotation workflow,
-sidecar file format, and troubleshooting.
-
-### Getting Started
-
-1. `/ingest` — build the search index (first time)
-2. `/search "query"` — explore the codebase
-3. `/enrich` — annotate symbols as you learn them
-"""
+        allmight_section = self._claude_md_section(manifest)
 
         if claude_md.exists():
             content = claude_md.read_text()

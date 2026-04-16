@@ -16,8 +16,20 @@ from .config import MemoryConfigManager
 class MemoryInitializer:
     """Creates the agent memory system."""
 
-    def initialize(self, root: Path) -> None:
-        """Bootstrap the memory subsystem at *root*."""
+    def initialize(self, root: Path, staging: bool = False) -> None:
+        """Bootstrap the memory subsystem at *root*.
+
+        Args:
+            root: Project root path.
+            staging: If True, stage templates to .allmight/templates/
+                     instead of writing to working locations.
+        """
+        if staging:
+            self._stage_memory_templates(root)
+            return
+
+        # --- Direct init (first time or force) ---
+
         # 1. Create memory config (defines journal store + SMAK config)
         cfg_mgr = MemoryConfigManager(root)
         cfg_mgr.initialize()
@@ -54,6 +66,139 @@ class MemoryInitializer:
 
         # 10. Generate opencode.json with hooks for OpenCode
         self._generate_opencode_json(root)
+
+    # ------------------------------------------------------------------
+    # Staging (re-init)
+    # ------------------------------------------------------------------
+
+    def _stage_memory_templates(self, root: Path) -> None:
+        """Stage memory templates to .allmight/templates/ for /sync."""
+        tpl = root / ".allmight" / "templates"
+        tpl.mkdir(parents=True, exist_ok=True)
+
+        # Stage hook scripts
+        hooks_tpl = tpl / "hooks"
+        hooks_tpl.mkdir(parents=True, exist_ok=True)
+        self._write_hook_content(hooks_tpl)
+
+        # Stage memory commands
+        cmds_tpl = tpl / "commands"
+        cmds_tpl.mkdir(parents=True, exist_ok=True)
+        self._write_memory_command_content(cmds_tpl)
+
+        # Stage CLAUDE.md memory section
+        (tpl / "memory-md-section.md").write_text(self._memory_claude_md_section())
+
+        # Stage opencode.json and memory-load.ts
+        import json
+        opencode_config = {
+            "experimental": {
+                "hook": {
+                    "session_completed": [
+                        {"command": ["./.claude/hooks/memory-nudge.sh"]}
+                    ]
+                }
+            }
+        }
+        (tpl / "opencode.json").write_text(json.dumps(opencode_config, indent=2) + "\n")
+        (tpl / "memory-load.ts").write_text(self._opencode_plugin_content())
+
+    def _write_hook_content(self, hooks_dir: Path) -> None:
+        """Write hook script content to a directory."""
+        (hooks_dir / "memory-nudge.sh").write_text("""\
+#!/usr/bin/env bash
+# Memory Nudge — Stop hook
+# Fires every time the agent finishes a response.
+# Reminds it to update memory if it learned something.
+set -euo pipefail
+
+cat <<'NUDGE'
+[Memory Nudge] Before finishing, consider:
+- Did you learn something about a workspace? → Update memory/understanding/<workspace>.md
+- Did the user share a preference or correction? → Update MEMORY.md
+- Did you discover something worth logging? → Append to memory/journal/
+NUDGE
+exit 0
+""")
+        (hooks_dir / "memory-load.sh").write_text("""\
+#!/usr/bin/env bash
+# L1 Loader — UserPromptSubmit hook
+# Injects MEMORY.md content into agent context every turn.
+set -euo pipefail
+
+INPUT=$(cat)
+PROJECT_DIR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd','.'))" 2>/dev/null || echo ".")
+
+MEMORY_FILE="$PROJECT_DIR/MEMORY.md"
+if [ -f "$MEMORY_FILE" ]; then
+    echo "--- Project Memory (MEMORY.md) ---"
+    cat "$MEMORY_FILE"
+    echo "--- End Project Memory ---"
+fi
+exit 0
+""")
+
+    def _write_memory_command_content(self, commands_dir: Path) -> None:
+        """Write memory command content to a directory."""
+        (commands_dir / "remember.md").write_text(self._remember_command_body())
+        (commands_dir / "recall.md").write_text(self._recall_command_body())
+        (commands_dir / "reflect.md").write_text(self._reflect_command_body())
+
+    def _memory_claude_md_section(self) -> str:
+        """Return the ALL-MIGHT-MEMORY section content for CLAUDE.md."""
+        marker = "<!-- ALL-MIGHT-MEMORY -->"
+        return f"""{marker}
+## Agent Memory
+
+The agent can **remember things across sessions**: preferences,
+decisions, corrections, and learned patterns.
+
+| Command | What it does |
+|---------|-------------|
+| `/remember` | Save knowledge to understanding files and journal |
+| `/recall` | Search past journal entries via SMAK |
+| `/reflect` | End-of-session review to keep memory tidy |
+
+Memory is organized in three tiers:
+- **MEMORY.md** — always loaded, project map and user preferences
+- **memory/understanding/** — per-corpus knowledge, loaded on workspace entry
+- **memory/journal/** — searchable log, accessed via `/recall`
+
+The `one-for-all` skill has the complete operational guide.
+"""
+
+    def _opencode_plugin_content(self) -> str:
+        """Return the OpenCode memory-load.ts plugin content."""
+        return """\
+/**
+ * Memory L1 Loader — OpenCode plugin
+ *
+ * Injects MEMORY.md content into agent context on every message,
+ * equivalent to Claude Code's UserPromptSubmit hook.
+ */
+import { readFileSync, existsSync } from "fs";
+import { join } from "path";
+
+export default {
+  name: "memory-load",
+  "chat.message": async (message: any, context: any) => {
+    const memoryPath = join(process.cwd(), "MEMORY.md");
+    if (existsSync(memoryPath)) {
+      const content = readFileSync(memoryPath, "utf-8");
+      const prefix = [
+        "--- Project Memory (MEMORY.md) ---",
+        content,
+        "--- End Project Memory ---",
+        "",
+      ].join("\\n");
+      if (typeof message.content === "string") {
+        message.content = prefix + message.content;
+      }
+    }
+    return message;
+  },
+};
+"""
 
     # ------------------------------------------------------------------
     # L1: MEMORY.md
@@ -98,57 +243,18 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
     # ------------------------------------------------------------------
 
     def _generate_hooks(self, root: Path) -> None:
-        """Generate hook scripts for active memory management.
-
-        Two hooks:
-        - memory-nudge.sh (Stop hook): reminds agent to update memory
-        - memory-load.sh (UserPromptSubmit hook): injects MEMORY.md into context
-        """
-        import os
+        """Generate hook scripts for active memory management."""
         import stat
 
         hooks_dir = root / ".claude" / "hooks"
         hooks_dir.mkdir(parents=True, exist_ok=True)
 
-        # --- Stop hook: Memory Nudge ---
-        nudge_script = hooks_dir / "memory-nudge.sh"
-        nudge_script.write_text("""\
-#!/usr/bin/env bash
-# Memory Nudge — Stop hook
-# Fires every time the agent finishes a response.
-# Reminds it to update memory if it learned something.
-set -euo pipefail
+        self._write_hook_content(hooks_dir)
 
-cat <<'NUDGE'
-[Memory Nudge] Before finishing, consider:
-- Did you learn something about a workspace? → Update memory/understanding/<workspace>.md
-- Did the user share a preference or correction? → Update MEMORY.md
-- Did you discover something worth logging? → Append to memory/journal/
-NUDGE
-exit 0
-""")
-        nudge_script.chmod(nudge_script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-        # --- UserPromptSubmit hook: L1 Loader ---
-        loader_script = hooks_dir / "memory-load.sh"
-        loader_script.write_text("""\
-#!/usr/bin/env bash
-# L1 Loader — UserPromptSubmit hook
-# Injects MEMORY.md content into agent context every turn.
-set -euo pipefail
-
-INPUT=$(cat)
-PROJECT_DIR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd','.'))" 2>/dev/null || echo ".")
-
-MEMORY_FILE="$PROJECT_DIR/MEMORY.md"
-if [ -f "$MEMORY_FILE" ]; then
-    echo "--- Project Memory (MEMORY.md) ---"
-    cat "$MEMORY_FILE"
-    echo "--- End Project Memory ---"
-fi
-exit 0
-""")
-        loader_script.chmod(loader_script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        # Make executable
+        for script_name in ("memory-nudge.sh", "memory-load.sh"):
+            script = hooks_dir / script_name
+            script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     # ------------------------------------------------------------------
     # Skill generation
@@ -258,11 +364,13 @@ A UserPromptSubmit hook at `.claude/hooks/memory-load.sh` injects
     # ------------------------------------------------------------------
 
     def _generate_memory_commands(self, root: Path) -> None:
-        """Generate /remember and /recall commands."""
+        """Generate /remember, /recall, and /reflect commands."""
         commands_dir = root / ".claude" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
+        self._write_memory_command_content(commands_dir)
 
-        (commands_dir / "remember.md").write_text("""\
+    def _remember_command_body(self) -> str:
+        return """\
 Record something worth persisting beyond this session.
 
 ## What to remember
@@ -321,9 +429,10 @@ active goal), update `MEMORY.md` at the project root directly.
 - Trivial observations re-derivable from code
 - Information already captured in sidecar enrichment
 - Temporary debug notes
-""")
+"""
 
-        (commands_dir / "recall.md").write_text("""\
+    def _recall_command_body(self) -> str:
+        return """\
 Search past memories across the journal.
 
 ## How to execute
@@ -357,9 +466,10 @@ Log the recall to `memory/usage.log`:
 - `MEMORY.md` (L1) — always in context, check first
 - `memory/understanding/<workspace>.md` (L2) — per-corpus knowledge
 - L3 journal is for things not captured in L1 or L2
-""")
+"""
 
-        (commands_dir / "reflect.md").write_text("""\
+    def _reflect_command_body(self) -> str:
+        return """\
 Structured self-reflection to maintain memory quality.
 
 Run periodically (end of session, after major work) to keep memory
@@ -451,7 +561,7 @@ Append to `memory/usage.log`:
 - After completing a major task
 - When the Memory Nudge reminds you
 - When the user asks you to consolidate what you learned
-""")
+"""
 
     # ------------------------------------------------------------------
     # CLAUDE.md update
@@ -461,26 +571,8 @@ Append to `memory/usage.log`:
         """Append memory system section to CLAUDE.md."""
         claude_md = root / "CLAUDE.md"
         marker = "<!-- ALL-MIGHT-MEMORY -->"
+        memory_section = self._memory_claude_md_section()
 
-        memory_section = f"""{marker}
-## Agent Memory
-
-The agent can **remember things across sessions**: preferences,
-decisions, corrections, and learned patterns.
-
-| Command | What it does |
-|---------|-------------|
-| `/remember` | Save knowledge to understanding files and journal |
-| `/recall` | Search past journal entries via SMAK |
-| `/reflect` | End-of-session review to keep memory tidy |
-
-Memory is organized in three tiers:
-- **MEMORY.md** — always loaded, project map and user preferences
-- **memory/understanding/** — per-corpus knowledge, loaded on workspace entry
-- **memory/journal/** — searchable log, accessed via `/recall`
-
-The `one-for-all` skill has the complete operational guide.
-"""
         if claude_md.exists():
             content = claude_md.read_text()
             if marker in content:
@@ -541,46 +633,12 @@ The `one-for-all` skill has the complete operational guide.
         self._generate_opencode_memory_plugin(root)
 
     def _generate_opencode_memory_plugin(self, root: Path) -> None:
-        """Generate OpenCode plugin that injects MEMORY.md into context.
-
-        OpenCode plugins are TypeScript files in ``.opencode/plugins/``.
-        The ``chat.message`` hook intercepts messages before they reach
-        the LLM, allowing us to prepend MEMORY.md content.
-        """
+        """Generate OpenCode plugin that injects MEMORY.md into context."""
         plugins_dir = root / ".opencode" / "plugins"
         plugins_dir.mkdir(parents=True, exist_ok=True)
 
         plugin_file = plugins_dir / "memory-load.ts"
-        plugin_file.write_text("""\
-/**
- * Memory L1 Loader — OpenCode plugin
- *
- * Injects MEMORY.md content into agent context on every message,
- * equivalent to Claude Code's UserPromptSubmit hook.
- */
-import { readFileSync, existsSync } from "fs";
-import { join } from "path";
-
-export default {
-  name: "memory-load",
-  "chat.message": async (message: any, context: any) => {
-    const memoryPath = join(process.cwd(), "MEMORY.md");
-    if (existsSync(memoryPath)) {
-      const content = readFileSync(memoryPath, "utf-8");
-      const prefix = [
-        "--- Project Memory (MEMORY.md) ---",
-        content,
-        "--- End Project Memory ---",
-        "",
-      ].join("\\n");
-      if (typeof message.content === "string") {
-        message.content = prefix + message.content;
-      }
-    }
-    return message;
-  },
-};
-""")
+        plugin_file.write_text(self._opencode_plugin_content())
 
     def _refresh_opencode_compat(self, root: Path) -> None:
         """Ensure OpenCode compatibility symlinks exist after memory init."""
