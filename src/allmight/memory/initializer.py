@@ -435,7 +435,9 @@ The `one-for-all` skill has the complete operational guide.
         """
         import json
 
-        opencode_json = root / "opencode.json"
+        opencode_dir = root / ".opencode"
+        opencode_dir.mkdir(exist_ok=True)
+        opencode_json = opencode_dir / "opencode.json"
 
         # Build the config — merge with existing if present
         if opencode_json.exists():

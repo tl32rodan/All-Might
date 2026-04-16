@@ -204,15 +204,15 @@ class TestOpenCodeHooks:
     """opencode.json and plugin for OpenCode hook compatibility."""
 
     def test_creates_opencode_json(self, project_root):
-        """opencode.json created at project root."""
+        """opencode.json created inside .opencode/."""
         MemoryInitializer().initialize(project_root)
-        assert (project_root / "opencode.json").exists()
+        assert (project_root / ".opencode" / "opencode.json").exists()
 
     def test_opencode_json_has_session_completed_hook(self, project_root):
         """opencode.json configures session_completed hook for memory-nudge."""
         import json
         MemoryInitializer().initialize(project_root)
-        config = json.loads((project_root / "opencode.json").read_text())
+        config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
         hooks = config["experimental"]["hook"]
         assert "session_completed" in hooks
         assert ".claude/hooks/memory-nudge.sh" in hooks["session_completed"][0]["command"][0]
@@ -236,18 +236,19 @@ class TestOpenCodeHooks:
         init = MemoryInitializer()
         init.initialize(project_root)
         init.initialize(project_root)
-        config = json.loads((project_root / "opencode.json").read_text())
+        config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
         assert "session_completed" in config["experimental"]["hook"]
 
     def test_opencode_json_preserves_existing(self, project_root):
         """Existing opencode.json fields are preserved."""
         import json
-        (project_root / "opencode.json").write_text(json.dumps({
+        (project_root / ".opencode").mkdir(exist_ok=True)
+        (project_root / ".opencode" / "opencode.json").write_text(json.dumps({
             "model": "claude-sonnet-4-6",
             "experimental": {"other": True}
         }))
         MemoryInitializer().initialize(project_root)
-        config = json.loads((project_root / "opencode.json").read_text())
+        config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
         assert config["model"] == "claude-sonnet-4-6"
         assert config["experimental"]["other"] is True
         assert "session_completed" in config["experimental"]["hook"]
