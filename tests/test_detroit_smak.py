@@ -94,10 +94,10 @@ class TestProjectInitializer:
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest)
+        initializer.initialize(manifest, writable=True)
 
         commands_dir = sample_project / ".claude" / "commands"
-        # Core commands: search, enrich, ingest
+        # Core commands: search, enrich, ingest (writable mode)
         assert (commands_dir / "search.md").exists()
         assert (commands_dir / "enrich.md").exists()
         assert (commands_dir / "ingest.md").exists()
@@ -135,12 +135,12 @@ class TestProjectInitializer:
         assert "smak enrich" not in content
 
     def test_claude_md_has_getting_started(self, sample_project):
-        """Test that CLAUDE.md has getting started steps."""
+        """Test that CLAUDE.md has getting started steps (writable mode)."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest)
+        initializer.initialize(manifest, writable=True)
 
         claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
@@ -148,12 +148,12 @@ class TestProjectInitializer:
         assert "/ingest" in content
 
     def test_claude_md_has_online_vs_vc_awareness(self, sample_project):
-        """Test that CLAUDE.md explains online-only indexing and VC log verification."""
+        """Test that CLAUDE.md lists all commands (writable mode)."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
-        initializer.initialize(manifest)
+        initializer.initialize(manifest, writable=True)
 
         claude_md = sample_project / "CLAUDE.md"
         content = claude_md.read_text()
@@ -230,7 +230,7 @@ class TestProjectInitializer:
         manifest = scanner.scan(sample_project)
         manifest.has_path_env = True
 
-        ProjectInitializer().initialize(manifest)
+        ProjectInitializer().initialize(manifest, writable=True)
 
         content = (sample_project / ".claude" / "commands" / "enrich.md").read_text()
         assert "--dry-run" in content
@@ -243,7 +243,7 @@ class TestProjectInitializer:
         manifest = scanner.scan(sample_project)
         manifest.has_path_env = False
 
-        ProjectInitializer().initialize(manifest)
+        ProjectInitializer().initialize(manifest, writable=True)
 
         content = (sample_project / ".claude" / "commands" / "enrich.md").read_text()
         assert "--dry-run" not in content

@@ -20,27 +20,56 @@ class ProjectInitializer:
         self,
         manifest: ProjectManifest,
         force: bool = False,
+        writable: bool = False,
     ) -> None:
         """Execute Detroit SMAK — bootstrap the entire workspace.
 
         Args:
             manifest: Project characteristics from the Scanner.
             force: If True, overwrite everything even on re-init.
+            writable: If True, generate ingest/enrich commands (full access).
+                      Default is read-only (search only).
         """
         root = manifest.root_path
         allmight_dir = root / ".allmight"
         is_reinit = allmight_dir.is_dir() and not force
 
+        # Validate mode transition (applies to both re-init and --force)
+        mode_file = allmight_dir / "mode"
+        if mode_file.exists():
+            current_mode = mode_file.read_text().strip()
+            if current_mode == "read-only" and writable:
+                raise ValueError(
+                    "Cannot upgrade from read-only to writable mode. "
+                    "Read-only projects cannot be converted to writable."
+                )
+
         # 1. Create knowledge_graph/ (always safe — mkdir exist_ok)
         self._create_metadata(root, manifest)
 
         if is_reinit:
+            # Detect mode downgrade before staging
+            current_mode = (
+                mode_file.read_text().strip() if mode_file.exists() else None
+            )
+
             # Re-init: stage templates, don't overwrite working files
-            self._stage_templates(root, manifest)
+            self._stage_templates(root, manifest, writable=writable)
+
+            # If downgrading writable → read-only, stage removal list
+            if current_mode == "writable" and not writable:
+                tpl = root / ".allmight" / "templates"
+                tpl.mkdir(parents=True, exist_ok=True)
+                (tpl / "remove.txt").write_text("enrich.md\ningest.md\n")
+
+            # Update mode file
+            (allmight_dir / "mode").write_text(
+                "writable" if writable else "read-only"
+            )
         else:
             # First init (or --force): write everything directly
-            self._generate_commands(root, manifest)
-            self._update_claude_md(root, manifest)
+            self._generate_commands(root, manifest, writable=writable)
+            self._update_claude_md(root, manifest, writable=writable)
             self._create_opencode_compat(root)
 
             # Create .allmight/ marker (clean up any stale templates)
@@ -49,6 +78,11 @@ class ProjectInitializer:
             if templates_dir.exists():
                 import shutil
                 shutil.rmtree(templates_dir)
+
+            # Persist access mode
+            (allmight_dir / "mode").write_text(
+                "writable" if writable else "read-only"
+            )
 
     def _create_metadata(self, root: Path, manifest: ProjectManifest) -> None:
         """Create knowledge_graph/ at the project root.
@@ -63,6 +97,7 @@ class ProjectInitializer:
         self,
         root: Path,
         manifest: ProjectManifest,
+        writable: bool = False,
     ) -> None:
         """Stage new templates to .allmight/templates/ for agent-driven /sync.
 
@@ -76,23 +111,25 @@ class ProjectInitializer:
         cmds_tpl = tpl / "commands"
         cmds_tpl.mkdir(parents=True, exist_ok=True)
 
-        self._stage_command_content(cmds_tpl, manifest)
+        self._stage_command_content(cmds_tpl, manifest, writable=writable)
 
         # --- CLAUDE.md sections ---
-        marker_am = "<!-- ALL-MIGHT -->"
-        allmight_section = self._claude_md_section(manifest)
+        allmight_section = self._claude_md_section(manifest, writable=writable)
         (tpl / "claude-md-section.md").write_text(allmight_section)
 
         # --- Install /sync skill + command (directly, not staged) ---
         self._install_sync_skill(root)
 
-    def _stage_command_content(self, cmds_tpl: Path, manifest: ProjectManifest) -> None:
+    def _stage_command_content(
+        self, cmds_tpl: Path, manifest: ProjectManifest, writable: bool = False,
+    ) -> None:
         """Write fresh command template content to staging dir."""
         (cmds_tpl / "search.md").write_text(self._search_command_body())
-        (cmds_tpl / "enrich.md").write_text(
-            self._enrich_command_body(manifest.has_path_env)
-        )
-        (cmds_tpl / "ingest.md").write_text(self._ingest_command_body())
+        if writable:
+            (cmds_tpl / "enrich.md").write_text(
+                self._enrich_command_body(manifest.has_path_env)
+            )
+            (cmds_tpl / "ingest.md").write_text(self._ingest_command_body())
 
     def _install_sync_skill(self, root: Path) -> None:
         """Install /sync skill and command directly (not staged)."""
@@ -111,9 +148,63 @@ class ProjectInitializer:
         commands_dir.mkdir(parents=True, exist_ok=True)
         (commands_dir / "sync.md").write_text(SYNC_COMMAND_BODY)
 
-    def _claude_md_section(self, manifest: ProjectManifest) -> str:
+    def _claude_md_section(
+        self, manifest: ProjectManifest, writable: bool = False,
+    ) -> str:
         """Return the ALL-MIGHT section content for CLAUDE.md."""
         marker = "<!-- ALL-MIGHT -->"
+
+        if writable:
+            return self._claude_md_section_writable(marker, manifest)
+        return self._claude_md_section_readonly(marker, manifest)
+
+    def _claude_md_section_readonly(
+        self, marker: str, manifest: ProjectManifest,
+    ) -> str:
+        """CLAUDE.md section for read-only mode — search only."""
+        sos_prereq = ""
+        if manifest.has_path_env:
+            sos_prereq = """
+### SOS Environment Prerequisite
+
+This project uses **CliosoftSOS**. Set `$DDI_ROOT_PATH` before opening
+the project — it determines which source layer (online vs. version
+control) All-Might operates on.
+"""
+        return f"""{marker}
+## All-Might: Active Knowledge Graph (read-only)
+
+This project has an **All-Might knowledge graph** — the agent can search
+code by meaning and remember across sessions.
+
+**Access: read-only** — you may search the knowledge graph but must NOT
+modify corpora (no ingesting, no enriching, no sidecar edits).
+
+### Capabilities
+
+| Command | What it does |
+|---------|-------------|
+| `/search <query>` | Search code by meaning (not just keywords) |
+
+### Concepts
+
+- **Corpus** = a pre-built vector index of source files.  Source files are
+  indexed **in-place** — nothing is copied into this project.
+  Only the vector index (in `knowledge_graph/<workspace>/store/`) is local.
+
+### How to learn the details
+
+The `/search` command has a detailed operational guide in `.claude/commands/`.
+{sos_prereq}
+### Getting Started
+
+1. `/search "query"` — explore the codebase
+"""
+
+    def _claude_md_section_writable(
+        self, marker: str, manifest: ProjectManifest,
+    ) -> str:
+        """CLAUDE.md section for writable mode — full access."""
         sos_prereq = ""
         if manifest.has_path_env:
             sos_prereq = """
@@ -240,7 +331,9 @@ smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code
 - List available corpora: `smak describe --config knowledge_graph/<workspace>/config.yaml --json`
 """
 
-    def _generate_commands(self, root: Path, manifest: ProjectManifest) -> None:
+    def _generate_commands(
+        self, root: Path, manifest: ProjectManifest, writable: bool = False,
+    ) -> None:
         """Generate .claude/commands/ — thick operational guides."""
         # Ensure .claude/ structure exists (skills/ is a container for
         # user-installed skills and the sync skill on re-init)
@@ -249,17 +342,20 @@ smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code
         commands_dir.mkdir(parents=True, exist_ok=True)
 
         (commands_dir / "search.md").write_text(self._search_command_body())
-        (commands_dir / "enrich.md").write_text(
-            self._enrich_command_body(manifest.has_path_env)
-        )
-        (commands_dir / "ingest.md").write_text(self._ingest_command_body())
+        if writable:
+            (commands_dir / "enrich.md").write_text(
+                self._enrich_command_body(manifest.has_path_env)
+            )
+            (commands_dir / "ingest.md").write_text(self._ingest_command_body())
 
-    def _update_claude_md(self, root: Path, manifest: ProjectManifest) -> None:
+    def _update_claude_md(
+        self, root: Path, manifest: ProjectManifest, writable: bool = False,
+    ) -> None:
         """Append All-Might baseline instructions to CLAUDE.md at project root."""
         claude_md = root / "CLAUDE.md"
 
         marker = "<!-- ALL-MIGHT -->"
-        allmight_section = self._claude_md_section(manifest)
+        allmight_section = self._claude_md_section(manifest, writable=writable)
 
         if claude_md.exists():
             content = claude_md.read_text()

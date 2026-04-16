@@ -180,6 +180,17 @@ class MemoryConfig:
 
 
 @dataclass
+class CloneReport:
+    """Result of cloning an All-Might project."""
+
+    source: str
+    target: str
+    timestamp: str
+    workspaces_linked: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
 class MergeReport:
     """Result of merging one All-Might project into another."""
 

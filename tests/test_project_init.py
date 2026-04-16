@@ -20,21 +20,22 @@ def project_root(tmp_path):
     return tmp_path
 
 
-def _init(root):
+def _init(root, writable=False):
     scanner = ProjectScanner()
     manifest = scanner.scan(root)
-    ProjectInitializer().initialize(manifest)
+    ProjectInitializer().initialize(manifest, writable=writable)
 
 
-def _init_with_memory(root):
+def _init_with_memory(root, writable=False):
     """Mirrors what `allmight init` does: project init + memory init."""
     from allmight.memory.initializer import MemoryInitializer
 
-    _init(root)
+    _init(root, writable=writable)
     MemoryInitializer().initialize(root)
 
 
 class TestProjectInit:
+    """Common init behavior — holds for both modes."""
 
     def test_creates_claude_md(self, project_root):
         """CLAUDE.md created at project root."""
@@ -48,9 +49,9 @@ class TestProjectInit:
         assert agents.is_symlink()
         assert agents.resolve() == (project_root / "CLAUDE.md").resolve()
 
-    def test_creates_core_commands(self, project_root):
-        """3 core commands: search.md, enrich.md, ingest.md."""
-        _init(project_root)
+    def test_creates_core_commands_writable(self, project_root):
+        """Writable: 3 core commands: search.md, enrich.md, ingest.md."""
+        _init(project_root, writable=True)
         cmds = project_root / ".claude" / "commands"
         assert (cmds / "search.md").exists()
         assert (cmds / "enrich.md").exists()
@@ -68,11 +69,10 @@ class TestProjectInit:
         assert not (project_root / "config.yaml").exists()
 
     def test_claude_md_is_what_not_how(self, project_root):
-        """CLAUDE.md references commands but not smak CLI details."""
+        """CLAUDE.md references /search but not smak CLI details."""
         _init(project_root)
         content = (project_root / "CLAUDE.md").read_text()
         assert "/search" in content
-        assert "/enrich" in content
         # Should NOT contain low-level smak commands
         assert "smak search" not in content
         assert "smak enrich" not in content
@@ -108,3 +108,89 @@ class TestProjectInitIncludesMemory:
         # Should NOT be per-workspace
         for ws_dir in (project_root / "knowledge_graph").iterdir():
             assert not (ws_dir / "memory").exists()
+
+
+# ------------------------------------------------------------------
+# Access Mode: read-only (default) vs writable
+# ------------------------------------------------------------------
+
+
+class TestReadOnlyMode:
+    """Default init is read-only: no ingest/enrich, CLAUDE.md emphasizes read-only."""
+
+    def test_default_is_readonly(self, project_root):
+        """allmight init without --writable produces read-only project."""
+        _init(project_root)
+        mode_file = project_root / ".allmight" / "mode"
+        assert mode_file.exists()
+        assert mode_file.read_text().strip() == "read-only"
+
+    def test_readonly_no_ingest_command(self, project_root):
+        """read-only mode does NOT generate ingest.md."""
+        _init(project_root)
+        assert not (project_root / ".claude" / "commands" / "ingest.md").exists()
+
+    def test_readonly_no_enrich_command(self, project_root):
+        """read-only mode does NOT generate enrich.md."""
+        _init(project_root)
+        assert not (project_root / ".claude" / "commands" / "enrich.md").exists()
+
+    def test_readonly_has_search_command(self, project_root):
+        """read-only mode still has search.md."""
+        _init(project_root)
+        assert (project_root / ".claude" / "commands" / "search.md").exists()
+
+    def test_readonly_claude_md_no_ingest(self, project_root):
+        """CLAUDE.md in read-only mode does NOT mention /ingest."""
+        _init(project_root)
+        content = (project_root / "CLAUDE.md").read_text()
+        assert "/ingest" not in content
+
+    def test_readonly_claude_md_no_enrich(self, project_root):
+        """CLAUDE.md in read-only mode does NOT mention /enrich."""
+        _init(project_root)
+        content = (project_root / "CLAUDE.md").read_text()
+        assert "/enrich" not in content
+
+    def test_readonly_claude_md_emphasizes_readonly(self, project_root):
+        """CLAUDE.md in read-only mode explicitly states read-only access."""
+        _init(project_root)
+        content = (project_root / "CLAUDE.md").read_text()
+        assert "read-only" in content.lower() or "read only" in content.lower()
+
+    def test_readonly_claude_md_no_annotation(self, project_root):
+        """CLAUDE.md in read-only mode does NOT mention annotation."""
+        _init(project_root)
+        content = (project_root / "CLAUDE.md").read_text()
+        assert "Annotation" not in content and "annotate" not in content.lower()
+
+
+class TestWritableMode:
+    """--writable flag preserves current (full) behavior."""
+
+    def test_writable_mode_persisted(self, project_root):
+        """--writable stores 'writable' in .allmight/mode."""
+        _init(project_root, writable=True)
+        mode_file = project_root / ".allmight" / "mode"
+        assert mode_file.exists()
+        assert mode_file.read_text().strip() == "writable"
+
+    def test_writable_has_all_commands(self, project_root):
+        """Writable mode has search, enrich, and ingest commands."""
+        _init(project_root, writable=True)
+        cmds = project_root / ".claude" / "commands"
+        assert (cmds / "search.md").exists()
+        assert (cmds / "enrich.md").exists()
+        assert (cmds / "ingest.md").exists()
+
+    def test_writable_claude_md_has_ingest(self, project_root):
+        """CLAUDE.md in writable mode mentions /ingest."""
+        _init(project_root, writable=True)
+        content = (project_root / "CLAUDE.md").read_text()
+        assert "/ingest" in content
+
+    def test_writable_claude_md_has_enrich(self, project_root):
+        """CLAUDE.md in writable mode mentions /enrich."""
+        _init(project_root, writable=True)
+        content = (project_root / "CLAUDE.md").read_text()
+        assert "/enrich" in content
