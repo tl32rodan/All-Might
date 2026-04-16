@@ -93,6 +93,9 @@ class ProjectInitializer:
             self._enrich_command_body(manifest.has_path_env)
         )
         (cmds_tpl / "ingest.md").write_text(self._ingest_command_body())
+        (cmds_tpl / "corpus-link.md").write_text(self._corpus_link_command_body())
+        (cmds_tpl / "corpus-unlink.md").write_text(self._corpus_unlink_command_body())
+        (cmds_tpl / "corpus-list.md").write_text(self._corpus_list_command_body())
 
     def _install_sync_skill(self, root: Path) -> None:
         """Install /sync skill and command directly (not staged)."""
@@ -157,6 +160,9 @@ code by meaning, annotate what it learns, and remember across sessions.
 | `/search <query>` | Search code by meaning (not just keywords) |
 | `/enrich` | Annotate a symbol — record what it does and what it relates to |
 | `/ingest` | Build or rebuild the search index from source files |
+| `/corpus-link` | Link an external shared corpus into this project |
+| `/corpus-unlink` | Remove a linked corpus (source untouched) |
+| `/corpus-list` | Show all linked corpora and their health status |
 
 ### Concepts
 
@@ -261,6 +267,161 @@ smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code
 - List available corpora: `smak describe --config knowledge_graph/<workspace>/config.yaml --json`
 """
 
+    # ------------------------------------------------------------------
+    # Corpus linking commands
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _corpus_link_command_body() -> str:
+        """Return corpus-link.md command content."""
+        return """\
+Link an external SMAK corpus into this project's knowledge graph.
+
+Linked corpora are **shared** — multiple All-Might projects can point to
+the same corpus directory via symlinks.  Each project keeps its own
+memory and skills but shares the search index.
+
+## How to execute
+
+### 1. Validate the source
+
+The source directory must be a valid SMAK workspace (contains `config.yaml`):
+
+```bash
+ls <source_path>/config.yaml
+```
+
+### 2. Create the symlink
+
+```bash
+ln -s <source_path> knowledge_graph/<name>
+```
+
+- `<source_path>` — absolute path to the external corpus directory
+- `<name>` — local alias (defaults to the directory name)
+
+### 3. Update the manifest
+
+Append an entry to `knowledge_graph/.links.yaml`:
+
+```yaml
+links:
+  - name: <name>
+    source: <source_path>
+    readonly: true
+    description: "<optional description>"
+```
+
+Set `readonly: false` if this project should be allowed to run `/ingest`
+or `/enrich` on the shared corpus.
+
+## After linking
+
+- Run `/search` to verify the linked corpus is discoverable
+- Run `/corpus-list` to check link health
+- The linked corpus appears alongside local workspaces in `knowledge_graph/`
+
+## Important
+
+- **Do not** run `/ingest` or `/enrich` on read-only linked corpora
+- Unlinking removes only the symlink — the source directory is never touched
+- If the source is moved, the symlink breaks — run `/corpus-list` to detect this
+"""
+
+    @staticmethod
+    def _corpus_unlink_command_body() -> str:
+        """Return corpus-unlink.md command content."""
+        return """\
+Remove a linked corpus from this project.
+
+This only removes the **symlink** inside `knowledge_graph/` and its
+entry in `.links.yaml`.  The source directory is **never** touched.
+
+## How to execute
+
+### 1. Verify it is a symlink (not a real directory)
+
+```bash
+readlink knowledge_graph/<name>
+```
+
+If this returns a path, it is a symlink and safe to unlink.
+If it fails, the workspace is a real directory — do NOT remove it with this command.
+
+### 2. Remove the symlink
+
+```bash
+rm knowledge_graph/<name>
+```
+
+### 3. Update the manifest
+
+Remove the entry for `<name>` from `knowledge_graph/.links.yaml`.
+If no entries remain, the file can be deleted.
+
+## After unlinking
+
+- The source corpus directory is untouched
+- `/search` will no longer find results from this corpus
+- Other projects that link to the same source are unaffected
+"""
+
+    @staticmethod
+    def _corpus_list_command_body() -> str:
+        """Return corpus-list.md command content."""
+        return """\
+Show all linked corpora and their health status.
+
+## How to execute
+
+### 1. Read the manifest
+
+```bash
+cat knowledge_graph/.links.yaml
+```
+
+This lists all linked corpora with their source paths and readonly flags.
+
+### 2. Validate each link
+
+For each entry in `.links.yaml`, check:
+
+```bash
+# Is the symlink present?
+readlink knowledge_graph/<name>
+
+# Does the target still exist and have a config?
+ls "$(readlink -f knowledge_graph/<name>)/config.yaml"
+```
+
+### 3. Report status
+
+For each linked corpus, report:
+- **name** — the local alias
+- **source** — where it points
+- **mode** — `readonly` or `writable`
+- **status** — `ok` (symlink valid, config.yaml present) or `broken`
+- **description** — from the manifest
+
+### 4. Also show local (non-linked) workspaces
+
+List all directories in `knowledge_graph/` that are NOT symlinks:
+
+```bash
+for d in knowledge_graph/*/; do
+  if [ ! -L "${d%/}" ]; then
+    echo "local: $(basename $d)"
+  fi
+done
+```
+
+## Interpreting results
+
+- **broken** links mean the source was moved or deleted — ask the user
+  for the new location and re-link with `/corpus-link`
+- **readonly** corpora should not be ingested or enriched from this project
+"""
+
     def _generate_commands(self, root: Path, manifest: ProjectManifest) -> None:
         """Generate .claude/commands/ — thick operational guides."""
         # Ensure .claude/ structure exists (skills/ is a container for
@@ -274,6 +435,9 @@ smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code
             self._enrich_command_body(manifest.has_path_env)
         )
         (commands_dir / "ingest.md").write_text(self._ingest_command_body())
+        (commands_dir / "corpus-link.md").write_text(self._corpus_link_command_body())
+        (commands_dir / "corpus-unlink.md").write_text(self._corpus_unlink_command_body())
+        (commands_dir / "corpus-list.md").write_text(self._corpus_list_command_body())
 
     def _update_claude_md(self, root: Path, manifest: ProjectManifest) -> None:
         """Append All-Might baseline instructions to CLAUDE.md at project root."""
