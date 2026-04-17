@@ -255,6 +255,22 @@ class TestOpenCodeHooks:
         assert "MEMORY.md" in content
         assert "chat.message" in content
 
+    def test_memory_load_plugin_injects_scope_first(self, project_root):
+        """Plugin injects the scope-first principle alongside MEMORY.md."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "plugins" / "memory-load.ts").read_text()
+        assert "Scope-First" in content or "scope-first" in content.lower()
+        assert "<kind>/<workspace>.md" in content
+
+    def test_memory_load_plugin_handles_session_lifecycle(self, project_root):
+        """Plugin subscribes to session.created and session.compacted to re-prime."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "plugins" / "memory-load.ts").read_text()
+        assert "session.created" in content
+        assert "session.compacted" in content
+        # Primes once per session, not every message
+        assert "primed" in content.lower()
+
     def test_opencode_json_idempotent(self, project_root):
         """Running init twice doesn't corrupt opencode.json."""
         import json
