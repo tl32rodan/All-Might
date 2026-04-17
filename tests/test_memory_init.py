@@ -255,6 +255,136 @@ class TestOpenCodeHooks:
         assert "MEMORY.md" in content
         assert "chat.message" in content
 
+    def test_memory_load_plugin_injects_scope_first(self, project_root):
+        """Plugin injects the scope-first principle alongside MEMORY.md."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "plugins" / "memory-load.ts").read_text()
+        assert "Scope-First" in content or "scope-first" in content.lower()
+        assert "<kind>/<workspace>.md" in content
+
+    def test_memory_load_plugin_handles_session_lifecycle(self, project_root):
+        """Plugin subscribes to session.created and session.compacted to re-prime."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "plugins" / "memory-load.ts").read_text()
+        assert "session.created" in content
+        assert "session.compacted" in content
+        # Primes once per session, not every message
+        assert "primed" in content.lower()
+
+    def test_creates_remember_trigger_plugin(self, project_root):
+        """Remember-trigger plugin is generated alongside memory-load."""
+        MemoryInitializer().initialize(project_root)
+        plugin = project_root / ".opencode" / "plugins" / "remember-trigger.ts"
+        assert plugin.exists()
+
+    def test_remember_trigger_delegates_to_slash_remember(self, project_root):
+        """Plugin nudges the agent to run /remember, not duplicate its logic."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "plugins" / "remember-trigger.ts").read_text()
+        assert "/remember" in content
+        # It should not be writing memory files itself
+        assert "writeFileSync" not in content
+        assert "appendFileSync" not in content
+
+    def test_remember_trigger_has_idle_and_compacting_events(self, project_root):
+        """Plugin fires on session.idle (with throttle) and pre-compaction."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "plugins" / "remember-trigger.ts").read_text()
+        assert "session.idle" in content
+        # experimental.session.compacting is a top-level hook key, not a
+        # bus event string inside event handler
+        assert '"experimental.session.compacting":' in content
+        # Throttle constant (every N turns) must exist
+        assert "NUDGE_EVERY" in content
+
+    def test_plugins_use_correct_chat_message_signature(self, project_root):
+        """chat.message is (input, output) and injects via output.parts.unshift."""
+        MemoryInitializer().initialize(project_root)
+        plugins = ["memory-load.ts", "remember-trigger.ts", "todo-curator.ts"]
+        for name in plugins:
+            content = (project_root / ".opencode" / "plugins" / name).read_text()
+            # Two-arg signature
+            assert '"chat.message": async (input: any, output: any)' in content, (
+                f"{name}: chat.message must accept (input, output)"
+            )
+            # Inject as a text part, not by mutating msg.content
+            assert "output.parts.unshift" in content, (
+                f"{name}: must inject via output.parts.unshift"
+            )
+            assert 'type: "text"' in content, (
+                f"{name}: must use text-part shape"
+            )
+            # No stale msg.content mutations remain
+            assert "msg.content =" not in content, (
+                f"{name}: stale msg.content mutation remains"
+            )
+
+    def test_creates_todo_curator_plugin(self, project_root):
+        """TODO curator plugin is generated."""
+        MemoryInitializer().initialize(project_root)
+        plugin = project_root / ".opencode" / "plugins" / "todo-curator.ts"
+        assert plugin.exists()
+
+    def test_todo_curator_has_three_phases(self, project_root):
+        """Curator observes TodoWrite, curates on compacting, surfaces on session.created."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "plugins" / "todo-curator.ts").read_text()
+        # Observe — TodoWrite via tool.execute.after
+        assert "tool.execute.after" in content
+        assert "TodoWrite" in content
+        # Curate — writes to memory/todos/<workspace>.md
+        assert "memory/todos" in content or 'memory", "todos"' in content
+        assert "appendFileSync" in content
+        # Surface — reads open backlog and prefixes chat.message
+        assert "## Open" in content
+        assert "chat.message" in content
+
+    def test_todo_curator_infers_workspace_from_knowledge_graph_path(self, project_root):
+        """Workspace inference uses the knowledge_graph/<name>/ convention."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "plugins" / "todo-curator.ts").read_text()
+        assert "knowledge_graph" in content
+
+    def test_creates_opencode_package_json(self, project_root):
+        """`.opencode/package.json` is generated so Bun can bun-install the plugin dep."""
+        MemoryInitializer().initialize(project_root)
+        pkg = project_root / ".opencode" / "package.json"
+        assert pkg.exists()
+
+    def test_opencode_package_json_declares_plugin_runtime(self, project_root):
+        """Declares @opencode-ai/plugin, no devDependencies by default."""
+        import json
+        MemoryInitializer().initialize(project_root)
+        pkg = json.loads((project_root / ".opencode" / "package.json").read_text())
+        assert "@opencode-ai/plugin" in pkg["dependencies"]
+        # Bun runtime supplies fs/path natively — no type package needed
+        assert "devDependencies" not in pkg
+
+    def test_opencode_package_json_idempotent(self, project_root):
+        """Running init twice leaves package.json untouched (still has the dep)."""
+        import json
+        init = MemoryInitializer()
+        init.initialize(project_root)
+        init.initialize(project_root)
+        pkg = json.loads((project_root / ".opencode" / "package.json").read_text())
+        assert "@opencode-ai/plugin" in pkg["dependencies"]
+
+    def test_opencode_package_json_preserves_user_edits(self, project_root):
+        """User-added fields (scripts, other deps) are preserved across re-init."""
+        import json
+        (project_root / ".opencode").mkdir(exist_ok=True)
+        (project_root / ".opencode" / "package.json").write_text(json.dumps({
+            "name": "user-chose-this",
+            "scripts": {"build": "bun build"},
+            "dependencies": {"some-other-pkg": "^1.0.0"}
+        }))
+        MemoryInitializer().initialize(project_root)
+        pkg = json.loads((project_root / ".opencode" / "package.json").read_text())
+        assert pkg["name"] == "user-chose-this"
+        assert pkg["scripts"]["build"] == "bun build"
+        assert pkg["dependencies"]["some-other-pkg"] == "^1.0.0"
+        assert "@opencode-ai/plugin" in pkg["dependencies"]
+
     def test_opencode_json_idempotent(self, project_root):
         """Running init twice doesn't corrupt opencode.json."""
         import json
