@@ -5,6 +5,12 @@
 After modifying initializer, skill templates, commands, or memory init:
 
 1. Run tests: `PYTHONPATH=src python -m pytest tests/`
+2. If the change touches code that generates TypeScript (e.g. OpenCode
+   plugins under `memory/initializer.py::_opencode_plugin_map`), also
+   type-check the generated output:
+   `cd /tmp/demo && allmight init . && tsc --noEmit .opencode/plugins/*.ts`
+   Python tests only verify strings written — they cannot catch
+   wrong-shape API calls in the generated `.ts`.
 
 ## Project Structure
 
@@ -158,3 +164,39 @@ allmight memory init             → re-initialize memory on existing project
 ```
 
 The agent calls `smak` CLI directly (taught by skills), NOT `allmight` wrappers.
+
+---
+
+## Discipline When Generating Third-Party Integrations
+
+The initializer writes files that execute in foreign runtimes (OpenCode
+plugins, MCP servers, CI configs). The Python test suite verifies **what
+strings we wrote**, not **whether the file works at runtime** — so
+string-presence assertions can pass while the generated code is silently
+broken. Rules below came from real regressions; break them and the same
+bugs come back.
+
+- **Read a working example's source before writing.** Doc summaries hide
+  signatures. For an OpenCode plugin, read a published one on GitHub
+  (`oh-my-opencode`, `opencode-supermemory`) and the
+  `@opencode-ai/plugin` type definitions — not a blog post.
+- **Distinguish event subscription from hook registration.** OpenCode
+  has two separate mechanisms: the global `event:` handler observes the
+  bus; top-level keys like `"chat.message"` and
+  `"experimental.session.compacting"` are **hooks with input/output
+  contracts**. Never place a hook name inside the event handler's
+  if-chain.
+- **Tests must include negative assertions.** `assert "chat.message"
+  in content` is useless on its own. Assert the exact signature
+  (`'"chat.message": async (input: any, output: any)'`), the correct
+  injection path (`output.parts.unshift`), and the absence of the
+  broken shape (`"msg.content =" not in content`).
+- **Type-check generated TypeScript at least once** (see *After Code
+  Changes* above). A one-shot `tsc --noEmit` catches wrong-shape calls
+  the Python suite cannot see.
+- **If official docs are unreachable (403/404/503), say so explicitly**
+  and fetch a real implementation from GitHub. Do not silently degrade
+  to secondary sources and pretend the shape was verified.
+- **Verify the API on one file before propagating to many.** If three
+  files share an unverified assumption, they break together — and the
+  tests pass in all three.
