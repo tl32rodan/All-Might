@@ -271,6 +271,56 @@ class TestOpenCodeHooks:
         # Primes once per session, not every message
         assert "primed" in content.lower()
 
+    def test_creates_remember_trigger_plugin(self, project_root):
+        """Remember-trigger plugin is generated alongside memory-load."""
+        MemoryInitializer().initialize(project_root)
+        plugin = project_root / ".opencode" / "plugins" / "remember-trigger.ts"
+        assert plugin.exists()
+
+    def test_remember_trigger_delegates_to_slash_remember(self, project_root):
+        """Plugin nudges the agent to run /remember, not duplicate its logic."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "plugins" / "remember-trigger.ts").read_text()
+        assert "/remember" in content
+        # It should not be writing memory files itself
+        assert "writeFileSync" not in content
+        assert "appendFileSync" not in content
+
+    def test_remember_trigger_has_idle_and_compacting_events(self, project_root):
+        """Plugin fires on session.idle (with throttle) and pre-compaction."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "plugins" / "remember-trigger.ts").read_text()
+        assert "session.idle" in content
+        assert "experimental.session.compacting" in content
+        # Throttle constant (every N turns) must exist
+        assert "NUDGE_EVERY" in content
+
+    def test_creates_todo_curator_plugin(self, project_root):
+        """TODO curator plugin is generated."""
+        MemoryInitializer().initialize(project_root)
+        plugin = project_root / ".opencode" / "plugins" / "todo-curator.ts"
+        assert plugin.exists()
+
+    def test_todo_curator_has_three_phases(self, project_root):
+        """Curator observes TodoWrite, curates on compacting, surfaces on session.created."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "plugins" / "todo-curator.ts").read_text()
+        # Observe — TodoWrite via tool.execute.after
+        assert "tool.execute.after" in content
+        assert "TodoWrite" in content
+        # Curate — writes to memory/todos/<workspace>.md
+        assert "memory/todos" in content or 'memory", "todos"' in content
+        assert "appendFileSync" in content
+        # Surface — reads open backlog and prefixes chat.message
+        assert "## Open" in content
+        assert "chat.message" in content
+
+    def test_todo_curator_infers_workspace_from_knowledge_graph_path(self, project_root):
+        """Workspace inference uses the knowledge_graph/<name>/ convention."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "plugins" / "todo-curator.ts").read_text()
+        assert "knowledge_graph" in content
+
     def test_opencode_json_idempotent(self, project_root):
         """Running init twice doesn't corrupt opencode.json."""
         import json
