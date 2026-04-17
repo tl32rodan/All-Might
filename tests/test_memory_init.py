@@ -321,6 +321,46 @@ class TestOpenCodeHooks:
         content = (project_root / ".opencode" / "plugins" / "todo-curator.ts").read_text()
         assert "knowledge_graph" in content
 
+    def test_creates_opencode_package_json(self, project_root):
+        """`.opencode/package.json` is generated so Bun can bun-install the plugin dep."""
+        MemoryInitializer().initialize(project_root)
+        pkg = project_root / ".opencode" / "package.json"
+        assert pkg.exists()
+
+    def test_opencode_package_json_declares_plugin_runtime(self, project_root):
+        """Declares @opencode-ai/plugin, no devDependencies by default."""
+        import json
+        MemoryInitializer().initialize(project_root)
+        pkg = json.loads((project_root / ".opencode" / "package.json").read_text())
+        assert "@opencode-ai/plugin" in pkg["dependencies"]
+        # Bun runtime supplies fs/path natively — no type package needed
+        assert "devDependencies" not in pkg
+
+    def test_opencode_package_json_idempotent(self, project_root):
+        """Running init twice leaves package.json untouched (still has the dep)."""
+        import json
+        init = MemoryInitializer()
+        init.initialize(project_root)
+        init.initialize(project_root)
+        pkg = json.loads((project_root / ".opencode" / "package.json").read_text())
+        assert "@opencode-ai/plugin" in pkg["dependencies"]
+
+    def test_opencode_package_json_preserves_user_edits(self, project_root):
+        """User-added fields (scripts, other deps) are preserved across re-init."""
+        import json
+        (project_root / ".opencode").mkdir(exist_ok=True)
+        (project_root / ".opencode" / "package.json").write_text(json.dumps({
+            "name": "user-chose-this",
+            "scripts": {"build": "bun build"},
+            "dependencies": {"some-other-pkg": "^1.0.0"}
+        }))
+        MemoryInitializer().initialize(project_root)
+        pkg = json.loads((project_root / ".opencode" / "package.json").read_text())
+        assert pkg["name"] == "user-chose-this"
+        assert pkg["scripts"]["build"] == "bun build"
+        assert pkg["dependencies"]["some-other-pkg"] == "^1.0.0"
+        assert "@opencode-ai/plugin" in pkg["dependencies"]
+
     def test_opencode_json_idempotent(self, project_root):
         """Running init twice doesn't corrupt opencode.json."""
         import json

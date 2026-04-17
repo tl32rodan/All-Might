@@ -98,6 +98,7 @@ class MemoryInitializer:
             }
         }
         (tpl / "opencode.json").write_text(json.dumps(opencode_config, indent=2) + "\n")
+        (tpl / "package.json").write_text(self._opencode_package_json_content())
         for filename, content in self._opencode_plugin_map().items():
             (tpl / filename).write_text(content)
 
@@ -1010,8 +1011,53 @@ Append to `memory/usage.log`:
 
         opencode_json.write_text(json.dumps(config, indent=2) + "\n")
 
+        # Generate .opencode/package.json so OpenCode's bundled Bun can
+        # bun-install the plugin runtime dependency at startup.
+        self._write_opencode_package_json(root)
+
         # Generate OpenCode plugins (L1 loader + remember-trigger + todo-curator)
         self._generate_opencode_plugins(root)
+
+    def _opencode_package_json_content(self) -> str:
+        """Return the .opencode/package.json content.
+
+        Only declares what OpenCode's Bun actually needs to install:
+        @opencode-ai/plugin (the Plugin type and runtime). fs/path are
+        Node built-ins that ship with Bun; no type package is required
+        for runtime.
+        """
+        import json
+
+        manifest = {
+            "name": "all-might-opencode",
+            "private": True,
+            "dependencies": {
+                "@opencode-ai/plugin": "latest",
+            },
+        }
+        return json.dumps(manifest, indent=2) + "\n"
+
+    def _write_opencode_package_json(self, root: Path) -> None:
+        """Write .opencode/package.json (idempotent, preserves user edits).
+
+        If a package.json already exists, merge @opencode-ai/plugin into
+        its dependencies without touching anything else the user added.
+        """
+        import json
+
+        pkg_path = root / ".opencode" / "package.json"
+        pkg_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if pkg_path.exists():
+            try:
+                existing = json.loads(pkg_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                existing = {}
+            deps = existing.setdefault("dependencies", {})
+            deps.setdefault("@opencode-ai/plugin", "latest")
+            pkg_path.write_text(json.dumps(existing, indent=2) + "\n")
+        else:
+            pkg_path.write_text(self._opencode_package_json_content())
 
     def _generate_opencode_plugins(self, root: Path) -> None:
         """Generate all OpenCode plugins under .opencode/plugins/.
