@@ -106,14 +106,18 @@ class MemoryInitializer:
 #!/usr/bin/env bash
 # Memory Nudge — Stop hook
 # Fires every time the agent finishes a response.
-# Reminds it to update memory if it learned something.
+# Reminds it to update memory under the right scope.
 set -euo pipefail
 
 cat <<'NUDGE'
-[Memory Nudge] Before finishing, consider:
-- Did you learn something about a workspace? → Update memory/understanding/<workspace>.md
-- Did the user share a preference or correction? → Update MEMORY.md
-- Did you discover something worth logging? → Append to memory/journal/
+[Memory Nudge] Before finishing, ask: what's the scope of what I learned?
+- Project-wide (prefs, goals, env facts) → update MEMORY.md
+- Per-corpus knowledge → memory/understanding/<workspace>.md
+- Per-corpus personal state (open tasks, shortcuts, ad-hoc notes)
+    → memory/<kind>/<workspace>.md  (create on demand, e.g. memory/todos/<workspace>.md)
+- Worth searching later → append to memory/journal/<workspace>/
+
+Prefer the narrower scope. Never dump per-corpus content into MEMORY.md.
 NUDGE
 exit 0
 """)
@@ -148,18 +152,31 @@ exit 0
 ## Agent Memory
 
 The agent can **remember things across sessions**: preferences,
-decisions, corrections, and learned patterns.
+decisions, corrections, learned patterns, and per-corpus personal
+state (TODOs, shortcuts, ad-hoc notes).
 
 | Command | What it does |
 |---------|-------------|
-| `/remember` | Save knowledge to understanding files and journal |
+| `/remember` | Save knowledge under the right scope |
 | `/recall` | Search past journal entries via SMAK |
 | `/reflect` | End-of-session review to keep memory tidy |
 
-Memory is organized in three tiers:
-- **MEMORY.md** — always loaded, project map and user preferences
-- **memory/understanding/** — per-corpus knowledge, loaded on workspace entry
-- **memory/journal/** — searchable log, accessed via `/recall`
+### Scope-first principle
+
+Memory is **scope-first**: decide whether something is project-wide,
+per-corpus, or a historical log before choosing where to write it.
+
+- `MEMORY.md` — project-wide (always loaded): user prefs, goals, facts
+- `memory/understanding/<workspace>.md` — per-corpus knowledge
+- `memory/<kind>/<workspace>.md` — per-corpus personal state the
+  agent creates on demand (e.g. `memory/todos/<stdcell>.md` for open
+  tasks in the `stdcell` corpus). Follow the same
+  `<kind>/<workspace>.md` naming as `understanding/`. No directory
+  needs to be declared up front.
+- `memory/journal/<workspace>/…` — searchable log, queried by `/recall`
+
+When unsure, prefer **narrower scope**: a workspace file beats a
+project-wide file beats `journal/general/`.
 
 See `/remember`, `/recall`, and `/reflect` commands for detailed guides.
 """
@@ -267,9 +284,32 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
         return """\
 Record something worth persisting beyond this session.
 
+## Decide the scope first
+
+Before writing anything, ask: **what is this about?**
+
+| Scope | Location | Examples |
+|-------|----------|----------|
+| Project-wide | `MEMORY.md` (L1) | user preferences, env facts, active goals |
+| Per-corpus knowledge | `memory/understanding/<workspace>.md` (L2) | architecture, key files, debug SOPs |
+| Per-corpus personal state | `memory/<kind>/<workspace>.md` | open TODOs, shortcuts, ad-hoc notes |
+| Historical / searchable | `memory/journal/<workspace>/…` (L3) | discoveries, decisions, session logs |
+
+**Rule of thumb**: if it applies to one corpus only, put it under a
+per-corpus file keyed by workspace name. Never dump per-corpus content
+into `MEMORY.md` or into `memory/journal/general/`. When unsure,
+prefer the **narrower** scope.
+
+When a new `<kind>` of per-corpus content appears (e.g. a TODO list, a
+list of preferred CLI flags, naming conventions), create
+`memory/<kind>/<workspace>.md` on demand — follow the same
+`<kind>/<workspace>.md` naming as `understanding/`. No new directory
+needs to be declared up front.
+
 ## What to remember
 
 - **Corpus-specific knowledge**: architecture, patterns, key files, debug SOPs
+- **Per-corpus personal state**: open TODOs, ad-hoc notes, shortcuts
 - **User corrections**: "User clarified that X means Y"
 - **Important decisions**: "Chose Redis over Memcached for pub/sub"
 - **User preferences**: "User prefers concise answers"
@@ -277,7 +317,7 @@ Record something worth persisting beyond this session.
 
 ## How to execute
 
-### 1. Update L2 understanding (primary)
+### 1. Update L2 understanding (primary, for knowledge)
 
 If the observation is about a specific workspace, update or create
 `memory/understanding/<workspace>.md`:
@@ -293,6 +333,25 @@ If the observation is about a specific workspace, update or create
 (how to diagnose common issues)
 ```
 
+### 1b. Per-corpus personal state (create on demand)
+
+If the observation is *mutable per-corpus state* rather than stable
+knowledge — open tasks, preferred flags, personal shortcuts — write
+to `memory/<kind>/<workspace>.md`. Example for TODOs:
+
+```markdown
+# <workspace> TODO
+
+## Open
+- [ ] <task> — <optional context / date>
+
+## Done
+- [x] <task> — <date completed>
+```
+
+Create the file (and its parent directory) on first use. Apply the
+same pattern for other kinds you find yourself needing.
+
 ### 2. Append to L3 journal (for searchability)
 
 Create a file in `memory/journal/<workspace>/` or `memory/journal/general/`:
@@ -303,16 +362,18 @@ Create a file in `memory/journal/<workspace>/` or `memory/journal/general/`:
 <What you learned, in your own words.>
 ```
 
-### 3. Update L1 MEMORY.md (if cross-cutting)
+### 3. Update L1 MEMORY.md (only if cross-cutting)
 
-If the observation is project-wide (user preference, environment fact,
-active goal), update `MEMORY.md` at the project root directly.
+If the observation is truly project-wide (user preference, environment
+fact, active goal), update `MEMORY.md` at the project root directly.
+If it's about one workspace, do NOT write it here.
 
 ## After remembering
 
-1. Log what you remembered to `memory/usage.log`:
+1. Log what you remembered to `memory/usage.log` (scope tag enables
+   `/reflect` to audit drift):
 ```
-<ISO-8601> remember workspace=<name> "<brief description>"
+<ISO-8601> remember scope=<project|workspace> workspace=<name|-> kind=<understanding|todos|journal|…> "<brief>"
 ```
 
 2. Run `smak ingest --config memory/smak_config.yaml` periodically to
@@ -327,26 +388,63 @@ active goal), update `MEMORY.md` at the project root directly.
 
     def _recall_command_body(self) -> str:
         return """\
-Search past memories across the journal.
+Pick up where you left off, and search past memories.
 
-## How to execute
+`/recall` is **not just** a journal search. Before running a query,
+scan the per-corpus memory folders so you inherit any unfinished state
+left from previous sessions (open TODOs, ad-hoc notes, shortcuts). The
+SMAK journal search is the last step, not the first.
+
+## Recall procedure
+
+### 1. L1 — MEMORY.md (already in context)
+
+`MEMORY.md` is injected every turn. Re-read the Project Map, User
+Preferences, and Active Goals sections before assuming anything.
+
+### 2. L2 — Per-corpus knowledge
+
+For the workspace(s) relevant to the current task, read
+`memory/understanding/<workspace>.md`.
+
+### 3. Scan per-corpus folders generally (pick up where you left off)
+
+List the `memory/` directory. For every subdirectory *other than*
+`understanding/`, `journal/`, and `store/` (i.e. every per-corpus
+`<kind>/` the agent or a past session has created), look for a file
+matching the current workspace:
+
+```bash
+ls memory/
+# for each <kind>/ present, check:
+cat memory/<kind>/<workspace>.md 2>/dev/null
+```
+
+Typical kinds you may encounter:
+- `memory/todos/<workspace>.md` — open TODOs; check `## Open` for
+  anything left unfinished.
+- `memory/shortcuts/<workspace>.md` — preferred CLI flags or aliases.
+- `memory/notes/<workspace>.md` — ad-hoc workspace notes.
+
+Any `<kind>` can exist — the agent creates them on demand via
+`/remember`. Treat unknown kinds the same way: read, decide if
+anything is unfinished, and proceed.
+
+### 4. L3 — Journal (SMAK semantic search)
 
 ```bash
 smak search "<query>" --config memory/smak_config.yaml --index journal --top-k 5 --json
 ```
 
-## What to expect
-
-Results from `memory/journal/` text files. Each result contains:
-- File path and matched content
-- Relevance score
+Results from `memory/journal/` text files with file path, matched
+content, and relevance score.
 
 ## When to recall
 
-- Before making assumptions about user preferences
-- When facing a problem that seems familiar
-- When starting work in an area visited in past sessions
-- When the user asks "did we discuss X before?"
+- At the start of a session touching a known workspace (steps 1-3).
+- Before making assumptions about user preferences.
+- When facing a problem that seems familiar.
+- When the user asks "did we discuss X before?" (step 4).
 
 ## After recalling
 
@@ -354,12 +452,6 @@ Log the recall to `memory/usage.log`:
 ```
 <ISO-8601> recall "<query>" results=<N> used=<how many were relevant>
 ```
-
-## Also check
-
-- `MEMORY.md` (L1) — always in context, check first
-- `memory/understanding/<workspace>.md` (L2) — per-corpus knowledge
-- L3 journal is for things not captured in L1 or L2
 """
 
     def _reflect_command_body(self) -> str:
@@ -390,6 +482,24 @@ For each workspace you worked on this session, read
 
 Create the file if it doesn't exist yet.
 
+### 2b. Audit per-corpus scoping
+
+List the files under `memory/` and check that each is scoped correctly
+under the **scope-first** principle (see `/remember`):
+
+- Anything in `MEMORY.md` that is really about *one* workspace?
+  → Move it to the per-corpus file and leave at most a one-line
+  pointer in `MEMORY.md` if the user truly needs it up front.
+- Any `memory/journal/general/` entry that is really workspace-specific?
+  → Move it under `memory/journal/<workspace>/`.
+- Any ad-hoc per-corpus files you (or a past session) created —
+  `memory/todos/<workspace>.md`, `memory/shortcuts/<workspace>.md`,
+  etc.? → Confirm the name follows `<kind>/<workspace>.md` and the
+  content is genuinely workspace-specific.
+
+The goal: no matter what `<kind>` of personalized memory exists, it
+lives under a consistent `memory/<kind>/<workspace>.md` path.
+
 ### 3. Log to L3 — Journal
 
 Summarize what you learned this session as a journal entry in
@@ -415,6 +525,10 @@ Read `memory/usage.log` and analyze this session's activity:
   - If you read code but didn't enrich → were there opportunities missed?
 - **Stale L2**: List `memory/understanding/*.md` files. Any not loaded this
   session that haven't been updated in a while? Flag them.
+- **Scope drift**: Count `remember` entries grouped by `scope=` and
+  `kind=`. If per-corpus personal state is piling up under
+  `scope=project` or `workspace=-`, the agent is being too generic —
+  re-scope those entries to their workspace.
 
 ### 5. Generate Insights
 
