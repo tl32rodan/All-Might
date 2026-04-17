@@ -123,6 +123,58 @@ class TestMemoryInitializer:
         content = (project_root / ".claude" / "commands" / "recall.md").read_text()
         assert "smak search" in content
 
+    # -- Per-corpus scoping principle ----------------------------------
+
+    def test_remember_teaches_scope_first(self, project_root):
+        """/remember leads with scope-first decision (not a /kind/ list)."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        assert "scope" in content.lower()
+        # Principle is expressed generically
+        assert "<kind>/<workspace>.md" in content
+
+    def test_remember_shows_todos_as_example(self, project_root):
+        """TODOs appear as an example of per-corpus personal state."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        assert "todo" in content.lower()
+
+    def test_remember_usage_log_has_scope_tag(self, project_root):
+        """Usage log format includes scope= so /reflect can audit drift."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        assert "scope=" in content
+
+    def test_recall_scans_per_corpus_folders(self, project_root):
+        """/recall instructs agent to scan memory/<kind>/<workspace>.md files."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "commands" / "recall.md").read_text()
+        assert "<kind>/<workspace>.md" in content
+        # And calls out picking up unfinished state
+        assert "unfinished" in content.lower() or "pick up where" in content.lower()
+
+    def test_reflect_audits_scoping(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        assert "scop" in content.lower()  # scope / scoping
+
+    def test_claude_md_teaches_scoping(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / "CLAUDE.md").read_text()
+        assert "<kind>/<workspace>.md" in content
+        assert "scope" in content.lower()
+
+    def test_nudge_asks_scope_question(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "hooks" / "memory-nudge.sh").read_text()
+        assert "scope" in content.lower()
+        assert "<kind>/<workspace>.md" in content
+
+    def test_no_hardcoded_todos_dir(self, project_root):
+        """Initializer does NOT precreate memory/todos/ — agents make it on demand."""
+        MemoryInitializer().initialize(project_root)
+        assert not (project_root / "memory" / "todos").exists()
+
     # -- CLAUDE.md update ----------------------------------------------
 
     def test_updates_claude_md(self, project_root):
