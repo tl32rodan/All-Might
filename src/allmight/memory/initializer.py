@@ -238,23 +238,13 @@ function buildPrefix(cwd: string): string {
   return parts.join("\\n");
 }
 
-function extractSessionId(payload: any): string {
-  return (
-    payload?.sessionID ??
-    payload?.session_id ??
-    payload?.properties?.sessionID ??
-    payload?.properties?.session_id ??
-    ""
-  );
-}
-
 export const MemoryLoadPlugin: Plugin = async ({ directory }: any) => {
   const cwd = (directory as string | undefined) ?? process.cwd();
 
   return {
     event: async ({ event }: { event: any }) => {
       const type = event?.type;
-      const sid = extractSessionId(event);
+      const sid = event?.properties?.sessionID ?? "";
       if (!sid) return;
       if (
         type === "session.created" ||
@@ -265,19 +255,19 @@ export const MemoryLoadPlugin: Plugin = async ({ directory }: any) => {
       }
     },
 
-    "chat.message": async (input: any) => {
-      const sid = extractSessionId(input);
+    "chat.message": async (input: any, output: any) => {
+      const sid = input?.sessionID;
       if (!sid) return;
       if (primed.has(sid)) return;
 
-      const prefix = buildPrefix(cwd);
-      if (!prefix.trim()) return;
+      const text = buildPrefix(cwd);
+      if (!text.trim()) return;
 
-      const msg = input?.message;
-      if (msg && typeof msg.content === "string") {
-        msg.content = prefix + "\\n" + msg.content;
+      // Prepend as a text part — UserMessage content lives in output.parts
+      if (Array.isArray(output?.parts)) {
+        output.parts.unshift({ type: "text", text });
+        primed.add(sid);
       }
-      primed.add(sid);
     },
   };
 };
@@ -350,20 +340,10 @@ function ensure(sid: string): State {
   return s;
 }
 
-function extractSessionId(payload: any): string {
-  return (
-    payload?.sessionID ??
-    payload?.session_id ??
-    payload?.properties?.sessionID ??
-    payload?.properties?.session_id ??
-    ""
-  );
-}
-
 export const RememberTriggerPlugin: Plugin = async () => {
   return {
     event: async ({ event }: { event: any }) => {
-      const sid = extractSessionId(event);
+      const sid = event?.properties?.sessionID ?? "";
       if (!sid) return;
       const type = event?.type;
 
@@ -373,8 +353,6 @@ export const RememberTriggerPlugin: Plugin = async () => {
         if (s.idleCount % NUDGE_EVERY === 0) {
           s.pendingNudge = nudgeText(s.idleCount);
         }
-      } else if (type === "experimental.session.compacting") {
-        ensure(sid).pendingNudge = preCompactText();
       } else if (type === "session.created") {
         sessions.set(sid, { idleCount: 0, pendingNudge: null });
       } else if (type === "session.deleted") {
@@ -382,15 +360,23 @@ export const RememberTriggerPlugin: Plugin = async () => {
       }
     },
 
-    "chat.message": async (input: any) => {
-      const sid = extractSessionId(input);
+    "chat.message": async (input: any, output: any) => {
+      const sid = input?.sessionID;
       const s = sessions.get(sid);
       if (!s?.pendingNudge) return;
+      if (!Array.isArray(output?.parts)) return;
       const nudge = s.pendingNudge;
       s.pendingNudge = null;
-      const msg = input?.message;
-      if (msg && typeof msg.content === "string") {
-        msg.content = nudge + "\\n\\n" + msg.content;
+      output.parts.unshift({ type: "text", text: nudge });
+    },
+
+    // Pre-compaction hook: inject the scope reminder directly into the
+    // compaction prompt so the generated summary carries the framing.
+    "experimental.session.compacting": async (_input: any, output: any) => {
+      if (!output) return;
+      const context = output.context ?? (output.context = []);
+      if (Array.isArray(context)) {
+        context.push(preCompactText());
       }
     },
   };
@@ -445,16 +431,6 @@ function ensure(sid: string): Ledger {
     sessions.set(sid, s);
   }
   return s;
-}
-
-function extractSessionId(payload: any): string {
-  return (
-    payload?.sessionID ??
-    payload?.session_id ??
-    payload?.properties?.sessionID ??
-    payload?.properties?.session_id ??
-    ""
-  );
 }
 
 const WORKSPACE_RE = /knowledge_graph\\/([^/\\s"']+)/;
@@ -523,17 +499,12 @@ export const TodoCuratorPlugin: Plugin = async ({ directory }: any) => {
 
   return {
     event: async ({ event }: { event: any }) => {
-      const sid = extractSessionId(event);
+      const sid = event?.properties?.sessionID ?? "";
       if (!sid) return;
       const type = event?.type;
 
       if (type === "session.created") {
         ensure(sid);
-      } else if (type === "experimental.session.compacting") {
-        const s = sessions.get(sid);
-        if (s?.workspace) {
-          appendCuration(cwd, s.workspace, s.latest);
-        }
       } else if (type === "session.deleted") {
         const s = sessions.get(sid);
         if (s) {
@@ -544,7 +515,7 @@ export const TodoCuratorPlugin: Plugin = async ({ directory }: any) => {
     },
 
     "tool.execute.after": async (input: any) => {
-      const sid = extractSessionId(input);
+      const sid = input?.sessionID;
       if (!sid) return;
       const s = ensure(sid);
 
@@ -571,15 +542,30 @@ export const TodoCuratorPlugin: Plugin = async ({ directory }: any) => {
       }
     },
 
-    "chat.message": async (input: any) => {
-      const sid = extractSessionId(input);
+    "chat.message": async (input: any, output: any) => {
+      const sid = input?.sessionID;
       const s = sessions.get(sid);
       if (!s?.pendingSurface) return;
+      if (!Array.isArray(output?.parts)) return;
       const surface = s.pendingSurface;
       s.pendingSurface = null;
-      const msg = input?.message;
-      if (msg && typeof msg.content === "string") {
-        msg.content = surface + "\\n\\n" + msg.content;
+      output.parts.unshift({ type: "text", text: surface });
+    },
+
+    // Pre-compaction: append session's TODOs to the per-corpus ledger
+    // and mention it in the compaction context so the summary doesn't
+    // silently lose the curated file reference.
+    "experimental.session.compacting": async (input: any, output: any) => {
+      const sid = input?.sessionID;
+      const s = sid ? sessions.get(sid) : undefined;
+      if (!s?.workspace) return;
+      appendCuration(cwd, s.workspace, s.latest);
+      const context = output?.context ?? (output && (output.context = []));
+      if (Array.isArray(context)) {
+        context.push(
+          `Curated TODO ledger updated at memory/todos/${s.workspace}.md \\u2014 ` +
+            "reference it instead of duplicating the list in the summary.",
+        );
       }
     },
   };

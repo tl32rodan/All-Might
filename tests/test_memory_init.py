@@ -291,9 +291,33 @@ class TestOpenCodeHooks:
         MemoryInitializer().initialize(project_root)
         content = (project_root / ".opencode" / "plugins" / "remember-trigger.ts").read_text()
         assert "session.idle" in content
-        assert "experimental.session.compacting" in content
+        # experimental.session.compacting is a top-level hook key, not a
+        # bus event string inside event handler
+        assert '"experimental.session.compacting":' in content
         # Throttle constant (every N turns) must exist
         assert "NUDGE_EVERY" in content
+
+    def test_plugins_use_correct_chat_message_signature(self, project_root):
+        """chat.message is (input, output) and injects via output.parts.unshift."""
+        MemoryInitializer().initialize(project_root)
+        plugins = ["memory-load.ts", "remember-trigger.ts", "todo-curator.ts"]
+        for name in plugins:
+            content = (project_root / ".opencode" / "plugins" / name).read_text()
+            # Two-arg signature
+            assert '"chat.message": async (input: any, output: any)' in content, (
+                f"{name}: chat.message must accept (input, output)"
+            )
+            # Inject as a text part, not by mutating msg.content
+            assert "output.parts.unshift" in content, (
+                f"{name}: must inject via output.parts.unshift"
+            )
+            assert 'type: "text"' in content, (
+                f"{name}: must use text-part shape"
+            )
+            # No stale msg.content mutations remain
+            assert "msg.content =" not in content, (
+                f"{name}: stale msg.content mutation remains"
+            )
 
     def test_creates_todo_curator_plugin(self, project_root):
         """TODO curator plugin is generated."""
