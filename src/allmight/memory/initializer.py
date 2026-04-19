@@ -140,6 +140,28 @@ if [ -f "$MEMORY_FILE" ]; then
 fi
 exit 0
 """)
+        (hooks_dir / "memory-cap.sh").write_text("""\
+#!/usr/bin/env bash
+# L1 Cap — Stop hook (F1)
+# Enforces the MEMORY.md byte cap after every turn and spills any
+# evicted bullets into memory/journal/general/<date>-l1-spill.md.
+set -euo pipefail
+
+INPUT=$(cat 2>/dev/null || echo "{}")
+PROJECT_DIR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd','.'))" 2>/dev/null || echo ".")
+
+MEMORY_FILE="$PROJECT_DIR/MEMORY.md"
+if [ ! -f "$MEMORY_FILE" ]; then
+    exit 0
+fi
+
+SPILL_DIR="$PROJECT_DIR/memory/journal/general"
+mkdir -p "$SPILL_DIR"
+# Best-effort: allmight memory cap only trims when over the cap and
+# silently no-ops otherwise. Failing here must never block the turn.
+allmight memory cap "$MEMORY_FILE" --spill-to "$SPILL_DIR" >/dev/null 2>&1 || true
+exit 0
+""")
 
     def _write_memory_command_content(self, commands_dir: Path) -> None:
         """Write memory command content to a directory."""
@@ -588,7 +610,11 @@ export default TodoCuratorPlugin;
         if memory_md.exists():
             return  # don't overwrite agent's work
 
-        memory_md.write_text("""\
+        from .l1_rewriter import DEFAULT_MAX_BYTES, SENTINEL_MARKER
+
+        memory_md.write_text(f"""\
+<!-- {SENTINEL_MARKER}={DEFAULT_MAX_BYTES} -->
+
 # Project Memory
 
 ## Project Map
@@ -610,6 +636,10 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
 ## Key Facts
 
 *(none recorded yet)*
+
+## Next Session Start Here
+
+*(populated automatically before compaction — shows the next session where to pick up)*
 """)
 
     # ------------------------------------------------------------------
@@ -626,7 +656,7 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
         self._write_hook_content(hooks_dir)
 
         # Make executable
-        for script_name in ("memory-nudge.sh", "memory-load.sh"):
+        for script_name in ("memory-nudge.sh", "memory-load.sh", "memory-cap.sh"):
             script = hooks_dir / script_name
             script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
@@ -1085,11 +1115,12 @@ Append to `memory/usage.log`:
     def _generate_opencode_plugins(self, root: Path) -> None:
         """Generate all OpenCode plugins under .opencode/plugins/.
 
-        Writes four plugin files:
+        Writes five plugin files:
         - memory-load.ts   — primes MEMORY.md + scope-first principle per session
         - remember-trigger.ts — nudges the agent to run /remember
         - todo-curator.ts  — tracks TODOs across sessions per corpus
         - trajectory-writer.ts — F5: captures structured session trajectory
+        - handoff-writer.ts — F1: populates "Next Session Start Here" pre-compaction
         """
         plugins_dir = root / ".opencode" / "plugins"
         plugins_dir.mkdir(parents=True, exist_ok=True)
@@ -1104,7 +1135,157 @@ Append to `memory/usage.log`:
             "remember-trigger.ts": self._remember_trigger_plugin_content(),
             "todo-curator.ts": self._todo_curator_plugin_content(),
             "trajectory-writer.ts": self._trajectory_writer_plugin_content(),
+            "handoff-writer.ts": self._handoff_writer_plugin_content(),
         }
+
+    def _handoff_writer_plugin_content(self) -> str:
+        """Return the OpenCode handoff-writer.ts plugin content.
+
+        F1 — populates the ``## Next Session Start Here`` section of
+        MEMORY.md before compaction (the right moment: conversation
+        history is about to be summarised). Observes tool outcomes via
+        ``tool.execute.after`` so the handoff reflects real work, not
+        agent self-report. Never mutates the chat (no output.parts
+        injection) — handoff is a disk write only.
+        """
+        return """\
+/**
+ * Handoff Writer — OpenCode plugin (All-Might, F1)
+ *
+ * Before OpenCode summarises conversation history, we populate the
+ * "## Next Session Start Here" section of MEMORY.md with concrete
+ * bullets drawn from what actually happened this session (last user
+ * task, last tool outcome). This is the handoff note the next session
+ * reads first — it must not rely on the agent remembering to write it.
+ *
+ * Strictly a disk writer: does NOT inject anything into output.parts,
+ * does NOT push to output.context. Staying out of the live chat is
+ * the whole point.
+ *
+ * Events:
+ *   session.created / session.deleted — lifecycle
+ *   chat.message                      — capture the latest user task
+ *   tool.execute.after                — capture the last tool outcome
+ *
+ * Hook:
+ *   experimental.session.compacting   — write the handoff bullets to MEMORY.md
+ */
+import type { Plugin } from "@opencode-ai/plugin";
+import { readFileSync, writeFileSync, existsSync } from "fs";
+import { join } from "path";
+
+const SENTINEL = "allmight_l1_cap";
+const PROTECTED = "Next Session Start Here";
+
+type HandoffState = {
+  lastTask: string;
+  lastToolOutcome: string;
+};
+
+const sessions = new Map<string, HandoffState>();
+
+function ensure(sid: string): HandoffState {
+  let s = sessions.get(sid);
+  if (!s) {
+    s = { lastTask: "", lastToolOutcome: "" };
+    sessions.set(sid, s);
+  }
+  return s;
+}
+
+function replaceNextSession(md: string, bullets: string[]): string {
+  const lines = md.split("\\n");
+  const headerIdx = lines.findIndex((l) => l.trim() === `## ${PROTECTED}`);
+  const rendered = ["", ...bullets.map((b) => `- ${b}`), ""];
+
+  if (headerIdx === -1) {
+    const trimmed = md.endsWith("\\n") ? md : md + "\\n";
+    return `${trimmed}\\n## ${PROTECTED}\\n${rendered.join("\\n")}\\n`;
+  }
+
+  let endIdx = lines.length;
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    if (lines[i].startsWith("## ")) {
+      endIdx = i;
+      break;
+    }
+  }
+
+  const before = lines.slice(0, headerIdx + 1);
+  const after = lines.slice(endIdx);
+  return [...before, ...rendered, ...after].join("\\n");
+}
+
+function writeHandoff(cwd: string, state: HandoffState): void {
+  if (!state.lastTask && !state.lastToolOutcome) return;
+  const path = join(cwd, "MEMORY.md");
+  if (!existsSync(path)) return;
+
+  const bullets: string[] = [];
+  if (state.lastTask) bullets.push(`Resume: ${state.lastTask}`);
+  if (state.lastToolOutcome) bullets.push(`Last tool outcome: ${state.lastToolOutcome}`);
+  if (bullets.length === 0) return;
+
+  const current = readFileSync(path, "utf-8");
+  // Preserve the sentinel line as-is; we only rewrite the protected section.
+  void SENTINEL;
+  const rewritten = replaceNextSession(current, bullets);
+  writeFileSync(path, rewritten);
+}
+
+export const HandoffWriterPlugin: Plugin = async ({ directory }: any) => {
+  const cwd = (directory as string | undefined) ?? process.cwd();
+
+  return {
+    event: async ({ event }: { event: any }) => {
+      const sid = event?.properties?.sessionID ?? "";
+      if (!sid) return;
+      const type = event?.type;
+      if (type === "session.created") {
+        ensure(sid);
+      } else if (type === "session.deleted") {
+        sessions.delete(sid);
+      }
+    },
+
+    "chat.message": async (input: any, output: any) => {
+      const sid = input?.sessionID;
+      if (!sid) return;
+      const s = ensure(sid);
+      const parts = input?.parts;
+      if (Array.isArray(parts)) {
+        const texts = parts
+          .filter((p: any) => p?.type === "text" && typeof p.text === "string")
+          .map((p: any) => p.text.trim())
+          .filter(Boolean);
+        if (texts.length > 0) s.lastTask = texts[texts.length - 1];
+      }
+      // Strictly observational — never mutate output.parts here.
+      void output;
+    },
+
+    "tool.execute.after": async (input: any) => {
+      const sid = input?.sessionID;
+      if (!sid) return;
+      const s = ensure(sid);
+      const tool = input?.tool ?? "unknown";
+      const verdict = input?.verdict ?? "ok";
+      s.lastToolOutcome = `${tool} -> ${verdict}`;
+    },
+
+    "experimental.session.compacting": async (input: any, output: any) => {
+      const sid = input?.sessionID;
+      if (!sid) return;
+      const s = sessions.get(sid);
+      if (s) writeHandoff(cwd, s);
+      // Compaction prompt is not modified here; handoff is a MEMORY.md write.
+      void output;
+    },
+  };
+};
+
+export default HandoffWriterPlugin;
+"""
 
     def _trajectory_writer_plugin_content(self) -> str:
         """Return the OpenCode trajectory-writer.ts plugin content.

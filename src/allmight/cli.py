@@ -222,6 +222,48 @@ def memory_init(path: str):
     click.echo("  L3 journal:      memory/journal/")
 
 
+@memory.command("cap")
+@click.argument("memory_md", type=click.Path(exists=True))
+@click.option("--spill-to", type=click.Path(),
+              help="Directory to append evicted bullets into "
+                   "(typically memory/journal/general/). "
+                   "Overflow is dropped silently if omitted.")
+@click.option("--max-bytes", type=int, default=None,
+              help="Override the default byte cap.")
+def memory_cap(memory_md: str, spill_to: str | None, max_bytes: int | None):
+    """Enforce the MEMORY.md byte cap in place (F1).
+
+    Called by the Claude Stop hook after every turn so that
+    unbounded agent writes can't slow down context injection. A
+    no-op when MEMORY.md is already under the cap.
+    """
+    from datetime import datetime, timezone
+    from pathlib import Path as P
+
+    from .memory.l1_rewriter import DEFAULT_MAX_BYTES, HandoffRewriter
+
+    path = P(memory_md).resolve()
+    original = path.read_text()
+    rewriter = HandoffRewriter(max_bytes=max_bytes or DEFAULT_MAX_BYTES)
+    trimmed, overflow = rewriter.enforce_cap(original)
+
+    if trimmed == original:
+        return  # already under cap
+
+    path.write_text(trimmed)
+
+    if overflow and spill_to:
+        spill_dir = P(spill_to).resolve()
+        spill_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+        spill_file = spill_dir / f"{ts}-l1-spill.md"
+        spill_file.write_text(
+            f"# {ts} — L1 spill\n\n"
+            f"Bullets evicted from MEMORY.md to keep L1 under "
+            f"{rewriter.max_bytes} bytes:\n\n{overflow}"
+        )
+
+
 @memory.command("export")
 @click.option("--format", "fmt", type=click.Choice(["jsonl"]), default="jsonl",
               help="Export format (only jsonl is supported today).")
