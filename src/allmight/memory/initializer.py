@@ -714,9 +714,28 @@ same pattern for other kinds you find yourself needing.
 
 ### 2. Append to L3 journal (for searchability)
 
-Create a file in `memory/journal/<workspace>/` or `memory/journal/general/`:
+Create a file in `memory/journal/<workspace>/` or `memory/journal/general/`.
+Wrap it with **v1 frontmatter** so future offline analysis can query the
+journal via `allmight memory export --format jsonl`. The freeform body
+stays first-class; the frontmatter is mechanical:
 
 ```markdown
+---
+allmight_journal: v1
+id: <ISO-8601 timestamp + short hash, e.g. 2026-04-18T10:32-a7f3>
+type: discovery        # trajectory | reflection | discovery | decision | correction
+workspace: <name>      # or: general
+trigger: slash_remember
+input: |
+  <the user message that led to this, redacted of secrets>
+tool_calls: []         # list of {tool, args, verdict: ok|drift|blocked}
+output: |
+  <your final response summary>
+outcome_label: success # success | partial | failure | aborted
+tags: [<keywords>]
+supersedes: null       # id of an older entry this replaces, or null
+created_at: <ISO-8601>
+---
 # <date> — <brief title>
 
 <What you learned, in your own words.>
@@ -863,9 +882,27 @@ lives under a consistent `memory/<kind>/<workspace>.md` path.
 ### 3. Log to L3 — Journal
 
 Summarize what you learned this session as a journal entry in
-`memory/journal/<workspace>/` or `memory/journal/general/`:
+`memory/journal/<workspace>/` or `memory/journal/general/`. Wrap it with
+**v1 frontmatter** (see `/remember` for the full field list) so future
+offline analysis can query it:
 
 ```markdown
+---
+allmight_journal: v1
+id: <ISO-8601 timestamp + short hash>
+type: reflection
+workspace: <name>      # or: general
+trigger: slash_reflect
+input: |
+  <what prompted this reflection>
+tool_calls: []
+output: |
+  <the reflection in one line>
+outcome_label: success
+tags: [<keywords>]
+supersedes: null
+created_at: <ISO-8601>
+---
 # <date> — <brief title>
 
 <Summary of discoveries, decisions, and insights.>
@@ -1048,10 +1085,11 @@ Append to `memory/usage.log`:
     def _generate_opencode_plugins(self, root: Path) -> None:
         """Generate all OpenCode plugins under .opencode/plugins/.
 
-        Writes three plugin files:
+        Writes four plugin files:
         - memory-load.ts   — primes MEMORY.md + scope-first principle per session
         - remember-trigger.ts — nudges the agent to run /remember
         - todo-curator.ts  — tracks TODOs across sessions per corpus
+        - trajectory-writer.ts — F5: captures structured session trajectory
         """
         plugins_dir = root / ".opencode" / "plugins"
         plugins_dir.mkdir(parents=True, exist_ok=True)
@@ -1065,7 +1103,217 @@ Append to `memory/usage.log`:
             "memory-load.ts": self._opencode_plugin_content(),
             "remember-trigger.ts": self._remember_trigger_plugin_content(),
             "todo-curator.ts": self._todo_curator_plugin_content(),
+            "trajectory-writer.ts": self._trajectory_writer_plugin_content(),
         }
+
+    def _trajectory_writer_plugin_content(self) -> str:
+        """Return the OpenCode trajectory-writer.ts plugin content.
+
+        F5 — captures structured session data (input, tool_calls, output,
+        verdicts) and flushes a v1-frontmatter entry to
+        memory/journal/<workspace>/<ts>-trajectory.md on session compaction
+        or deletion. Transparent to the daily user: no nudges, no context
+        injection — just a disk write.
+        """
+        return """\
+/**
+ * Trajectory Writer — OpenCode plugin (All-Might, F5)
+ *
+ * Captures structured session data so future offline analysis
+ * (allmight memory export --format jsonl) has something to query.
+ * Transparent to the daily user: never injects into the chat; only
+ * writes a frontmatter-wrapped markdown file on flush events.
+ *
+ * Captured per session:
+ *   - input     (last user message)
+ *   - tool_calls (each {tool, args} from tool.execute.before,
+ *                 annotated with verdict from tool.execute.after)
+ *   - output    (accumulated agent response summary)
+ *   - workspace (inferred from any knowledge_graph/<name>/ path)
+ *
+ * Flush triggers:
+ *   - experimental.session.compacting — last chance before history is summarised
+ *   - session.deleted                 — session closed without compaction
+ *
+ * Hook:
+ *   - chat.message — record the latest user input (does NOT mutate output)
+ */
+import type { Plugin } from "@opencode-ai/plugin";
+import { mkdirSync, writeFileSync } from "fs";
+import { join } from "path";
+
+type ToolCallRec = { tool: string; args: any; verdict: "ok" | "drift" | "blocked" };
+
+type Trajectory = {
+  workspace: string | null;
+  input: string;
+  tool_calls: ToolCallRec[];
+  output: string;
+  pendingToolIndex: number | null;
+};
+
+const sessions = new Map<string, Trajectory>();
+
+const WORKSPACE_RE = /knowledge_graph\\/([^/\\s"']+)/;
+
+function ensure(sid: string): Trajectory {
+  let t = sessions.get(sid);
+  if (!t) {
+    t = {
+      workspace: null,
+      input: "",
+      tool_calls: [],
+      output: "",
+      pendingToolIndex: null,
+    };
+    sessions.set(sid, t);
+  }
+  return t;
+}
+
+function inferWorkspace(args: any): string | null {
+  if (!args) return null;
+  const haystack = typeof args === "string" ? args : JSON.stringify(args);
+  const m = haystack.match(WORKSPACE_RE);
+  return m?.[1] ?? null;
+}
+
+function yamlEscape(s: string): string {
+  // Block literal (|) keeps newlines verbatim; indent by 2 spaces.
+  const indented = s.replace(/\\n/g, "\\n  ");
+  return "|\\n  " + indented;
+}
+
+function flush(cwd: string, sid: string, t: Trajectory): void {
+  if (!t.input && t.tool_calls.length === 0) return;
+  const workspace = t.workspace ?? "general";
+  const now = new Date();
+  const iso = now.toISOString();
+  const ts = iso.replace(/[:.]/g, "-");
+  const id = `${iso.slice(0, 19)}-${sid.slice(0, 6)}`;
+  const dir = join(cwd, "memory", "journal", workspace);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${ts}-trajectory.md`);
+
+  const outcome = t.tool_calls.some((c) => c.verdict === "drift" || c.verdict === "blocked")
+    ? "partial"
+    : "success";
+
+  const toolCallsYaml =
+    t.tool_calls.length === 0
+      ? "[]"
+      : "\\n" +
+        t.tool_calls
+          .map(
+            (c) =>
+              `  - tool: ${c.tool}\\n` +
+              `    args: ${JSON.stringify(c.args)}\\n` +
+              `    verdict: ${c.verdict}`,
+          )
+          .join("\\n");
+
+  const frontmatter =
+    "---\\n" +
+    "allmight_journal: v1\\n" +
+    `id: ${id}\\n` +
+    "type: trajectory\\n" +
+    `workspace: ${workspace}\\n` +
+    "trigger: auto\\n" +
+    `input: ${yamlEscape(t.input)}\\n` +
+    `tool_calls: ${toolCallsYaml}\\n` +
+    `output: ${yamlEscape(t.output)}\\n` +
+    `outcome_label: ${outcome}\\n` +
+    "tags: []\\n" +
+    "supersedes: null\\n" +
+    `created_at: ${iso}\\n` +
+    "---\\n";
+
+  const body = `# ${iso.slice(0, 10)} \\u2014 session trajectory (${workspace})\\n`;
+  writeFileSync(path, frontmatter + body);
+}
+
+export const TrajectoryWriterPlugin: Plugin = async ({ directory }: any) => {
+  const cwd = (directory as string | undefined) ?? process.cwd();
+
+  return {
+    event: async ({ event }: { event: any }) => {
+      const sid = event?.properties?.sessionID ?? "";
+      if (!sid) return;
+      const type = event?.type;
+
+      if (type === "session.created") {
+        ensure(sid);
+      } else if (type === "session.deleted") {
+        const t = sessions.get(sid);
+        if (t) flush(cwd, sid, t);
+        sessions.delete(sid);
+      }
+    },
+
+    "chat.message": async (input: any, output: any) => {
+      const sid = input?.sessionID;
+      if (!sid) return;
+      const t = ensure(sid);
+      // Capture the last user message verbatim. Never mutate output.parts
+      // here — trajectory writing stays transparent to the chat.
+      const parts = input?.parts;
+      if (Array.isArray(parts)) {
+        const texts = parts
+          .filter((p: any) => p?.type === "text" && typeof p.text === "string")
+          .map((p: any) => p.text);
+        if (texts.length > 0) t.input = texts.join("\\n");
+      }
+      void output;
+    },
+
+    "tool.execute.before": async (input: any) => {
+      const sid = input?.sessionID;
+      if (!sid) return;
+      const t = ensure(sid);
+      if (!t.workspace) {
+        const ws = inferWorkspace(input?.args);
+        if (ws) t.workspace = ws;
+      }
+      t.tool_calls.push({
+        tool: String(input?.tool ?? "unknown"),
+        args: input?.args ?? {},
+        verdict: "ok",
+      });
+      t.pendingToolIndex = t.tool_calls.length - 1;
+    },
+
+    "tool.execute.after": async (input: any) => {
+      const sid = input?.sessionID;
+      if (!sid) return;
+      const t = ensure(sid);
+      const idx = t.pendingToolIndex;
+      if (idx !== null && t.tool_calls[idx]) {
+        const verdict = input?.verdict;
+        if (verdict === "drift" || verdict === "blocked" || verdict === "ok") {
+          t.tool_calls[idx].verdict = verdict;
+        }
+      }
+      t.pendingToolIndex = null;
+    },
+
+    "experimental.session.compacting": async (input: any, output: any) => {
+      const sid = input?.sessionID;
+      if (!sid) return;
+      const t = sessions.get(sid);
+      if (t) {
+        flush(cwd, sid, t);
+        // Reset captured state so post-compaction continues fresh.
+        t.input = "";
+        t.tool_calls = [];
+        t.output = "";
+      }
+      void output;
+    },
+  };
+};
+
+export default TrajectoryWriterPlugin;
+"""
 
     def _refresh_opencode_compat(self, root: Path) -> None:
         """Ensure OpenCode compatibility symlinks exist after memory init."""

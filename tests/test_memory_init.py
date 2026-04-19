@@ -529,3 +529,54 @@ class TestFeedbackLoop:
         content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
         assert "Insight" in content or "insight" in content
 
+
+class TestJournalFrontmatterTemplates:
+    """F5 — /remember and /reflect templates carry the v1 sentinel so
+    agents write structured entries by default."""
+
+    def test_remember_template_has_v1_sentinel(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        assert "allmight_journal: v1" in content
+
+    def test_reflect_template_has_v1_sentinel(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        assert "allmight_journal: v1" in content
+
+
+class TestTrajectoryWriterPlugin:
+    """F5 — trajectory-writer.ts captures structured session data
+    transparently to the daily user."""
+
+    def test_trajectory_writer_plugin_exists(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        assert (project_root / ".opencode" / "plugins" / "trajectory-writer.ts").exists()
+
+    def test_trajectory_writer_subscribes_to_tool_lifecycle(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "plugins" / "trajectory-writer.ts"
+        ).read_text()
+        assert "tool.execute.before" in content
+        assert "tool.execute.after" in content
+        assert '"chat.message":' in content
+
+    def test_trajectory_writer_writes_under_journal(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "plugins" / "trajectory-writer.ts"
+        ).read_text()
+        # The plugin must target memory/journal/<workspace>/ paths.
+        assert 'memory", "journal"' in content or "memory/journal" in content
+        # Negative: must NOT use the deprecated msg.content mutation.
+        assert "msg.content =" not in content
+
+    def test_trajectory_writer_emits_v1_frontmatter(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "plugins" / "trajectory-writer.ts"
+        ).read_text()
+        # Emits the sentinel so downstream export can distinguish it.
+        assert "allmight_journal: v1" in content
+
