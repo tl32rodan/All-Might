@@ -1,91 +1,39 @@
-"""F1 — L1 handoff rewriter.
+"""F1.5 — L1 portable-only auditor.
 
-MEMORY.md is loaded every turn via hook, so unbounded growth costs
-every agent turn. :class:`HandoffRewriter` enforces a byte cap on the
-body (FIFO bullet eviction) and manages the ``Next Session Start Here``
-section that the handoff-writer plugin populates before compaction.
+MEMORY.md is loaded every turn via hook, so unbounded growth costs every
+agent turn. :class:`L1Auditor` computes whether the body exceeds the cap
+and *never* modifies MEMORY.md — triage is the agent's job, prompted by
+a passive nudge sentinel.
 
 Design choices:
 - **Byte count, not char count.** Multi-byte runes under-count; bytes
   match the real cost of injection.
-- **FIFO bullet eviction.** Oldest bullets (top of each section) go
-  first — the premise is that the latest turns matter most.
-- **Protected section.** ``## Next Session Start Here`` is never
-  evicted. Its whole purpose is to survive handoff.
-- **Section headers preserved.** Empty sections signal to the agent
-  that the scope exists — dropping them makes the file misleading.
+- **Audit, never trim.** Evicting bullets silently would hide work the
+  user wanted persisted. The nudge is a forcing function for essence
+  extraction (distill portable facts, migrate corpus-specific content
+  to L2 / per-corpus state).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 SENTINEL_MARKER = "allmight_l1_cap"
 DEFAULT_MAX_BYTES = 4096
-PROTECTED_SECTION = "Next Session Start Here"
 
 
 @dataclass
-class _Section:
-    header: str                     # "## Project Map"
-    pre: list[str] = field(default_factory=list)   # non-bullet lines before bullets
-    bullets: list[str] = field(default_factory=list)
-    post: list[str] = field(default_factory=list)  # trailing blank lines
+class AuditResult:
+    """Outcome of a single L1 audit pass."""
+
+    over: bool
+    body_bytes: int
+    overflow_bytes: int
+    cap: int
 
 
-def _is_bullet(line: str) -> bool:
-    s = line.lstrip()
-    return s.startswith("- ") or s.startswith("* ")
-
-
-def _parse_sections(body: str) -> tuple[list[str], list[_Section]]:
-    """Split *body* into (prelude_lines, sections).
-
-    Prelude is everything before the first ``## `` header (typically
-    ``# Project Memory`` and blank lines).
-    """
-    lines = body.splitlines()
-    prelude: list[str] = []
-    sections: list[_Section] = []
-    current: _Section | None = None
-    seen_bullet = False
-
-    for line in lines:
-        if line.startswith("## "):
-            current = _Section(header=line)
-            sections.append(current)
-            seen_bullet = False
-            continue
-        if current is None:
-            prelude.append(line)
-            continue
-        if _is_bullet(line):
-            current.bullets.append(line)
-            seen_bullet = True
-        elif seen_bullet:
-            current.post.append(line)
-        else:
-            current.pre.append(line)
-
-    return prelude, sections
-
-
-def _render(prelude: list[str], sections: list[_Section]) -> str:
-    out: list[str] = []
-    out.extend(prelude)
-    for sec in sections:
-        out.append(sec.header)
-        out.extend(sec.pre)
-        out.extend(sec.bullets)
-        out.extend(sec.post)
-    rendered = "\n".join(out)
-    if not rendered.endswith("\n"):
-        rendered += "\n"
-    return rendered
-
-
-class HandoffRewriter:
-    """Enforce the L1 byte cap and manage the handoff section."""
+class L1Auditor:
+    """Reports whether MEMORY.md's body is over the byte cap. Never writes."""
 
     def __init__(self, max_bytes: int = DEFAULT_MAX_BYTES) -> None:
         self.max_bytes = max_bytes
@@ -96,82 +44,54 @@ class HandoffRewriter:
         out = [ln for ln in lines if SENTINEL_MARKER not in ln]
         return "".join(out).lstrip("\n")
 
-    def enforce_cap(self, md: str) -> tuple[str, str]:
-        """Trim *md* body to ``max_bytes`` and return ``(trimmed, overflow)``.
-
-        Overflow is a plain-text string listing dropped bullets, one
-        per line with their section as a prefix. It's suitable for
-        appending to a journal spill file.
-        """
+    def audit(self, md: str) -> AuditResult:
+        """Measure body size against the cap. Pure — never modifies input."""
         body = self.body_of(md)
-        if len(body.encode("utf-8")) <= self.max_bytes:
-            return md, ""
+        body_bytes = len(body.encode("utf-8"))
+        over = body_bytes > self.max_bytes
+        overflow = body_bytes - self.max_bytes if over else 0
+        return AuditResult(
+            over=over,
+            body_bytes=body_bytes,
+            overflow_bytes=overflow,
+            cap=self.max_bytes,
+        )
 
-        prelude, sections = _parse_sections(body)
-        overflow_lines: list[str] = []
 
-        # Round-robin FIFO eviction across non-protected sections.
-        while len(_render(prelude, sections).encode("utf-8")) > self.max_bytes:
-            dropped_any = False
-            for sec in sections:
-                sec_name = sec.header.lstrip("# ").strip()
-                if sec_name == PROTECTED_SECTION:
-                    continue
-                if sec.bullets:
-                    dropped = sec.bullets.pop(0)
-                    overflow_lines.append(f"[{sec_name}] {dropped.lstrip()}")
-                    dropped_any = True
-                    if len(_render(prelude, sections).encode("utf-8")) <= self.max_bytes:
-                        break
-            if not dropped_any:
-                # No more evictable bullets — stop even if still over.
-                break
+def audit_and_update_sentinel(project_dir, cap: int | None = None) -> AuditResult | None:
+    """Run an audit at *project_dir* and reconcile the `.l1-over-cap` sentinel.
 
-        trimmed_body = _render(prelude, sections)
-        # Re-attach sentinel at the top of the rewritten file.
-        sentinel = f"<!-- {SENTINEL_MARKER}={self.max_bytes} -->\n"
-        if sentinel.strip() in md:
-            # Preserve the original sentinel line exactly once.
-            for line in md.splitlines():
-                if SENTINEL_MARKER in line:
-                    sentinel = line + "\n"
-                    break
-        trimmed = sentinel + "\n" + trimmed_body
-        overflow = "\n".join(overflow_lines) + ("\n" if overflow_lines else "")
-        return trimmed, overflow
+    - Writes `memory/.l1-over-cap` (YAML) when MEMORY.md body > cap.
+    - Removes it when the body is under cap (or when MEMORY.md is absent).
+    - Never modifies MEMORY.md.
 
-    def prepend_handoff(self, md: str, bullets: list[str]) -> str:
-        """Replace the ``Next Session Start Here`` section with *bullets*.
+    Returns the `AuditResult`, or ``None`` when MEMORY.md does not exist.
+    """
+    from datetime import datetime, timezone
+    from pathlib import Path
 
-        Creates the section at the end of the document if missing.
-        """
-        body = self.body_of(md)
-        prelude, sections = _parse_sections(body)
+    root = Path(project_dir)
+    memory_md = root / "MEMORY.md"
+    sentinel = root / "memory" / ".l1-over-cap"
 
-        target: _Section | None = None
-        for sec in sections:
-            if sec.header.strip().lstrip("# ").strip() == PROTECTED_SECTION:
-                target = sec
-                break
+    if not memory_md.exists():
+        if sentinel.exists():
+            sentinel.unlink()
+        return None
 
-        if target is None:
-            target = _Section(
-                header=f"## {PROTECTED_SECTION}",
-                pre=[""],
-                bullets=[],
-                post=[""],
-            )
-            sections.append(target)
+    auditor = L1Auditor(max_bytes=cap or DEFAULT_MAX_BYTES)
+    result = auditor.audit(memory_md.read_text())
 
-        target.bullets = [f"- {b.lstrip('- ').lstrip('* ')}" for b in bullets]
-        # Ensure a blank line between header and bullets.
-        if not target.pre or target.pre[-1] != "":
-            target.pre.append("")
+    if result.over:
+        sentinel.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        sentinel.write_text(
+            f"overflow_bytes: {result.overflow_bytes}\n"
+            f"cap: {result.cap}\n"
+            f"body_bytes: {result.body_bytes}\n"
+            f"timestamp: {ts}\n"
+        )
+    elif sentinel.exists():
+        sentinel.unlink()
 
-        rewritten_body = _render(prelude, sections)
-
-        # Preserve sentinel if present.
-        for line in md.splitlines():
-            if SENTINEL_MARKER in line:
-                return line + "\n\n" + rewritten_body
-        return rewritten_body
+    return result

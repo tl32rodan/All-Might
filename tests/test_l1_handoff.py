@@ -1,22 +1,30 @@
-"""Tests for F1 — L1 handoff-ability.
+"""Tests for F1.5 — L1 as portable-only memory (audit + passive nudge).
 
-MEMORY.md is a session-handoff note, not a dump. Hard byte cap, FIFO
-bullet spillover, and a dedicated "Next Session Start Here" section
-the handoff plugin writes before compaction.
+MEMORY.md is loaded every turn via hook. The cap is a forcing function
+for essence extraction — when exceeded, the agent is *nudged* to triage
+(migrate corpus-specific content to L2, open TODOs to per-corpus state).
+The cap never silently evicts anything.
 """
 
 from __future__ import annotations
 
 import stat
+import subprocess
+import sys
+from pathlib import Path
 
-from click.testing import CliRunner
+import yaml
 
 from allmight.cli import main
+from click.testing import CliRunner
+
+from allmight.memory.cap_audit import audit_and_update_sentinel
 from allmight.memory.initializer import MemoryInitializer
 from allmight.memory.l1_rewriter import (
     DEFAULT_MAX_BYTES,
     SENTINEL_MARKER,
-    HandoffRewriter,
+    AuditResult,
+    L1Auditor,
 )
 
 
@@ -28,94 +36,122 @@ def _big_memory_md() -> str:
         out.append(f"## {sec}")
         out.append("")
         for i in range(80):
-            # ~64 bytes per bullet × 80 × 4 sections ≈ 20 KB
             out.append(f"- {sec} item {i:03d}: " + ("x" * 40))
         out.append("")
-    out.append("## Next Session Start Here")
-    out.append("")
-    out.append("- resume the ingest investigation")
     return "\n".join(out) + "\n"
 
 
-class TestHandoffRewriter:
+class TestL1Auditor:
 
-    def test_under_cap_is_unchanged(self):
+    def test_audit_under_cap_reports_ok(self):
         md = "# Project Memory\n\n## Project Map\n\n- one bullet\n"
-        rewriter = HandoffRewriter()
-        trimmed, overflow = rewriter.enforce_cap(md)
-        assert trimmed == md
-        assert overflow == ""
+        result = L1Auditor().audit(md)
+        assert isinstance(result, AuditResult)
+        assert result.over is False
+        assert result.overflow_bytes == 0
+        assert result.cap == DEFAULT_MAX_BYTES
+        assert result.body_bytes > 0
 
-    def test_cap_enforces_byte_limit(self):
-        rewriter = HandoffRewriter()
-        trimmed, _overflow = rewriter.enforce_cap(_big_memory_md())
-        # The body (excluding the sentinel comment) must fit the cap.
-        body = rewriter.body_of(trimmed)
-        assert len(body.encode("utf-8")) <= DEFAULT_MAX_BYTES
-
-    def test_cap_preserves_section_headers(self):
-        rewriter = HandoffRewriter()
-        trimmed, _ = rewriter.enforce_cap(_big_memory_md())
-        for sec in ("Project Map", "User Preferences", "Active Goals",
-                    "Key Facts", "Next Session Start Here"):
-            assert f"## {sec}" in trimmed, f"missing section: {sec}"
-
-    def test_cap_spillover_is_ordered_fifo(self):
-        """Oldest bullets (top of each section) go into overflow first."""
-        rewriter = HandoffRewriter()
-        _trimmed, overflow = rewriter.enforce_cap(_big_memory_md())
-        # Overflow carries the earliest bullets — at minimum, the
-        # zero-indexed ones from some section.
-        assert "item 000" in overflow or "item 001" in overflow
-
-    def test_cap_preserves_next_session_content(self):
-        """Next Session Start Here must never be evicted by the cap —
-        it's the handoff payload, which is exactly the point."""
-        rewriter = HandoffRewriter()
-        trimmed, _ = rewriter.enforce_cap(_big_memory_md())
-        assert "resume the ingest investigation" in trimmed
-
-    def test_prepend_handoff_replaces_section(self):
-        md = (
-            "# Project Memory\n\n"
-            "## Project Map\n\nfoo\n\n"
-            "## Next Session Start Here\n\n- old handoff\n"
-        )
-        rewriter = HandoffRewriter()
-        out = rewriter.prepend_handoff(md, ["new task", "another task"])
-        assert "- new task" in out
-        assert "- another task" in out
-        assert "- old handoff" not in out
-        # Other sections are untouched.
-        assert "## Project Map" in out
-        assert "foo" in out
-
-    def test_prepend_handoff_creates_section_if_missing(self):
-        md = "# Project Memory\n\n## Project Map\n\nfoo\n"
-        rewriter = HandoffRewriter()
-        out = rewriter.prepend_handoff(md, ["bootstrap"])
-        assert "## Next Session Start Here" in out
-        assert "- bootstrap" in out
+    def test_audit_over_cap_reports_overflow(self):
+        result = L1Auditor().audit(_big_memory_md())
+        assert result.over is True
+        assert result.overflow_bytes > 0
+        assert result.body_bytes > DEFAULT_MAX_BYTES
 
     def test_body_of_strips_sentinel(self):
         md = f"<!-- {SENTINEL_MARKER}=4096 -->\n\n# body\n\ntext\n"
-        rewriter = HandoffRewriter()
-        body = rewriter.body_of(md)
+        body = L1Auditor().body_of(md)
         assert SENTINEL_MARKER not in body
         assert "# body" in body
 
 
-class TestMemoryMdTemplate:
+class TestAuditAndUpdateSentinel:
+    """The single entry point used by the Stop hook: audit + write/remove sentinel.
 
-    def test_memory_md_has_next_session_section(self, tmp_path):
-        MemoryInitializer().initialize(tmp_path)
-        content = (tmp_path / "MEMORY.md").read_text()
-        assert "## Next Session Start Here" in content
+    Must NEVER modify MEMORY.md itself.
+    """
+
+    def test_audit_never_modifies_memory_md(self, tmp_path):
+        memory_md = tmp_path / "MEMORY.md"
+        original = _big_memory_md()
+        memory_md.write_text(original)
+        (tmp_path / "memory").mkdir()
+
+        audit_and_update_sentinel(tmp_path)
+
+        # Byte-level comparison — NOTHING rewrote the file.
+        assert memory_md.read_text() == original
+
+    def test_audit_writes_nudge_when_over(self, tmp_path):
+        (tmp_path / "MEMORY.md").write_text(_big_memory_md())
+        (tmp_path / "memory").mkdir()
+
+        audit_and_update_sentinel(tmp_path)
+
+        sentinel = tmp_path / "memory" / ".l1-over-cap"
+        assert sentinel.exists()
+
+        payload = yaml.safe_load(sentinel.read_text())
+        assert payload["cap"] == DEFAULT_MAX_BYTES
+        assert payload["overflow_bytes"] > 0
+        assert payload["body_bytes"] > DEFAULT_MAX_BYTES
+        assert "timestamp" in payload
+
+    def test_audit_removes_nudge_when_under(self, tmp_path):
+        (tmp_path / "MEMORY.md").write_text("# tiny\n\n## Project Map\n\n- one\n")
+        (tmp_path / "memory").mkdir()
+        sentinel = tmp_path / "memory" / ".l1-over-cap"
+        sentinel.write_text("overflow_bytes: 10\n")  # pre-seed
+
+        audit_and_update_sentinel(tmp_path)
+
+        assert not sentinel.exists()
+
+    def test_audit_noop_when_no_memory_md(self, tmp_path):
+        # Should not crash if MEMORY.md is missing (hook fires on fresh init).
+        (tmp_path / "memory").mkdir()
+        audit_and_update_sentinel(tmp_path)
+        assert not (tmp_path / "memory" / ".l1-over-cap").exists()
+
+
+class TestModuleRunnableAsScript:
+
+    def test_cap_audit_module_runnable_as_script(self, tmp_path):
+        (tmp_path / "MEMORY.md").write_text(_big_memory_md())
+        (tmp_path / "memory").mkdir()
+
+        src_path = Path(__file__).parent.parent / "src"
+        env = {"PYTHONPATH": str(src_path), "PATH": ""}
+        result = subprocess.run(
+            [sys.executable, "-m", "allmight.memory.cap_audit", str(tmp_path)],
+            capture_output=True,
+            text=True,
+            env={**env, "PATH": "/usr/bin:/bin"},
+        )
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert (tmp_path / "memory" / ".l1-over-cap").exists()
+
+
+class TestMemoryMdTemplate:
 
     def test_memory_md_has_sentinel_comment(self, tmp_path):
         MemoryInitializer().initialize(tmp_path)
         content = (tmp_path / "MEMORY.md").read_text()
         assert SENTINEL_MARKER in content
+
+    def test_memory_md_has_no_next_session_section(self, tmp_path):
+        """Negative: the Wave 1 handoff section is gone."""
+        MemoryInitializer().initialize(tmp_path)
+        content = (tmp_path / "MEMORY.md").read_text()
+        assert "Next Session Start Here" not in content
+
+    def test_memory_md_template_states_portable_only_rule(self, tmp_path):
+        """MEMORY.md must explain L1's portable-to-all-corpora scope."""
+        MemoryInitializer().initialize(tmp_path)
+        content = (tmp_path / "MEMORY.md").read_text()
+        assert "portable" in content.lower()
+        # Points readers toward L2 + per-corpus state for non-portable content.
+        assert "memory/understanding" in content
 
 
 class TestStopHookCap:
@@ -132,92 +168,103 @@ class TestStopHookCap:
         assert mode & stat.S_IXUSR
         assert mode & stat.S_IXGRP
 
-    def test_memory_cap_hook_invokes_allmight_cap(self, tmp_path):
+    def test_memory_cap_hook_invokes_python_module(self, tmp_path):
+        """Hook must call the module directly, not a CLI subcommand."""
         MemoryInitializer().initialize(tmp_path)
         content = (tmp_path / ".claude" / "hooks" / "memory-cap.sh").read_text()
-        assert "allmight memory cap" in content
+        assert "python3 -m allmight.memory.cap_audit" in content
+        # Negative: old CLI call is gone.
+        assert "allmight memory cap" not in content
 
-
-class TestHandoffWriterPlugin:
-
-    def test_handoff_writer_plugin_exists(self, tmp_path):
+    def test_memory_cap_hook_tolerates_failure(self, tmp_path):
+        """Must never block Stop — errors swallowed."""
         MemoryInitializer().initialize(tmp_path)
-        assert (tmp_path / ".opencode" / "plugins" / "handoff-writer.ts").exists()
+        content = (tmp_path / ".claude" / "hooks" / "memory-cap.sh").read_text()
+        assert "|| true" in content
 
-    def test_handoff_writer_subscribes_to_compacting(self, tmp_path):
+
+class TestMemoryLoadHookWarning:
+
+    def test_memory_load_injects_over_cap_warning_when_nudge_present(self, tmp_path):
         MemoryInitializer().initialize(tmp_path)
-        content = (
-            tmp_path / ".opencode" / "plugins" / "handoff-writer.ts"
-        ).read_text()
-        # Top-level hook key with correct two-arg signature.
-        assert (
-            '"experimental.session.compacting":' in content
-            and "async (input: any, output: any)" in content
+        (tmp_path / "MEMORY.md").write_text("# tiny\n")
+        sentinel = tmp_path / "memory" / ".l1-over-cap"
+        sentinel.write_text(
+            "overflow_bytes: 1234\ncap: 4096\nbody_bytes: 5330\n"
+            "timestamp: 2026-04-20T10:15:00Z\n"
         )
 
-    def test_handoff_writer_observes_tool_outcomes(self, tmp_path):
-        MemoryInitializer().initialize(tmp_path)
-        content = (
-            tmp_path / ".opencode" / "plugins" / "handoff-writer.ts"
-        ).read_text()
-        assert "tool.execute.after" in content
-
-    def test_handoff_writer_writes_to_memory_md(self, tmp_path):
-        MemoryInitializer().initialize(tmp_path)
-        content = (
-            tmp_path / ".opencode" / "plugins" / "handoff-writer.ts"
-        ).read_text()
-        assert "MEMORY.md" in content
-        # Must not pollute the live chat — handoff is a disk write only.
-        assert "output.parts.unshift" not in content
-        # Negative: no stale msg.content mutations.
-        assert "msg.content =" not in content
-
-
-class TestCliMemoryCap:
-
-    def test_cli_cap_trims_in_place(self, tmp_path):
-        memory_md = tmp_path / "MEMORY.md"
-        memory_md.write_text(_big_memory_md())
-
-        runner = CliRunner()
-        result = runner.invoke(main, ["memory", "cap", str(memory_md)])
-
-        assert result.exit_code == 0, result.output
-        trimmed = memory_md.read_text()
-        rewriter = HandoffRewriter()
-        body = rewriter.body_of(trimmed)
-        assert len(body.encode("utf-8")) <= DEFAULT_MAX_BYTES
-
-    def test_cli_cap_spills_overflow_to_journal(self, tmp_path):
-        memory_md = tmp_path / "MEMORY.md"
-        memory_md.write_text(_big_memory_md())
-        (tmp_path / "memory" / "journal" / "general").mkdir(parents=True)
-
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            ["memory", "cap", str(memory_md),
-             "--spill-to", str(tmp_path / "memory" / "journal" / "general")],
+        script = tmp_path / ".claude" / "hooks" / "memory-load.sh"
+        stdin = f'{{"cwd":"{tmp_path}"}}'
+        result = subprocess.run(
+            ["bash", str(script)],
+            input=stdin,
+            capture_output=True,
+            text=True,
         )
+        assert result.returncode == 0, result.stderr
+        assert "L1 over cap" in result.stdout
+        # Warning must precede MEMORY.md content.
+        assert result.stdout.index("L1 over cap") < result.stdout.index("# tiny")
 
-        assert result.exit_code == 0, result.output
-        spills = list((tmp_path / "memory" / "journal" / "general").glob("*l1-spill*.md"))
-        assert len(spills) == 1
-        assert "item 000" in spills[0].read_text() or "item 001" in spills[0].read_text()
+    def test_memory_load_no_warning_when_nudge_absent(self, tmp_path):
+        MemoryInitializer().initialize(tmp_path)
+        (tmp_path / "MEMORY.md").write_text("# tiny\n")
 
-    def test_cli_cap_no_spill_when_under_cap(self, tmp_path):
-        memory_md = tmp_path / "MEMORY.md"
-        memory_md.write_text("# tiny\n\n## Project Map\n\n- one\n")
-        (tmp_path / "memory" / "journal" / "general").mkdir(parents=True)
-
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            ["memory", "cap", str(memory_md),
-             "--spill-to", str(tmp_path / "memory" / "journal" / "general")],
+        script = tmp_path / ".claude" / "hooks" / "memory-load.sh"
+        stdin = f'{{"cwd":"{tmp_path}"}}'
+        result = subprocess.run(
+            ["bash", str(script)],
+            input=stdin,
+            capture_output=True,
+            text=True,
         )
+        assert result.returncode == 0
+        assert "L1 over cap" not in result.stdout
 
+
+class TestCommandBodies:
+
+    def test_remember_command_states_portable_only_rule(self, tmp_path):
+        MemoryInitializer().initialize(tmp_path)
+        body = (tmp_path / ".claude" / "commands" / "remember.md").read_text()
+        # The portable-only test: "no matter which corpus"
+        assert "portable" in body.lower() or "no matter which corpus" in body.lower()
+
+    def test_reflect_has_cap_triage_step(self, tmp_path):
+        MemoryInitializer().initialize(tmp_path)
+        body = (tmp_path / ".claude" / "commands" / "reflect.md").read_text()
+        assert "cap triage" in body.lower() or "L1 cap" in body
+        # References the sentinel file so the agent knows what clears the nudge.
+        assert ".l1-over-cap" in body
+
+
+class TestHandoffRemoved:
+    """Wave 1 F1 artifacts must be gone."""
+
+    def test_no_handoff_writer_plugin(self, tmp_path):
+        MemoryInitializer().initialize(tmp_path)
+        assert not (tmp_path / ".opencode" / "plugins" / "handoff-writer.ts").exists()
+
+    def test_opencode_plugin_map_excludes_handoff_writer(self, tmp_path):
+        MemoryInitializer().initialize(tmp_path)
+        plugin_dir = tmp_path / ".opencode" / "plugins"
+        filenames = {p.name for p in plugin_dir.glob("*.ts")}
+        assert "handoff-writer.ts" not in filenames
+
+
+class TestCliMemoryCapRemoved:
+    """The user-facing CLI subcommand is gone — hook uses the module directly."""
+
+    def test_memory_cap_cli_subcommand_not_registered(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["memory", "cap", "--help"])
+        # Click emits a non-zero exit code and a "No such command" message.
+        assert result.exit_code != 0
+        assert "cap" in result.output.lower()  # error mentions the missing command
+
+    def test_memory_cap_not_in_memory_help(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["memory", "--help"])
         assert result.exit_code == 0
-        spills = list((tmp_path / "memory" / "journal" / "general").glob("*l1-spill*.md"))
-        assert spills == []
+        assert "cap" not in result.output.lower()
