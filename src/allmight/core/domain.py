@@ -172,6 +172,7 @@ class MemoryConfig:
     """Configuration for the agent memory subsystem (L1/L2/L3)."""
 
     stores: dict[str, MemoryStoreSpec] = field(default_factory=_default_stores)
+    reminder_every_turns: int = 5
 
 
 # ---------------------------------------------------------------------------

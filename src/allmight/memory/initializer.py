@@ -13,6 +13,31 @@ from pathlib import Path
 from .config import MemoryConfigManager
 
 
+def _reminder_nudge_text() -> str:
+    """Canonical nudge text — shared byte-equal by both runtimes.
+
+    Injected into the OpenCode ``remember-trigger.ts`` plugin and the
+    Claude Code ``memory-nudge.sh`` hook. Keeping a single source means
+    a new reminder (e.g. the skills-log bullet) only has to be authored
+    once.
+    """
+    return (
+        "[Memory Nudge]\n"
+        "Did anything worth remembering happen in the last few turns?\n"
+        "If yes, run /remember (it decides the scope and writes).\n"
+        "If nothing stands out, skip.\n"
+        "\n"
+        "Scope reminder: project-wide (portable) -> MEMORY.md;\n"
+        "per-corpus knowledge -> memory/understanding/<workspace>.md;\n"
+        "per-corpus personal state -> memory/<kind>/<workspace>.md;\n"
+        "searchable -> memory/journal/<workspace>/.\n"
+        "\n"
+        "If you created a new skill or plugin this session -> append a "
+        "bullet to memory/skills-log.md\n"
+        "(date . path . why). Self-evolution leaves a trace."
+    )
+
+
 class MemoryInitializer:
     """Creates the agent memory system."""
 
@@ -49,8 +74,16 @@ class MemoryInitializer:
         if not usage_log.exists():
             usage_log.write_text("")
 
+        # 4c. Skills log — trace of self-authored skills/plugins
+        skills_log = root / "memory" / "skills-log.md"
+        if not skills_log.exists():
+            skills_log.write_text(self._skills_log_template())
+
         # 5. Generate hook scripts (nudge + L1 loader)
         self._generate_hooks(root)
+
+        # 5b. Register hooks in .claude/settings.json (idempotent, marker-bounded)
+        self._wire_claude_settings(root)
 
         # 6. Generate memory commands (remember, recall, reflect)
         self._generate_memory_commands(root)
@@ -104,23 +137,54 @@ class MemoryInitializer:
 
     def _write_hook_content(self, hooks_dir: Path) -> None:
         """Write hook script content to a directory."""
-        (hooks_dir / "memory-nudge.sh").write_text("""\
+        nudge_text = _reminder_nudge_text()
+        (hooks_dir / "memory-nudge.sh").write_text(f"""\
 #!/usr/bin/env bash
-# Memory Nudge — Stop hook
-# Fires every time the agent finishes a response.
-# Reminds it to update memory under the right scope.
+# Memory Nudge — Claude Code Stop hook (throttled per-session)
+#
+# Fires every Stop. Reads cwd + session_id from stdin JSON. Keeps a
+# per-session counter at memory/.nudge-counter-<session_id> (separate
+# files per session -> no race across parallel sessions) and emits the
+# nudge only when count % reminder_every_turns == 0.
 set -euo pipefail
 
-cat <<'NUDGE'
-[Memory Nudge] Before finishing, ask: what's the scope of what I learned?
-- Project-wide (prefs, goals, env facts) → update MEMORY.md
-- Per-corpus knowledge → memory/understanding/<workspace>.md
-- Per-corpus personal state (open tasks, shortcuts, ad-hoc notes)
-    → memory/<kind>/<workspace>.md  (create on demand, e.g. memory/todos/<workspace>.md)
-- Worth searching later → append to memory/journal/<workspace>/
+INPUT=$(cat 2>/dev/null || echo "{{}}")
+PROJECT_DIR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd','.'))" 2>/dev/null || echo ".")
+SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || echo "")
 
-Prefer the narrower scope. Never dump per-corpus content into MEMORY.md.
+# Without a session id we can't throttle safely — skip rather than risk
+# a race on a shared counter.
+if [ -z "$SESSION_ID" ]; then
+    exit 0
+fi
+
+EVERY=$(python3 -c "
+import sys, pathlib
+try:
+    import yaml  # type: ignore
+except ImportError:
+    print(5); sys.exit(0)
+p = pathlib.Path('$PROJECT_DIR') / 'memory' / 'config.yaml'
+try:
+    data = yaml.safe_load(p.read_text()) or {{}}
+    print(int(data.get('reminder_every_turns', 5)))
+except Exception:
+    print(5)
+" 2>/dev/null || echo 5)
+
+COUNTER_DIR="$PROJECT_DIR/memory"
+mkdir -p "$COUNTER_DIR"
+COUNTER_FILE="$COUNTER_DIR/.nudge-counter-$SESSION_ID"
+
+COUNT=$(cat "$COUNTER_FILE" 2>/dev/null || echo 0)
+COUNT=$((COUNT + 1))
+echo "$COUNT" > "$COUNTER_FILE"
+
+if [ "$((COUNT % EVERY))" -eq 0 ]; then
+    cat <<'NUDGE'
+{nudge_text}
 NUDGE
+fi
 exit 0
 """)
         (hooks_dir / "memory-load.sh").write_text("""\
@@ -307,7 +371,15 @@ export default MemoryLoadPlugin;
 
     def _remember_trigger_plugin_content(self) -> str:
         """Return the OpenCode remember-trigger.ts plugin content."""
-        return """\
+        # Canonical nudge text, substituted into the TS plugin so the
+        # OpenCode and Claude Code paths share one source of truth.
+        shared_nudge = (
+            _reminder_nudge_text()
+            .replace("\\", "\\\\")
+            .replace("`", "\\`")
+            .replace("${", "\\${")
+        )
+        template = """\
 /**
  * Remember Trigger — OpenCode plugin (All-Might)
  *
@@ -331,22 +403,10 @@ const NUDGE_EVERY = 5;
 type State = { idleCount: number; pendingNudge: string | null };
 const sessions = new Map<string, State>();
 
-const SCOPE_REMINDER = [
-  "Scope reminder: project-wide \\u2192 MEMORY.md; per-corpus knowledge \\u2192",
-  "memory/understanding/<workspace>.md; per-corpus personal state \\u2192",
-  "memory/<kind>/<workspace>.md; searchable \\u2192 memory/journal/<workspace>/.",
-  "If MEMORY.md > 3000 chars, first move oldest content to L2 or L3.",
-].join("\\n");
+const SHARED_NUDGE = `__SHARED_NUDGE__`;
 
 function nudgeText(turn: number): string {
-  return [
-    `[Memory Nudge \\u2014 turn ${turn}]`,
-    "Did anything worth remembering happen in the last few turns?",
-    "If yes, run /remember (it decides the scope and writes).",
-    "If nothing stands out, skip.",
-    "",
-    SCOPE_REMINDER,
-  ].join("\\n");
+  return `[Memory Nudge \\u2014 turn ${turn}]\\n` + SHARED_NUDGE;
 }
 
 function preCompactText(): string {
@@ -357,7 +417,7 @@ function preCompactText(): string {
     "corrections, per-corpus discoveries). Delegate scope and writing to",
     "/remember.",
     "",
-    SCOPE_REMINDER,
+    SHARED_NUDGE,
   ].join("\\n");
 }
 
@@ -414,6 +474,7 @@ export const RememberTriggerPlugin: Plugin = async () => {
 
 export default RememberTriggerPlugin;
 """
+        return template.replace("__SHARED_NUDGE__", shared_nudge)
 
     def _todo_curator_plugin_content(self) -> str:
         """Return the OpenCode todo-curator.ts plugin content."""
@@ -675,6 +736,34 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
         for script_name in ("memory-nudge.sh", "memory-load.sh", "memory-cap.sh"):
             script = hooks_dir / script_name
             script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    def _wire_claude_settings(self, root: Path) -> None:
+        """Register All-Might hooks in ``.claude/settings.json``."""
+        from .settings_json import merge_hooks
+
+        merge_hooks(
+            root / ".claude" / "settings.json",
+            {
+                "Stop": [
+                    {"command": "./.claude/hooks/memory-cap.sh"},
+                    {"command": "./.claude/hooks/memory-nudge.sh"},
+                ],
+                "UserPromptSubmit": [
+                    {"command": "./.claude/hooks/memory-load.sh"},
+                ],
+            },
+        )
+
+    def _skills_log_template(self) -> str:
+        """Return the initial ``memory/skills-log.md`` body."""
+        return (
+            "# Self-Authored Skills\n"
+            "\n"
+            "Append a bullet whenever you write a new skill or plugin:\n"
+            "- **YYYY-MM-DD** \u00b7 `path/to/SKILL.md` \u00b7 why you created it\n"
+            "\n"
+            "<!-- entries below -->\n"
+        )
 
     # ------------------------------------------------------------------
     # Command generation
@@ -1078,17 +1167,17 @@ Append to `memory/usage.log`:
     # ------------------------------------------------------------------
 
     def _generate_opencode_json(self, root: Path) -> None:
-        """Generate opencode.json with hooks for OpenCode compatibility.
+        """Generate opencode.json for OpenCode compatibility.
 
-        OpenCode's experimental config hooks support:
-        - ``session_completed`` — fires when a session ends (≈ Claude's Stop hook)
-        - ``file_edited`` — fires when files are edited
+        OpenCode owns its own reminder throttle inside
+        ``remember-trigger.ts`` (in-memory ``Map<sessionID, State>``), so
+        ``session_completed`` no longer needs to invoke the shell nudge
+        — that hook is now Claude-Code-only, wired via
+        ``.claude/settings.json``.
 
-        We configure ``session_completed`` to run the memory-nudge script.
-
-        For the L1 loader (MEMORY.md injection), OpenCode requires a plugin
-        since config hooks don't support a ``user_prompt_submit`` equivalent.
-        We generate a minimal plugin at ``.opencode/plugins/memory-load.ts``.
+        This function clears any stale All-Might entry in
+        ``experimental.hook.session_completed`` (left by older releases)
+        while preserving any unrelated user-authored hook entries.
         """
         import json
 
@@ -1096,7 +1185,6 @@ Append to `memory/usage.log`:
         opencode_dir.mkdir(exist_ok=True)
         opencode_json = opencode_dir / "opencode.json"
 
-        # Build the config — merge with existing if present
         if opencode_json.exists():
             try:
                 config = json.loads(opencode_json.read_text())
@@ -1105,16 +1193,24 @@ Append to `memory/usage.log`:
         else:
             config = {}
 
-        # Ensure experimental.hook structure exists
         experimental = config.setdefault("experimental", {})
         hook = experimental.setdefault("hook", {})
 
-        # session_completed → memory-nudge.sh
-        hook["session_completed"] = [
-            {
-                "command": ["./.claude/hooks/memory-nudge.sh"],
-            }
+        # Drop any session_completed entry that called the shell nudge.
+        entries = hook.get("session_completed") or []
+        filtered = [
+            entry for entry in entries
+            if "memory-nudge.sh" not in " ".join(entry.get("command", []))
         ]
+        if filtered:
+            hook["session_completed"] = filtered
+        else:
+            hook.pop("session_completed", None)
+
+        if not hook:
+            experimental.pop("hook", None)
+        if not experimental:
+            config.pop("experimental", None)
 
         opencode_json.write_text(json.dumps(config, indent=2) + "\n")
 

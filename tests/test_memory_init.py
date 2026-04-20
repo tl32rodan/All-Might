@@ -233,14 +233,18 @@ class TestOpenCodeHooks:
         MemoryInitializer().initialize(project_root)
         assert (project_root / ".opencode" / "opencode.json").exists()
 
-    def test_opencode_json_has_session_completed_hook(self, project_root):
-        """opencode.json configures session_completed hook for memory-nudge."""
+    def test_opencode_json_does_not_wire_shell_nudge(self, project_root):
+        """OpenCode's nudge lives in remember-trigger.ts, not a shell hook."""
         import json
         MemoryInitializer().initialize(project_root)
         config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
-        hooks = config["experimental"]["hook"]
-        assert "session_completed" in hooks
-        assert ".claude/hooks/memory-nudge.sh" in hooks["session_completed"][0]["command"][0]
+        entries = (
+            config.get("experimental", {})
+                  .get("hook", {})
+                  .get("session_completed", [])
+        )
+        commands = [" ".join(e.get("command", [])) for e in entries]
+        assert not any("memory-nudge.sh" in c for c in commands)
 
     def test_creates_memory_load_plugin(self, project_root):
         """OpenCode plugin for L1 loader created."""
@@ -386,16 +390,16 @@ class TestOpenCodeHooks:
         assert "@opencode-ai/plugin" in pkg["dependencies"]
 
     def test_opencode_json_idempotent(self, project_root):
-        """Running init twice doesn't corrupt opencode.json."""
-        import json
+        """Running init twice produces the same opencode.json."""
         init = MemoryInitializer()
         init.initialize(project_root)
+        first = (project_root / ".opencode" / "opencode.json").read_text()
         init.initialize(project_root)
-        config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
-        assert "session_completed" in config["experimental"]["hook"]
+        second = (project_root / ".opencode" / "opencode.json").read_text()
+        assert first == second
 
     def test_opencode_json_preserves_existing(self, project_root):
-        """Existing opencode.json fields are preserved."""
+        """Existing opencode.json fields are preserved (non-hook keys)."""
         import json
         (project_root / ".opencode").mkdir(exist_ok=True)
         (project_root / ".opencode" / "opencode.json").write_text(json.dumps({
@@ -406,7 +410,6 @@ class TestOpenCodeHooks:
         config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
         assert config["model"] == "claude-sonnet-4-6"
         assert config["experimental"]["other"] is True
-        assert "session_completed" in config["experimental"]["hook"]
 
 
 class TestMemoryConfigManager:
