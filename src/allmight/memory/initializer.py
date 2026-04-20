@@ -121,15 +121,7 @@ class MemoryInitializer:
 
         # Stage opencode.json and memory-load.ts
         import json
-        opencode_config = {
-            "experimental": {
-                "hook": {
-                    "session_completed": [
-                        {"command": ["./.claude/hooks/memory-nudge.sh"]}
-                    ]
-                }
-            }
-        }
+        opencode_config = {}
         (tpl / "opencode.json").write_text(json.dumps(opencode_config, indent=2) + "\n")
         (tpl / "package.json").write_text(self._opencode_package_json_content())
         for filename, content in self._opencode_plugin_map().items():
