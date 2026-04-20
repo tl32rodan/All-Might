@@ -233,14 +233,18 @@ class TestOpenCodeHooks:
         MemoryInitializer().initialize(project_root)
         assert (project_root / ".opencode" / "opencode.json").exists()
 
-    def test_opencode_json_has_session_completed_hook(self, project_root):
-        """opencode.json configures session_completed hook for memory-nudge."""
+    def test_opencode_json_does_not_wire_shell_nudge(self, project_root):
+        """OpenCode's nudge lives in remember-trigger.ts, not a shell hook."""
         import json
         MemoryInitializer().initialize(project_root)
         config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
-        hooks = config["experimental"]["hook"]
-        assert "session_completed" in hooks
-        assert ".claude/hooks/memory-nudge.sh" in hooks["session_completed"][0]["command"][0]
+        entries = (
+            config.get("experimental", {})
+                  .get("hook", {})
+                  .get("session_completed", [])
+        )
+        commands = [" ".join(e.get("command", [])) for e in entries]
+        assert not any("memory-nudge.sh" in c for c in commands)
 
     def test_creates_memory_load_plugin(self, project_root):
         """OpenCode plugin for L1 loader created."""
@@ -386,16 +390,16 @@ class TestOpenCodeHooks:
         assert "@opencode-ai/plugin" in pkg["dependencies"]
 
     def test_opencode_json_idempotent(self, project_root):
-        """Running init twice doesn't corrupt opencode.json."""
-        import json
+        """Running init twice produces the same opencode.json."""
         init = MemoryInitializer()
         init.initialize(project_root)
+        first = (project_root / ".opencode" / "opencode.json").read_text()
         init.initialize(project_root)
-        config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
-        assert "session_completed" in config["experimental"]["hook"]
+        second = (project_root / ".opencode" / "opencode.json").read_text()
+        assert first == second
 
     def test_opencode_json_preserves_existing(self, project_root):
-        """Existing opencode.json fields are preserved."""
+        """Existing opencode.json fields are preserved (non-hook keys)."""
         import json
         (project_root / ".opencode").mkdir(exist_ok=True)
         (project_root / ".opencode" / "opencode.json").write_text(json.dumps({
@@ -406,7 +410,6 @@ class TestOpenCodeHooks:
         config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
         assert config["model"] == "claude-sonnet-4-6"
         assert config["experimental"]["other"] is True
-        assert "session_completed" in config["experimental"]["hook"]
 
 
 class TestMemoryConfigManager:
@@ -528,4 +531,55 @@ class TestFeedbackLoop:
         MemoryInitializer().initialize(project_root)
         content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
         assert "Insight" in content or "insight" in content
+
+
+class TestJournalFrontmatterTemplates:
+    """F5 — /remember and /reflect templates carry the v1 sentinel so
+    agents write structured entries by default."""
+
+    def test_remember_template_has_v1_sentinel(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        assert "allmight_journal: v1" in content
+
+    def test_reflect_template_has_v1_sentinel(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        assert "allmight_journal: v1" in content
+
+
+class TestTrajectoryWriterPlugin:
+    """F5 — trajectory-writer.ts captures structured session data
+    transparently to the daily user."""
+
+    def test_trajectory_writer_plugin_exists(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        assert (project_root / ".opencode" / "plugins" / "trajectory-writer.ts").exists()
+
+    def test_trajectory_writer_subscribes_to_tool_lifecycle(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "plugins" / "trajectory-writer.ts"
+        ).read_text()
+        assert "tool.execute.before" in content
+        assert "tool.execute.after" in content
+        assert '"chat.message":' in content
+
+    def test_trajectory_writer_writes_under_journal(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "plugins" / "trajectory-writer.ts"
+        ).read_text()
+        # The plugin must target memory/journal/<workspace>/ paths.
+        assert 'memory", "journal"' in content or "memory/journal" in content
+        # Negative: must NOT use the deprecated msg.content mutation.
+        assert "msg.content =" not in content
+
+    def test_trajectory_writer_emits_v1_frontmatter(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "plugins" / "trajectory-writer.ts"
+        ).read_text()
+        # Emits the sentinel so downstream export can distinguish it.
+        assert "allmight_journal: v1" in content
 

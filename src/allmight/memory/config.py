@@ -42,7 +42,8 @@ class MemoryConfigManager:
             if name not in stores:
                 stores[name] = default_spec
 
-        return MemoryConfig(stores=stores)
+        reminder = raw.get("reminder_every_turns", MemoryConfig().reminder_every_turns)
+        return MemoryConfig(stores=stores, reminder_every_turns=int(reminder))
 
     def save(self, cfg: MemoryConfig) -> None:
         """Persist memory config and regenerate smak_config."""
@@ -53,7 +54,10 @@ class MemoryConfigManager:
                 "store_uri": spec.store_uri,
             }
 
-        data = {"stores": stores_dict}
+        data = {
+            "stores": stores_dict,
+            "reminder_every_turns": cfg.reminder_every_turns,
+        }
         write_yaml(self.config_path, data)
         self._write_smak_config(cfg)
 

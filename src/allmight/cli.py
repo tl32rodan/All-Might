@@ -220,3 +220,32 @@ def memory_init(path: str):
     click.echo("  L1 cache:        MEMORY.md")
     click.echo("  L2 understanding: memory/understanding/")
     click.echo("  L3 journal:      memory/journal/")
+
+
+@memory.command("export")
+@click.option("--format", "fmt", type=click.Choice(["jsonl"]), default="jsonl",
+              help="Export format (only jsonl is supported today).")
+@click.option("--root", default=".", type=click.Path(exists=True),
+              help="Project root (defaults to the current directory).")
+@click.option("--out", "out", required=True, type=click.Path(),
+              help="Destination file for the export.")
+def memory_export(fmt: str, root: str, out: str):
+    """Export structured journal entries for offline analysis.
+
+    Only entries carrying the ``allmight_journal: v1`` frontmatter
+    sentinel are exported. Legacy freeform entries are skipped and
+    counted in the summary.
+    """
+    from pathlib import Path as P
+
+    from .memory.trajectory_export import export_to_jsonl
+
+    root_path = P(root).resolve()
+    out_path = P(out).resolve()
+    journal_dir = root_path / "memory" / "journal"
+
+    skipped = export_to_jsonl(journal_dir, out_path)
+
+    click.echo(f"Exported {fmt} to {out_path}")
+    if skipped:
+        click.echo(f"  Skipped {skipped} legacy/unparseable entries.")

@@ -13,6 +13,31 @@ from pathlib import Path
 from .config import MemoryConfigManager
 
 
+def _reminder_nudge_text() -> str:
+    """Canonical nudge text — shared byte-equal by both runtimes.
+
+    Injected into the OpenCode ``remember-trigger.ts`` plugin and the
+    Claude Code ``memory-nudge.sh`` hook. Keeping a single source means
+    a new reminder (e.g. the skills-log bullet) only has to be authored
+    once.
+    """
+    return (
+        "[Memory Nudge]\n"
+        "Did anything worth remembering happen in the last few turns?\n"
+        "If yes, run /remember (it decides the scope and writes).\n"
+        "If nothing stands out, skip.\n"
+        "\n"
+        "Scope reminder: project-wide (portable) -> MEMORY.md;\n"
+        "per-corpus knowledge -> memory/understanding/<workspace>.md;\n"
+        "per-corpus personal state -> memory/<kind>/<workspace>.md;\n"
+        "searchable -> memory/journal/<workspace>/.\n"
+        "\n"
+        "If you created a new skill or plugin this session -> append a "
+        "bullet to memory/skills-log.md\n"
+        "(date . path . why). Self-evolution leaves a trace."
+    )
+
+
 class MemoryInitializer:
     """Creates the agent memory system."""
 
@@ -49,8 +74,16 @@ class MemoryInitializer:
         if not usage_log.exists():
             usage_log.write_text("")
 
+        # 4c. Skills log — trace of self-authored skills/plugins
+        skills_log = root / "memory" / "skills-log.md"
+        if not skills_log.exists():
+            skills_log.write_text(self._skills_log_template())
+
         # 5. Generate hook scripts (nudge + L1 loader)
         self._generate_hooks(root)
+
+        # 5b. Register hooks in .claude/settings.json (idempotent, marker-bounded)
+        self._wire_claude_settings(root)
 
         # 6. Generate memory commands (remember, recall, reflect)
         self._generate_memory_commands(root)
@@ -104,33 +137,80 @@ class MemoryInitializer:
 
     def _write_hook_content(self, hooks_dir: Path) -> None:
         """Write hook script content to a directory."""
-        (hooks_dir / "memory-nudge.sh").write_text("""\
+        nudge_text = _reminder_nudge_text()
+        (hooks_dir / "memory-nudge.sh").write_text(f"""\
 #!/usr/bin/env bash
-# Memory Nudge — Stop hook
-# Fires every time the agent finishes a response.
-# Reminds it to update memory under the right scope.
+# Memory Nudge — Claude Code Stop hook (throttled per-session)
+#
+# Fires every Stop. Reads cwd + session_id from stdin JSON. Keeps a
+# per-session counter at memory/.nudge-counter-<session_id> (separate
+# files per session -> no race across parallel sessions) and emits the
+# nudge only when count % reminder_every_turns == 0.
 set -euo pipefail
 
-cat <<'NUDGE'
-[Memory Nudge] Before finishing, ask: what's the scope of what I learned?
-- Project-wide (prefs, goals, env facts) → update MEMORY.md
-- Per-corpus knowledge → memory/understanding/<workspace>.md
-- Per-corpus personal state (open tasks, shortcuts, ad-hoc notes)
-    → memory/<kind>/<workspace>.md  (create on demand, e.g. memory/todos/<workspace>.md)
-- Worth searching later → append to memory/journal/<workspace>/
+INPUT=$(cat 2>/dev/null || echo "{{}}")
+PROJECT_DIR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd','.'))" 2>/dev/null || echo ".")
+SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || echo "")
 
-Prefer the narrower scope. Never dump per-corpus content into MEMORY.md.
+# Without a session id we can't throttle safely — skip rather than risk
+# a race on a shared counter.
+if [ -z "$SESSION_ID" ]; then
+    exit 0
+fi
+
+EVERY=$(python3 -c "
+import sys, pathlib
+try:
+    import yaml  # type: ignore
+except ImportError:
+    print(5); sys.exit(0)
+p = pathlib.Path('$PROJECT_DIR') / 'memory' / 'config.yaml'
+try:
+    data = yaml.safe_load(p.read_text()) or {{}}
+    print(int(data.get('reminder_every_turns', 5)))
+except Exception:
+    print(5)
+" 2>/dev/null || echo 5)
+
+COUNTER_DIR="$PROJECT_DIR/memory"
+mkdir -p "$COUNTER_DIR"
+COUNTER_FILE="$COUNTER_DIR/.nudge-counter-$SESSION_ID"
+
+COUNT=$(cat "$COUNTER_FILE" 2>/dev/null || echo 0)
+COUNT=$((COUNT + 1))
+echo "$COUNT" > "$COUNTER_FILE"
+
+if [ "$((COUNT % EVERY))" -eq 0 ]; then
+    cat <<'NUDGE'
+{nudge_text}
 NUDGE
+fi
 exit 0
 """)
         (hooks_dir / "memory-load.sh").write_text("""\
 #!/usr/bin/env bash
 # L1 Loader — UserPromptSubmit hook
 # Injects MEMORY.md content into agent context every turn.
+# When memory/.l1-over-cap exists (set by cap_audit after Stop), prepend
+# a triage warning *before* MEMORY.md so the agent sees it first.
 set -euo pipefail
 
 INPUT=$(cat)
 PROJECT_DIR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd','.'))" 2>/dev/null || echo ".")
+
+NUDGE_FILE="$PROJECT_DIR/memory/.l1-over-cap"
+if [ -f "$NUDGE_FILE" ]; then
+    OVERFLOW=$(grep '^overflow_bytes:' "$NUDGE_FILE" 2>/dev/null | awk '{print $2}')
+    OVERFLOW=${OVERFLOW:-?}
+    cat <<NUDGE
+\u26a0 L1 over cap by ${OVERFLOW} bytes. Triage required:
+- Distill cross-cutting facts; remove stale/duplicate lines.
+- Move corpus-specific content to memory/understanding/<workspace>.md.
+- Move open TODOs to memory/todos/<workspace>.md.
+Run /reflect and complete the cap-triage step (sentinel clears on next Stop).
+
+NUDGE
+fi
 
 MEMORY_FILE="$PROJECT_DIR/MEMORY.md"
 if [ -f "$MEMORY_FILE" ]; then
@@ -138,6 +218,20 @@ if [ -f "$MEMORY_FILE" ]; then
     cat "$MEMORY_FILE"
     echo "--- End Project Memory ---"
 fi
+exit 0
+""")
+        (hooks_dir / "memory-cap.sh").write_text("""\
+#!/usr/bin/env bash
+# L1 Cap Audit — Stop hook (F1.5)
+# Audits MEMORY.md body size against the cap and writes/removes the
+# memory/.l1-over-cap nudge sentinel. NEVER modifies MEMORY.md.
+# Must never block Stop.
+set -euo pipefail
+
+INPUT=$(cat 2>/dev/null || echo "{}")
+PROJECT_DIR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd','.'))" 2>/dev/null || echo ".")
+
+python3 -m allmight.memory.cap_audit "$PROJECT_DIR" >/dev/null 2>&1 || true
 exit 0
 """)
 
@@ -277,7 +371,15 @@ export default MemoryLoadPlugin;
 
     def _remember_trigger_plugin_content(self) -> str:
         """Return the OpenCode remember-trigger.ts plugin content."""
-        return """\
+        # Canonical nudge text, substituted into the TS plugin so the
+        # OpenCode and Claude Code paths share one source of truth.
+        shared_nudge = (
+            _reminder_nudge_text()
+            .replace("\\", "\\\\")
+            .replace("`", "\\`")
+            .replace("${", "\\${")
+        )
+        template = """\
 /**
  * Remember Trigger — OpenCode plugin (All-Might)
  *
@@ -301,22 +403,10 @@ const NUDGE_EVERY = 5;
 type State = { idleCount: number; pendingNudge: string | null };
 const sessions = new Map<string, State>();
 
-const SCOPE_REMINDER = [
-  "Scope reminder: project-wide \\u2192 MEMORY.md; per-corpus knowledge \\u2192",
-  "memory/understanding/<workspace>.md; per-corpus personal state \\u2192",
-  "memory/<kind>/<workspace>.md; searchable \\u2192 memory/journal/<workspace>/.",
-  "If MEMORY.md > 3000 chars, first move oldest content to L2 or L3.",
-].join("\\n");
+const SHARED_NUDGE = `__SHARED_NUDGE__`;
 
 function nudgeText(turn: number): string {
-  return [
-    `[Memory Nudge \\u2014 turn ${turn}]`,
-    "Did anything worth remembering happen in the last few turns?",
-    "If yes, run /remember (it decides the scope and writes).",
-    "If nothing stands out, skip.",
-    "",
-    SCOPE_REMINDER,
-  ].join("\\n");
+  return `[Memory Nudge \\u2014 turn ${turn}]\\n` + SHARED_NUDGE;
 }
 
 function preCompactText(): string {
@@ -327,7 +417,7 @@ function preCompactText(): string {
     "corrections, per-corpus discoveries). Delegate scope and writing to",
     "/remember.",
     "",
-    SCOPE_REMINDER,
+    SHARED_NUDGE,
   ].join("\\n");
 }
 
@@ -384,6 +474,7 @@ export const RememberTriggerPlugin: Plugin = async () => {
 
 export default RememberTriggerPlugin;
 """
+        return template.replace("__SHARED_NUDGE__", shared_nudge)
 
     def _todo_curator_plugin_content(self) -> str:
         """Return the OpenCode todo-curator.ts plugin content."""
@@ -588,7 +679,23 @@ export default TodoCuratorPlugin;
         if memory_md.exists():
             return  # don't overwrite agent's work
 
-        memory_md.write_text("""\
+        from .l1_rewriter import DEFAULT_MAX_BYTES, SENTINEL_MARKER
+
+        memory_md.write_text(f"""\
+<!-- {SENTINEL_MARKER}={DEFAULT_MAX_BYTES} -->
+<!--
+  L1 (MEMORY.md) is **portable-only** memory: what is true and useful no
+  matter which corpus you work on. Keep it tight; over-cap triggers a
+  passive nudge, not auto-eviction.
+
+  Scope test: "still relevant in any workspace?" If no → not L1.
+
+  Everything else belongs elsewhere:
+  - Corpus-specific knowledge → memory/understanding/<workspace>.md
+  - Open TODOs / session continuity → memory/<kind>/<workspace>.md
+  - Searchable history → memory/journal/<workspace>/
+-->
+
 # Project Memory
 
 ## Project Map
@@ -626,9 +733,37 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
         self._write_hook_content(hooks_dir)
 
         # Make executable
-        for script_name in ("memory-nudge.sh", "memory-load.sh"):
+        for script_name in ("memory-nudge.sh", "memory-load.sh", "memory-cap.sh"):
             script = hooks_dir / script_name
             script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    def _wire_claude_settings(self, root: Path) -> None:
+        """Register All-Might hooks in ``.claude/settings.json``."""
+        from .settings_json import merge_hooks
+
+        merge_hooks(
+            root / ".claude" / "settings.json",
+            {
+                "Stop": [
+                    {"command": "./.claude/hooks/memory-cap.sh"},
+                    {"command": "./.claude/hooks/memory-nudge.sh"},
+                ],
+                "UserPromptSubmit": [
+                    {"command": "./.claude/hooks/memory-load.sh"},
+                ],
+            },
+        )
+
+    def _skills_log_template(self) -> str:
+        """Return the initial ``memory/skills-log.md`` body."""
+        return (
+            "# Self-Authored Skills\n"
+            "\n"
+            "Append a bullet whenever you write a new skill or plugin:\n"
+            "- **YYYY-MM-DD** \u00b7 `path/to/SKILL.md` \u00b7 why you created it\n"
+            "\n"
+            "<!-- entries below -->\n"
+        )
 
     # ------------------------------------------------------------------
     # Command generation
@@ -714,19 +849,51 @@ same pattern for other kinds you find yourself needing.
 
 ### 2. Append to L3 journal (for searchability)
 
-Create a file in `memory/journal/<workspace>/` or `memory/journal/general/`:
+Create a file in `memory/journal/<workspace>/` or `memory/journal/general/`.
+Wrap it with **v1 frontmatter** so future offline analysis can query the
+journal via `allmight memory export --format jsonl`. The freeform body
+stays first-class; the frontmatter is mechanical:
 
 ```markdown
+---
+allmight_journal: v1
+id: <ISO-8601 timestamp + short hash, e.g. 2026-04-18T10:32-a7f3>
+type: discovery        # trajectory | reflection | discovery | decision | correction
+workspace: <name>      # or: general
+trigger: slash_remember
+input: |
+  <the user message that led to this, redacted of secrets>
+tool_calls: []         # list of {tool, args, verdict: ok|drift|blocked}
+output: |
+  <your final response summary>
+outcome_label: success # success | partial | failure | aborted
+tags: [<keywords>]
+supersedes: null       # id of an older entry this replaces, or null
+created_at: <ISO-8601>
+---
 # <date> — <brief title>
 
 <What you learned, in your own words.>
 ```
 
-### 3. Update L1 MEMORY.md (only if cross-cutting)
+### 3. Update L1 MEMORY.md (only if portable)
 
-If the observation is truly project-wide (user preference, environment
-fact, active goal), update `MEMORY.md` at the project root directly.
-If it's about one workspace, do NOT write it here.
+**L1 is portable-only.** The test: "is this still true and useful no
+matter which corpus I work on?" If no → it does NOT belong in
+`MEMORY.md`.
+
+Portable examples: user preferences, cross-cutting conventions, global
+env facts, project-level goals, the project map of workspaces.
+
+Corpus-specific knowledge, open TODOs, and work-in-progress state are
+NOT portable and must go to L2 (`memory/understanding/<workspace>.md`)
+or `memory/<kind>/<workspace>.md` instead. When unsure, write to the
+narrower per-corpus location.
+
+`MEMORY.md` is loaded every turn by a hook, so unbounded growth costs
+every agent turn. A Stop hook audits the byte cap and — if exceeded —
+writes `memory/.l1-over-cap` to nudge the next turn to triage via
+`/reflect`.
 
 ## After remembering
 
@@ -860,12 +1027,55 @@ under the **scope-first** principle (see `/remember`):
 The goal: no matter what `<kind>` of personalized memory exists, it
 lives under a consistent `memory/<kind>/<workspace>.md` path.
 
+### 2c. L1 cap triage
+
+Check for the cap-audit nudge sentinel:
+
+```bash
+cat memory/.l1-over-cap 2>/dev/null
+```
+
+If the file exists, MEMORY.md has grown past its byte cap. Triage
+without waiting:
+
+1. Read `MEMORY.md` line by line. For each line, classify it:
+   - **Portable** (still useful in *any* corpus) → keep in L1.
+   - **Corpus-specific** → move to
+     `memory/understanding/<workspace>.md`.
+   - **Open TODO / WIP** → move to `memory/todos/<workspace>.md` (or
+     the matching `<kind>/<workspace>.md`).
+2. Distill duplicates and stale bullets; keep the essence only.
+3. Save `MEMORY.md`. The next Stop hook re-audits and removes
+   `memory/.l1-over-cap` automatically when the body is back under
+   cap.
+
+**The cap never silently evicts anything** — this step is the only
+place non-portable content leaves L1.
+
 ### 3. Log to L3 — Journal
 
 Summarize what you learned this session as a journal entry in
-`memory/journal/<workspace>/` or `memory/journal/general/`:
+`memory/journal/<workspace>/` or `memory/journal/general/`. Wrap it with
+**v1 frontmatter** (see `/remember` for the full field list) so future
+offline analysis can query it:
 
 ```markdown
+---
+allmight_journal: v1
+id: <ISO-8601 timestamp + short hash>
+type: reflection
+workspace: <name>      # or: general
+trigger: slash_reflect
+input: |
+  <what prompted this reflection>
+tool_calls: []
+output: |
+  <the reflection in one line>
+outcome_label: success
+tags: [<keywords>]
+supersedes: null
+created_at: <ISO-8601>
+---
 # <date> — <brief title>
 
 <Summary of discoveries, decisions, and insights.>
@@ -957,17 +1167,17 @@ Append to `memory/usage.log`:
     # ------------------------------------------------------------------
 
     def _generate_opencode_json(self, root: Path) -> None:
-        """Generate opencode.json with hooks for OpenCode compatibility.
+        """Generate opencode.json for OpenCode compatibility.
 
-        OpenCode's experimental config hooks support:
-        - ``session_completed`` — fires when a session ends (≈ Claude's Stop hook)
-        - ``file_edited`` — fires when files are edited
+        OpenCode owns its own reminder throttle inside
+        ``remember-trigger.ts`` (in-memory ``Map<sessionID, State>``), so
+        ``session_completed`` no longer needs to invoke the shell nudge
+        — that hook is now Claude-Code-only, wired via
+        ``.claude/settings.json``.
 
-        We configure ``session_completed`` to run the memory-nudge script.
-
-        For the L1 loader (MEMORY.md injection), OpenCode requires a plugin
-        since config hooks don't support a ``user_prompt_submit`` equivalent.
-        We generate a minimal plugin at ``.opencode/plugins/memory-load.ts``.
+        This function clears any stale All-Might entry in
+        ``experimental.hook.session_completed`` (left by older releases)
+        while preserving any unrelated user-authored hook entries.
         """
         import json
 
@@ -975,7 +1185,6 @@ Append to `memory/usage.log`:
         opencode_dir.mkdir(exist_ok=True)
         opencode_json = opencode_dir / "opencode.json"
 
-        # Build the config — merge with existing if present
         if opencode_json.exists():
             try:
                 config = json.loads(opencode_json.read_text())
@@ -984,16 +1193,24 @@ Append to `memory/usage.log`:
         else:
             config = {}
 
-        # Ensure experimental.hook structure exists
         experimental = config.setdefault("experimental", {})
         hook = experimental.setdefault("hook", {})
 
-        # session_completed → memory-nudge.sh
-        hook["session_completed"] = [
-            {
-                "command": ["./.claude/hooks/memory-nudge.sh"],
-            }
+        # Drop any session_completed entry that called the shell nudge.
+        entries = hook.get("session_completed") or []
+        filtered = [
+            entry for entry in entries
+            if "memory-nudge.sh" not in " ".join(entry.get("command", []))
         ]
+        if filtered:
+            hook["session_completed"] = filtered
+        else:
+            hook.pop("session_completed", None)
+
+        if not hook:
+            experimental.pop("hook", None)
+        if not experimental:
+            config.pop("experimental", None)
 
         opencode_json.write_text(json.dumps(config, indent=2) + "\n")
 
@@ -1048,10 +1265,11 @@ Append to `memory/usage.log`:
     def _generate_opencode_plugins(self, root: Path) -> None:
         """Generate all OpenCode plugins under .opencode/plugins/.
 
-        Writes three plugin files:
+        Writes four plugin files:
         - memory-load.ts   — primes MEMORY.md + scope-first principle per session
-        - remember-trigger.ts — nudges the agent to run /remember
+        - remember-trigger.ts — throttled per-session nudge (/remember + skills-log)
         - todo-curator.ts  — tracks TODOs across sessions per corpus
+        - trajectory-writer.ts — F5: captures structured session trajectory
         """
         plugins_dir = root / ".opencode" / "plugins"
         plugins_dir.mkdir(parents=True, exist_ok=True)
@@ -1065,7 +1283,217 @@ Append to `memory/usage.log`:
             "memory-load.ts": self._opencode_plugin_content(),
             "remember-trigger.ts": self._remember_trigger_plugin_content(),
             "todo-curator.ts": self._todo_curator_plugin_content(),
+            "trajectory-writer.ts": self._trajectory_writer_plugin_content(),
         }
+
+    def _trajectory_writer_plugin_content(self) -> str:
+        """Return the OpenCode trajectory-writer.ts plugin content.
+
+        F5 — captures structured session data (input, tool_calls, output,
+        verdicts) and flushes a v1-frontmatter entry to
+        memory/journal/<workspace>/<ts>-trajectory.md on session compaction
+        or deletion. Transparent to the daily user: no nudges, no context
+        injection — just a disk write.
+        """
+        return """\
+/**
+ * Trajectory Writer — OpenCode plugin (All-Might, F5)
+ *
+ * Captures structured session data so future offline analysis
+ * (allmight memory export --format jsonl) has something to query.
+ * Transparent to the daily user: never injects into the chat; only
+ * writes a frontmatter-wrapped markdown file on flush events.
+ *
+ * Captured per session:
+ *   - input     (last user message)
+ *   - tool_calls (each {tool, args} from tool.execute.before,
+ *                 annotated with verdict from tool.execute.after)
+ *   - output    (accumulated agent response summary)
+ *   - workspace (inferred from any knowledge_graph/<name>/ path)
+ *
+ * Flush triggers:
+ *   - experimental.session.compacting — last chance before history is summarised
+ *   - session.deleted                 — session closed without compaction
+ *
+ * Hook:
+ *   - chat.message — record the latest user input (does NOT mutate output)
+ */
+import type { Plugin } from "@opencode-ai/plugin";
+import { mkdirSync, writeFileSync } from "fs";
+import { join } from "path";
+
+type ToolCallRec = { tool: string; args: any; verdict: "ok" | "drift" | "blocked" };
+
+type Trajectory = {
+  workspace: string | null;
+  input: string;
+  tool_calls: ToolCallRec[];
+  output: string;
+  pendingToolIndex: number | null;
+};
+
+const sessions = new Map<string, Trajectory>();
+
+const WORKSPACE_RE = /knowledge_graph\\/([^/\\s"']+)/;
+
+function ensure(sid: string): Trajectory {
+  let t = sessions.get(sid);
+  if (!t) {
+    t = {
+      workspace: null,
+      input: "",
+      tool_calls: [],
+      output: "",
+      pendingToolIndex: null,
+    };
+    sessions.set(sid, t);
+  }
+  return t;
+}
+
+function inferWorkspace(args: any): string | null {
+  if (!args) return null;
+  const haystack = typeof args === "string" ? args : JSON.stringify(args);
+  const m = haystack.match(WORKSPACE_RE);
+  return m?.[1] ?? null;
+}
+
+function yamlEscape(s: string): string {
+  // Block literal (|) keeps newlines verbatim; indent by 2 spaces.
+  const indented = s.replace(/\\n/g, "\\n  ");
+  return "|\\n  " + indented;
+}
+
+function flush(cwd: string, sid: string, t: Trajectory): void {
+  if (!t.input && t.tool_calls.length === 0) return;
+  const workspace = t.workspace ?? "general";
+  const now = new Date();
+  const iso = now.toISOString();
+  const ts = iso.replace(/[:.]/g, "-");
+  const id = `${iso.slice(0, 19)}-${sid.slice(0, 6)}`;
+  const dir = join(cwd, "memory", "journal", workspace);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${ts}-trajectory.md`);
+
+  const outcome = t.tool_calls.some((c) => c.verdict === "drift" || c.verdict === "blocked")
+    ? "partial"
+    : "success";
+
+  const toolCallsYaml =
+    t.tool_calls.length === 0
+      ? "[]"
+      : "\\n" +
+        t.tool_calls
+          .map(
+            (c) =>
+              `  - tool: ${c.tool}\\n` +
+              `    args: ${JSON.stringify(c.args)}\\n` +
+              `    verdict: ${c.verdict}`,
+          )
+          .join("\\n");
+
+  const frontmatter =
+    "---\\n" +
+    "allmight_journal: v1\\n" +
+    `id: ${id}\\n` +
+    "type: trajectory\\n" +
+    `workspace: ${workspace}\\n` +
+    "trigger: auto\\n" +
+    `input: ${yamlEscape(t.input)}\\n` +
+    `tool_calls: ${toolCallsYaml}\\n` +
+    `output: ${yamlEscape(t.output)}\\n` +
+    `outcome_label: ${outcome}\\n` +
+    "tags: []\\n" +
+    "supersedes: null\\n" +
+    `created_at: ${iso}\\n` +
+    "---\\n";
+
+  const body = `# ${iso.slice(0, 10)} \\u2014 session trajectory (${workspace})\\n`;
+  writeFileSync(path, frontmatter + body);
+}
+
+export const TrajectoryWriterPlugin: Plugin = async ({ directory }: any) => {
+  const cwd = (directory as string | undefined) ?? process.cwd();
+
+  return {
+    event: async ({ event }: { event: any }) => {
+      const sid = event?.properties?.sessionID ?? "";
+      if (!sid) return;
+      const type = event?.type;
+
+      if (type === "session.created") {
+        ensure(sid);
+      } else if (type === "session.deleted") {
+        const t = sessions.get(sid);
+        if (t) flush(cwd, sid, t);
+        sessions.delete(sid);
+      }
+    },
+
+    "chat.message": async (input: any, output: any) => {
+      const sid = input?.sessionID;
+      if (!sid) return;
+      const t = ensure(sid);
+      // Capture the last user message verbatim. Never mutate output.parts
+      // here — trajectory writing stays transparent to the chat.
+      const parts = input?.parts;
+      if (Array.isArray(parts)) {
+        const texts = parts
+          .filter((p: any) => p?.type === "text" && typeof p.text === "string")
+          .map((p: any) => p.text);
+        if (texts.length > 0) t.input = texts.join("\\n");
+      }
+      void output;
+    },
+
+    "tool.execute.before": async (input: any) => {
+      const sid = input?.sessionID;
+      if (!sid) return;
+      const t = ensure(sid);
+      if (!t.workspace) {
+        const ws = inferWorkspace(input?.args);
+        if (ws) t.workspace = ws;
+      }
+      t.tool_calls.push({
+        tool: String(input?.tool ?? "unknown"),
+        args: input?.args ?? {},
+        verdict: "ok",
+      });
+      t.pendingToolIndex = t.tool_calls.length - 1;
+    },
+
+    "tool.execute.after": async (input: any) => {
+      const sid = input?.sessionID;
+      if (!sid) return;
+      const t = ensure(sid);
+      const idx = t.pendingToolIndex;
+      if (idx !== null && t.tool_calls[idx]) {
+        const verdict = input?.verdict;
+        if (verdict === "drift" || verdict === "blocked" || verdict === "ok") {
+          t.tool_calls[idx].verdict = verdict;
+        }
+      }
+      t.pendingToolIndex = null;
+    },
+
+    "experimental.session.compacting": async (input: any, output: any) => {
+      const sid = input?.sessionID;
+      if (!sid) return;
+      const t = sessions.get(sid);
+      if (t) {
+        flush(cwd, sid, t);
+        // Reset captured state so post-compaction continues fresh.
+        t.input = "";
+        t.tool_calls = [];
+        t.output = "";
+      }
+      void output;
+    },
+  };
+};
+
+export default TrajectoryWriterPlugin;
+"""
 
     def _refresh_opencode_compat(self, root: Path) -> None:
         """Ensure OpenCode compatibility symlinks exist after memory init."""
