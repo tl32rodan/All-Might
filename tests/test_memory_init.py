@@ -158,9 +158,9 @@ class TestMemoryInitializer:
         content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
         assert "scop" in content.lower()  # scope / scoping
 
-    def test_claude_md_teaches_scoping(self, project_root):
+    def test_agents_md_teaches_scoping(self, project_root):
         MemoryInitializer().initialize(project_root)
-        content = (project_root / "CLAUDE.md").read_text()
+        content = (project_root / "AGENTS.md").read_text()
         assert "<kind>/<workspace>.md" in content
         assert "scope" in content.lower()
 
@@ -175,20 +175,28 @@ class TestMemoryInitializer:
         MemoryInitializer().initialize(project_root)
         assert not (project_root / "memory" / "todos").exists()
 
-    # -- CLAUDE.md update ----------------------------------------------
+    # -- AGENTS.md update ----------------------------------------------
 
-    def test_updates_claude_md(self, project_root):
-        (project_root / "CLAUDE.md").write_text("# Test Project\n\nExisting content.\n")
+    def test_updates_agents_md(self, project_root):
+        (project_root / "AGENTS.md").write_text("# Test Project\n\nExisting content.\n")
         MemoryInitializer().initialize(project_root)
-        content = (project_root / "CLAUDE.md").read_text()
+        content = (project_root / "AGENTS.md").read_text()
         assert "Memory" in content
         assert "Existing content." in content
 
-    def test_creates_claude_md_if_missing(self, project_root):
+    def test_creates_agents_md_if_missing(self, project_root):
         MemoryInitializer().initialize(project_root)
-        assert (project_root / "CLAUDE.md").exists()
-        content = (project_root / "CLAUDE.md").read_text()
+        assert (project_root / "AGENTS.md").is_file()
+        content = (project_root / "AGENTS.md").read_text()
         assert "Memory" in content
+
+    def test_agents_md_replaces_stale_symlink(self, project_root):
+        """If AGENTS.md is a stale symlink (old install), it is replaced with a real file."""
+        (project_root / "CLAUDE.md").write_text("old\n")
+        (project_root / "AGENTS.md").symlink_to("CLAUDE.md")
+        MemoryInitializer().initialize(project_root)
+        assert not (project_root / "AGENTS.md").is_symlink()
+        assert "<!-- ALL-MIGHT-MEMORY -->" in (project_root / "AGENTS.md").read_text()
 
     # -- Idempotency ---------------------------------------------------
 
@@ -201,27 +209,25 @@ class TestMemoryInitializer:
         assert (project_root / "memory" / "understanding").is_dir()
         assert (project_root / "memory" / "journal").is_dir()
 
-    def test_opencode_agents_md_symlink(self, project_root):
-        """AGENTS.md -> CLAUDE.md symlink created."""
+    def test_creates_agents_md_as_real_file(self, project_root):
+        """AGENTS.md created as a real file (not a symlink) for OpenCode."""
         MemoryInitializer().initialize(project_root)
         agents_md = project_root / "AGENTS.md"
-        claude_md = project_root / "CLAUDE.md"
-        assert claude_md.exists()
-        assert agents_md.is_symlink()
-        assert agents_md.resolve() == claude_md.resolve()
+        assert agents_md.is_file()
+        assert not agents_md.is_symlink()
 
     def test_opencode_dotdir_created(self, project_root):
-        """.opencode/ directory created with symlinks into .claude/."""
+        """.opencode/ directory created."""
         MemoryInitializer().initialize(project_root)
         assert (project_root / ".opencode").is_dir()
-        # commands/ symlink exists (memory init creates .claude/commands/)
-        assert (project_root / ".opencode" / "commands").is_symlink()
 
     def test_opencode_compat_idempotent(self, project_root):
         init = MemoryInitializer()
         init.initialize(project_root)
         init.initialize(project_root)
-        assert (project_root / "AGENTS.md").is_symlink()
+        agents_md = project_root / "AGENTS.md"
+        assert agents_md.is_file()
+        assert not agents_md.is_symlink()
         assert (project_root / ".opencode").is_dir()
 
 

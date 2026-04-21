@@ -135,10 +135,10 @@ class TestCloneIsReadOnly:
         ProjectCloner().clone(source_project, target_dir)
         assert (target_dir / ".claude" / "commands" / "search.md").exists()
 
-    def test_claude_md_emphasizes_readonly(self, source_project, target_dir):
-        """CLAUDE.md in clone emphasizes read-only access."""
+    def test_agents_md_emphasizes_readonly(self, source_project, target_dir):
+        """AGENTS.md in clone emphasizes read-only access."""
         ProjectCloner().clone(source_project, target_dir)
-        content = (target_dir / "CLAUDE.md").read_text()
+        content = (target_dir / "AGENTS.md").read_text()
         assert "read-only" in content.lower()
 
 

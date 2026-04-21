@@ -77,9 +77,9 @@ class TestFirstInit:
         assert os.access(hooks / "memory-nudge.sh", os.X_OK)
         assert os.access(hooks / "memory-load.sh", os.X_OK)
 
-    def test_first_init_writes_claude_md(self, sample_project):
+    def test_first_init_writes_agents_md(self, sample_project):
         _full_init(sample_project)
-        content = (sample_project / "CLAUDE.md").read_text()
+        content = (sample_project / "AGENTS.md").read_text()
         assert "<!-- ALL-MIGHT -->" in content
 
     def test_first_init_writes_memory_commands(self, sample_project):
@@ -133,15 +133,15 @@ class TestReInit:
         assert staged.exists()
         assert "CUSTOM" not in staged.read_text()
 
-    def test_reinit_does_not_overwrite_claude_md(self, sample_project):
+    def test_reinit_does_not_overwrite_agents_md(self, sample_project):
         _full_init(sample_project)
-        claude_md = sample_project / "CLAUDE.md"
-        original = claude_md.read_text()
-        claude_md.write_text(original + "\n\n## My Custom Section\nUser stuff here.\n")
+        agents_md = sample_project / "AGENTS.md"
+        original = agents_md.read_text()
+        agents_md.write_text(original + "\n\n## My Custom Section\nUser stuff here.\n")
 
         _full_init(sample_project)
 
-        content = claude_md.read_text()
+        content = agents_md.read_text()
         assert "My Custom Section" in content
         assert "User stuff here" in content
         # Section content staged
@@ -207,12 +207,13 @@ class TestReInit:
         assert (sample_project / ".claude" / "commands" / "sync.md").exists()
         assert (sample_project / ".claude" / "skills" / "sync" / "SKILL.md").exists()
 
-    def test_reinit_preserves_symlinks(self, sample_project):
+    def test_reinit_agents_md_is_real_file(self, sample_project):
         _full_init(sample_project)
         _full_init(sample_project)
 
         agents_md = sample_project / "AGENTS.md"
-        assert agents_md.is_symlink()
+        assert agents_md.is_file()
+        assert not agents_md.is_symlink()
 
 
 # ======================================================================

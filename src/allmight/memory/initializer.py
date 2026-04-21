@@ -88,8 +88,8 @@ class MemoryInitializer:
         # 6. Generate memory commands (remember, recall, reflect)
         self._generate_memory_commands(root)
 
-        # 7. Update CLAUDE.md
-        self._update_claude_md(root)
+        # 7. Update AGENTS.md
+        self._update_agents_md(root)
 
         # 8. Refresh OpenCode compatibility (symlinks + opencode.json hooks)
         self._refresh_opencode_compat(root)
@@ -116,7 +116,7 @@ class MemoryInitializer:
         cmds_tpl.mkdir(parents=True, exist_ok=True)
         self._write_memory_command_content(cmds_tpl)
 
-        # Stage CLAUDE.md memory section
+        # Stage AGENTS.md memory section
         (tpl / "memory-md-section.md").write_text(self._memory_claude_md_section())
 
         # Stage opencode.json and memory-load.ts
@@ -242,6 +242,7 @@ exit 0
 The agent can **remember things across sessions**: preferences,
 decisions, corrections, learned patterns, and per-corpus personal
 state (TODOs, shortcuts, ad-hoc notes).
+(*corpus = workspace; see the All-Might section above for definition*)
 
 | Command | What it does |
 |---------|-------------|
@@ -1137,22 +1138,26 @@ Append to `memory/usage.log`:
     # CLAUDE.md update
     # ------------------------------------------------------------------
 
-    def _update_claude_md(self, root: Path) -> None:
-        """Append memory system section to CLAUDE.md."""
-        claude_md = root / "CLAUDE.md"
+    def _update_agents_md(self, root: Path) -> None:
+        """Append memory system section to AGENTS.md."""
+        agents_md = root / "AGENTS.md"
+
+        if agents_md.is_symlink():
+            agents_md.unlink()
+
         marker = "<!-- ALL-MIGHT-MEMORY -->"
         memory_section = self._memory_claude_md_section()
 
-        if claude_md.exists():
-            content = claude_md.read_text()
+        if agents_md.exists():
+            content = agents_md.read_text()
             if marker in content:
                 before = content[: content.index(marker)]
                 content = before.rstrip() + "\n\n" + memory_section
             else:
                 content = content.rstrip() + "\n\n" + memory_section
-            claude_md.write_text(content)
+            agents_md.write_text(content)
         else:
-            claude_md.write_text(f"# Project\n\n{memory_section}")
+            agents_md.write_text(f"# Project\n\n{memory_section}")
 
     # ------------------------------------------------------------------
     # OpenCode compatibility

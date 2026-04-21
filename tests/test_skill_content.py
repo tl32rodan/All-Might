@@ -78,18 +78,18 @@ class TestCommandContentReadOnly:
         assert "smak search" in content
 
 
-class TestClaudeMdContent:
+class TestAgentsMdContent:
 
-    def test_claude_md_no_smak_details(self, project_root_writable):
-        """CLAUDE.md does not contain smak CLI details."""
-        content = (project_root_writable / "CLAUDE.md").read_text()
+    def test_agents_md_no_smak_details(self, project_root_writable):
+        """AGENTS.md does not contain smak CLI details."""
+        content = (project_root_writable / "AGENTS.md").read_text()
         assert "smak search" not in content
         assert "smak enrich" not in content
         assert "smak ingest" not in content
 
-    def test_claude_md_lists_commands(self, project_root_writable):
-        """CLAUDE.md lists the slash commands (writable mode)."""
-        content = (project_root_writable / "CLAUDE.md").read_text()
+    def test_agents_md_lists_commands(self, project_root_writable):
+        """AGENTS.md lists the slash commands (writable mode)."""
+        content = (project_root_writable / "AGENTS.md").read_text()
         assert "/search" in content
         assert "/enrich" in content
         assert "/ingest" in content

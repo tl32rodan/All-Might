@@ -69,7 +69,7 @@ class ProjectInitializer:
         else:
             # First init (or --force): write everything directly
             self._generate_commands(root, manifest, writable=writable)
-            self._update_claude_md(root, manifest, writable=writable)
+            self._update_agents_md(root, manifest, writable=writable)
             self._create_opencode_compat(root)
 
             # Create .allmight/ marker (clean up any stale templates)
@@ -161,7 +161,7 @@ class ProjectInitializer:
     def _claude_md_section_readonly(
         self, marker: str, manifest: ProjectManifest,
     ) -> str:
-        """CLAUDE.md section for read-only mode — search only."""
+        """AGENTS.md section for read-only mode — search only."""
         sos_prereq = ""
         if manifest.has_path_env:
             sos_prereq = """
@@ -188,13 +188,15 @@ modify corpora (no ingesting, no enriching, no sidecar edits).
 
 ### Concepts
 
-- **Corpus** = a pre-built vector index of source files.  Source files are
-  indexed **in-place** — nothing is copied into this project.
-  Only the vector index (in `knowledge_graph/<workspace>/store/`) is local.
+- **Corpus** (= **workspace**) — one independently-indexed source domain.
+  Each corpus maps to `knowledge_graph/<workspace>/` and has its own SMAK
+  vector store. A project may have multiple corpora (e.g. `stdcell`, `pll`).
+  Source files are indexed **in-place** — only the index is stored locally.
+  The corpus name and workspace name are the same string throughout All-Might.
 
 ### How to learn the details
 
-The `/search` command has a detailed operational guide in `.claude/commands/`.
+The `/search` command has a detailed operational guide in `.opencode/commands/`.
 {sos_prereq}
 ### Getting Started
 
@@ -204,7 +206,7 @@ The `/search` command has a detailed operational guide in `.claude/commands/`.
     def _claude_md_section_writable(
         self, marker: str, manifest: ProjectManifest,
     ) -> str:
-        """CLAUDE.md section for writable mode — full access."""
+        """AGENTS.md section for writable mode — full access."""
         sos_prereq = ""
         if manifest.has_path_env:
             sos_prereq = """
@@ -230,16 +232,18 @@ code by meaning, annotate what it learns, and remember across sessions.
 
 ### Concepts
 
-- **Corpus** = a vector index built from source files by `/ingest`. Source
-  files are indexed **in-place** — nothing is copied into this project.
-  Only the vector index (in `knowledge_graph/<workspace>/store/`) is local.
+- **Corpus** (= **workspace**) — one independently-indexed source domain.
+  Each corpus maps to `knowledge_graph/<workspace>/` and has its own SMAK
+  vector store. A project may have multiple corpora (e.g. `stdcell`, `pll`).
+  Source files are indexed **in-place** — only the index is stored locally.
+  The corpus name and workspace name are the same string throughout All-Might.
 - **Annotation** = a note on a code symbol (function, class) describing its
   purpose and connections. Stored in `.sidecar.yaml` files beside the source code.
 
 ### How to learn the details
 
 Each command (`/search`, `/enrich`, `/ingest`) has a detailed operational
-guide in `.claude/commands/`.
+guide in `.opencode/commands/`.
 {sos_prereq}
 ### Getting Started
 
@@ -348,26 +352,28 @@ smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code
             )
             (commands_dir / "ingest.md").write_text(self._ingest_command_body())
 
-    def _update_claude_md(
+    def _update_agents_md(
         self, root: Path, manifest: ProjectManifest, writable: bool = False,
     ) -> None:
-        """Append All-Might baseline instructions to CLAUDE.md at project root."""
-        claude_md = root / "CLAUDE.md"
+        """Append All-Might baseline instructions to AGENTS.md at project root."""
+        agents_md = root / "AGENTS.md"
+
+        if agents_md.is_symlink():
+            agents_md.unlink()
 
         marker = "<!-- ALL-MIGHT -->"
         allmight_section = self._claude_md_section(manifest, writable=writable)
 
-        if claude_md.exists():
-            content = claude_md.read_text()
+        if agents_md.exists():
+            content = agents_md.read_text()
             if marker in content:
-                # Replace existing section
                 before = content[: content.index(marker)]
                 content = before.rstrip() + "\n\n" + allmight_section
             else:
                 content = content.rstrip() + "\n\n" + allmight_section
-            claude_md.write_text(content)
+            agents_md.write_text(content)
         else:
-            claude_md.write_text(f"# {manifest.name}\n\n{allmight_section}")
+            agents_md.write_text(f"# {manifest.name}\n\n{allmight_section}")
 
     @staticmethod
     def _enrich_command_body(has_path_env: bool) -> str:
