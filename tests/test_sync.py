@@ -64,27 +64,24 @@ class TestFirstInit:
 
     def test_first_init_writes_commands_directly(self, sample_project):
         _full_init(sample_project, writable=True)
-        commands = sample_project / ".claude" / "commands"
+        commands = sample_project / ".opencode" / "commands"
         assert (commands / "search.md").exists()
         assert (commands / "enrich.md").exists()
         assert (commands / "ingest.md").exists()
 
-    def test_first_init_writes_hooks_directly(self, sample_project):
+    def test_no_claude_hooks_generated(self, sample_project):
+        """No .claude/hooks/ generated — TS plugins handle memory in OpenCode."""
         _full_init(sample_project)
-        hooks = sample_project / ".claude" / "hooks"
-        assert (hooks / "memory-nudge.sh").exists()
-        assert (hooks / "memory-load.sh").exists()
-        assert os.access(hooks / "memory-nudge.sh", os.X_OK)
-        assert os.access(hooks / "memory-load.sh", os.X_OK)
+        assert not (sample_project / ".claude" / "hooks").exists()
 
-    def test_first_init_writes_claude_md(self, sample_project):
+    def test_first_init_writes_agents_md(self, sample_project):
         _full_init(sample_project)
-        content = (sample_project / "CLAUDE.md").read_text()
+        content = (sample_project / "AGENTS.md").read_text()
         assert "<!-- ALL-MIGHT -->" in content
 
     def test_first_init_writes_memory_commands(self, sample_project):
         _full_init(sample_project)
-        commands = sample_project / ".claude" / "commands"
+        commands = sample_project / ".opencode" / "commands"
         assert (commands / "remember.md").exists()
         assert (commands / "recall.md").exists()
         assert (commands / "reflect.md").exists()
@@ -92,7 +89,7 @@ class TestFirstInit:
     def test_first_init_no_sync_command(self, sample_project):
         """First init does NOT create /sync — it's only needed on re-init."""
         _full_init(sample_project)
-        assert not (sample_project / ".claude" / "commands" / "sync.md").exists()
+        assert not (sample_project / ".opencode" / "commands" / "sync.md").exists()
 
 
 # ======================================================================
@@ -111,7 +108,7 @@ class TestReInit:
 
     def test_reinit_does_not_overwrite_commands(self, sample_project):
         _full_init(sample_project)
-        search_cmd = sample_project / ".claude" / "commands" / "search.md"
+        search_cmd = sample_project / ".opencode" / "commands" / "search.md"
         search_cmd.write_text("MY CUSTOM SEARCH GUIDE")
 
         _full_init(sample_project)
@@ -121,27 +118,22 @@ class TestReInit:
         assert staged.exists()
         assert "MY CUSTOM" not in staged.read_text()
 
-    def test_reinit_does_not_overwrite_hooks(self, sample_project):
+    def test_no_hooks_staged_on_reinit(self, sample_project):
+        """Hooks are no longer generated, so nothing to stage on re-init."""
         _full_init(sample_project)
-        nudge = sample_project / ".claude" / "hooks" / "memory-nudge.sh"
-        nudge.write_text("#!/bin/bash\necho CUSTOM")
-
         _full_init(sample_project)
+        staged_hooks = sample_project / ".allmight" / "templates" / "hooks"
+        assert not staged_hooks.exists()
 
-        assert "CUSTOM" in nudge.read_text()
-        staged = sample_project / ".allmight" / "templates" / "hooks" / "memory-nudge.sh"
-        assert staged.exists()
-        assert "CUSTOM" not in staged.read_text()
-
-    def test_reinit_does_not_overwrite_claude_md(self, sample_project):
+    def test_reinit_does_not_overwrite_agents_md(self, sample_project):
         _full_init(sample_project)
-        claude_md = sample_project / "CLAUDE.md"
-        original = claude_md.read_text()
-        claude_md.write_text(original + "\n\n## My Custom Section\nUser stuff here.\n")
+        agents_md = sample_project / "AGENTS.md"
+        original = agents_md.read_text()
+        agents_md.write_text(original + "\n\n## My Custom Section\nUser stuff here.\n")
 
         _full_init(sample_project)
 
-        content = claude_md.read_text()
+        content = agents_md.read_text()
         assert "My Custom Section" in content
         assert "User stuff here" in content
         # Section content staged
@@ -160,7 +152,7 @@ class TestReInit:
 
     def test_reinit_stages_memory_commands(self, sample_project):
         _full_init(sample_project)
-        remember_cmd = sample_project / ".claude" / "commands" / "remember.md"
+        remember_cmd = sample_project / ".opencode" / "commands" / "remember.md"
         remember_cmd.write_text("CUSTOM REMEMBER")
 
         _full_init(sample_project)
@@ -204,15 +196,16 @@ class TestReInit:
         _full_init(sample_project)
         _full_init(sample_project)
 
-        assert (sample_project / ".claude" / "commands" / "sync.md").exists()
-        assert (sample_project / ".claude" / "skills" / "sync" / "SKILL.md").exists()
+        assert (sample_project / ".opencode" / "commands" / "sync.md").exists()
+        assert (sample_project / ".opencode" / "skills" / "sync" / "SKILL.md").exists()
 
-    def test_reinit_preserves_symlinks(self, sample_project):
+    def test_reinit_agents_md_is_real_file(self, sample_project):
         _full_init(sample_project)
         _full_init(sample_project)
 
         agents_md = sample_project / "AGENTS.md"
-        assert agents_md.is_symlink()
+        assert agents_md.is_file()
+        assert not agents_md.is_symlink()
 
 
 # ======================================================================
@@ -225,7 +218,7 @@ class TestForceInit:
 
     def test_force_overwrites_modified_commands(self, sample_project):
         _full_init(sample_project)
-        search_cmd = sample_project / ".claude" / "commands" / "search.md"
+        search_cmd = sample_project / ".opencode" / "commands" / "search.md"
         search_cmd.write_text("MY CUSTOM SEARCH GUIDE")
 
         scanner = ProjectScanner()
@@ -260,7 +253,7 @@ class TestSyncSkillContent:
         _full_init(sample_project)
         _full_init(sample_project)
 
-        skill = sample_project / ".claude" / "skills" / "sync" / "SKILL.md"
+        skill = sample_project / ".opencode" / "skills" / "sync" / "SKILL.md"
         assert skill.exists()
         content = skill.read_text()
         # Valid frontmatter
@@ -271,21 +264,21 @@ class TestSyncSkillContent:
         _full_init(sample_project)
         _full_init(sample_project)
 
-        content = (sample_project / ".claude" / "skills" / "sync" / "SKILL.md").read_text()
+        content = (sample_project / ".opencode" / "skills" / "sync" / "SKILL.md").read_text()
         assert ".allmight/templates/" in content
 
     def test_sync_skill_references_merge_report(self, sample_project):
         _full_init(sample_project)
         _full_init(sample_project)
 
-        content = (sample_project / ".claude" / "skills" / "sync" / "SKILL.md").read_text()
+        content = (sample_project / ".opencode" / "skills" / "sync" / "SKILL.md").read_text()
         assert "merge-report" in content
 
     def test_sync_command_references_skill(self, sample_project):
         _full_init(sample_project)
         _full_init(sample_project)
 
-        content = (sample_project / ".claude" / "commands" / "sync.md").read_text()
+        content = (sample_project / ".opencode" / "commands" / "sync.md").read_text()
         assert "sync" in content.lower()
 
     def test_sync_skill_mentions_mode_cleanup(self, sample_project):
@@ -294,8 +287,15 @@ class TestSyncSkillContent:
         _full_init(sample_project)
         _full_init(sample_project)
 
-        content = (sample_project / ".claude" / "skills" / "sync" / "SKILL.md").read_text()
+        content = (sample_project / ".opencode" / "skills" / "sync" / "SKILL.md").read_text()
         assert ".allmight/mode" in content
+
+    def test_sync_skill_references_opencode_paths(self, sample_project):
+        """Sync skill only references .opencode paths, not .claude paths."""
+        from allmight.detroit_smak.sync_skill_content import SYNC_SKILL_BODY
+        assert ".opencode/commands" in SYNC_SKILL_BODY
+        assert ".claude/commands" not in SYNC_SKILL_BODY
+        assert ".claude/hooks" not in SYNC_SKILL_BODY
 
 
 # ======================================================================

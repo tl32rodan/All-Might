@@ -108,33 +108,33 @@ class TestMemoryInitializer:
 
     def test_generates_remember_command(self, project_root):
         MemoryInitializer().initialize(project_root)
-        assert (project_root / ".claude" / "commands" / "remember.md").exists()
+        assert (project_root / ".opencode" / "commands" / "remember.md").exists()
 
     def test_generates_recall_command(self, project_root):
         MemoryInitializer().initialize(project_root)
-        assert (project_root / ".claude" / "commands" / "recall.md").exists()
+        assert (project_root / ".opencode" / "commands" / "recall.md").exists()
 
     def test_no_consolidate_command(self, project_root):
         """consolidate removed — no more episode-to-semantic pipeline."""
         MemoryInitializer().initialize(project_root)
-        assert not (project_root / ".claude" / "commands" / "consolidate.md").exists()
+        assert not (project_root / ".opencode" / "commands" / "consolidate.md").exists()
 
     def test_remember_command_mentions_journal(self, project_root):
         """remember.md should reference journal/ (L3)."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "journal" in content
 
     def test_remember_command_mentions_understanding(self, project_root):
         """remember.md should reference understanding/ (L2)."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "understanding" in content
 
     def test_recall_command_mentions_smak(self, project_root):
         """recall.md should use smak search against journal."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "recall.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "recall.md").read_text()
         assert "smak search" in content
 
     # -- Per-corpus scoping principle ----------------------------------
@@ -142,7 +142,7 @@ class TestMemoryInitializer:
     def test_remember_teaches_scope_first(self, project_root):
         """/remember leads with scope-first decision (not a /kind/ list)."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "scope" in content.lower()
         # Principle is expressed generically
         assert "<kind>/<workspace>.md" in content
@@ -150,59 +150,76 @@ class TestMemoryInitializer:
     def test_remember_shows_todos_as_example(self, project_root):
         """TODOs appear as an example of per-corpus personal state."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "todo" in content.lower()
 
     def test_remember_usage_log_has_scope_tag(self, project_root):
         """Usage log format includes scope= so /reflect can audit drift."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "scope=" in content
 
     def test_recall_scans_per_corpus_folders(self, project_root):
         """/recall instructs agent to scan memory/<kind>/<workspace>.md files."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "recall.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "recall.md").read_text()
         assert "<kind>/<workspace>.md" in content
         # And calls out picking up unfinished state
         assert "unfinished" in content.lower() or "pick up where" in content.lower()
 
     def test_reflect_audits_scoping(self, project_root):
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
         assert "scop" in content.lower()  # scope / scoping
 
-    def test_claude_md_teaches_scoping(self, project_root):
+    def test_agents_md_teaches_scoping(self, project_root):
         MemoryInitializer().initialize(project_root)
-        content = (project_root / "CLAUDE.md").read_text()
+        content = (project_root / "AGENTS.md").read_text()
         assert "<kind>/<workspace>.md" in content
         assert "scope" in content.lower()
 
-    def test_nudge_asks_scope_question(self, project_root):
+    def test_no_claude_hooks_directory(self, project_root):
+        """No .claude/hooks/ should be generated — TS plugins handle memory loading."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "hooks" / "memory-nudge.sh").read_text()
-        assert "scope" in content.lower()
-        assert "<kind>/<workspace>.md" in content
+        assert not (project_root / ".claude" / "hooks").exists()
+
+    def test_no_claude_settings_json(self, project_root):
+        """No .claude/settings.json should be generated."""
+        MemoryInitializer().initialize(project_root)
+        assert not (project_root / ".claude" / "settings.json").exists()
+
+    def test_no_claude_dir_at_all(self, project_root):
+        """After memory init, .claude/ directory must not exist."""
+        MemoryInitializer().initialize(project_root)
+        assert not (project_root / ".claude").exists()
 
     def test_no_hardcoded_todos_dir(self, project_root):
         """Initializer does NOT precreate memory/todos/ — agents make it on demand."""
         MemoryInitializer().initialize(project_root)
         assert not (project_root / "memory" / "todos").exists()
 
-    # -- CLAUDE.md update ----------------------------------------------
+    # -- AGENTS.md update ----------------------------------------------
 
-    def test_updates_claude_md(self, project_root):
-        (project_root / "CLAUDE.md").write_text("# Test Project\n\nExisting content.\n")
+    def test_updates_agents_md(self, project_root):
+        (project_root / "AGENTS.md").write_text("# Test Project\n\nExisting content.\n")
         MemoryInitializer().initialize(project_root)
-        content = (project_root / "CLAUDE.md").read_text()
+        content = (project_root / "AGENTS.md").read_text()
         assert "Memory" in content
         assert "Existing content." in content
 
-    def test_creates_claude_md_if_missing(self, project_root):
+    def test_creates_agents_md_if_missing(self, project_root):
         MemoryInitializer().initialize(project_root)
-        assert (project_root / "CLAUDE.md").exists()
-        content = (project_root / "CLAUDE.md").read_text()
+        assert (project_root / "AGENTS.md").is_file()
+        content = (project_root / "AGENTS.md").read_text()
         assert "Memory" in content
+
+    def test_agents_md_replaces_stale_symlink(self, project_root):
+        """If AGENTS.md is a stale symlink (old install), it is replaced with a real file."""
+        (project_root / "CLAUDE.md").write_text("old\n")
+        (project_root / "AGENTS.md").symlink_to("CLAUDE.md")
+        MemoryInitializer().initialize(project_root)
+        assert not (project_root / "AGENTS.md").is_symlink()
+        assert "<!-- ALL-MIGHT-MEMORY -->" in (project_root / "AGENTS.md").read_text()
 
     # -- Idempotency ---------------------------------------------------
 
@@ -215,27 +232,25 @@ class TestMemoryInitializer:
         assert (project_root / "memory" / "understanding").is_dir()
         assert (project_root / "memory" / "journal").is_dir()
 
-    def test_opencode_agents_md_symlink(self, project_root):
-        """AGENTS.md -> CLAUDE.md symlink created."""
+    def test_creates_agents_md_as_real_file(self, project_root):
+        """AGENTS.md created as a real file (not a symlink) for OpenCode."""
         MemoryInitializer().initialize(project_root)
         agents_md = project_root / "AGENTS.md"
-        claude_md = project_root / "CLAUDE.md"
-        assert claude_md.exists()
-        assert agents_md.is_symlink()
-        assert agents_md.resolve() == claude_md.resolve()
+        assert agents_md.is_file()
+        assert not agents_md.is_symlink()
 
     def test_opencode_dotdir_created(self, project_root):
-        """.opencode/ directory created with symlinks into .claude/."""
+        """.opencode/ directory created."""
         MemoryInitializer().initialize(project_root)
         assert (project_root / ".opencode").is_dir()
-        # commands/ symlink exists (memory init creates .claude/commands/)
-        assert (project_root / ".opencode" / "commands").is_symlink()
 
     def test_opencode_compat_idempotent(self, project_root):
         init = MemoryInitializer()
         init.initialize(project_root)
         init.initialize(project_root)
-        assert (project_root / "AGENTS.md").is_symlink()
+        agents_md = project_root / "AGENTS.md"
+        assert agents_md.is_file()
+        assert not agents_md.is_symlink()
         assert (project_root / ".opencode").is_dir()
 
 
@@ -246,19 +261,6 @@ class TestOpenCodeHooks:
         """opencode.json created inside .opencode/."""
         MemoryInitializer().initialize(project_root)
         assert (project_root / ".opencode" / "opencode.json").exists()
-
-    def test_opencode_json_does_not_wire_shell_nudge(self, project_root):
-        """OpenCode's nudge lives in remember-trigger.ts, not a shell hook."""
-        import json
-        MemoryInitializer().initialize(project_root)
-        config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
-        entries = (
-            config.get("experimental", {})
-                  .get("hook", {})
-                  .get("session_completed", [])
-        )
-        commands = [" ".join(e.get("command", [])) for e in entries]
-        assert not any("memory-nudge.sh" in c for c in commands)
 
     def test_creates_memory_load_plugin(self, project_root):
         """OpenCode plugin for L1 loader created."""
@@ -491,6 +493,41 @@ class TestOpenCodeHooks:
         assert config["model"] == "claude-sonnet-4-6"
         assert config["experimental"]["other"] is True
 
+    def test_opencode_json_has_schema(self, project_root):
+        """opencode.json includes $schema for IDE tooling."""
+        import json
+        MemoryInitializer().initialize(project_root)
+        config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
+        assert config["$schema"] == "https://opencode.ai/config.json"
+
+    def test_opencode_json_no_experimental_section(self, project_root):
+        """opencode.json must not contain an experimental section."""
+        import json
+        MemoryInitializer().initialize(project_root)
+        config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
+        assert "experimental" not in config
+
+    def test_opencode_json_schema_preserved_on_reinit(self, project_root):
+        """$schema survives a second call to initialize()."""
+        import json
+        init = MemoryInitializer()
+        init.initialize(project_root)
+        init.initialize(project_root)
+        config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
+        assert config["$schema"] == "https://opencode.ai/config.json"
+
+    def test_opencode_json_preserves_user_keys_with_schema(self, project_root):
+        """User keys are preserved and $schema is added on top."""
+        import json
+        (project_root / ".opencode").mkdir(exist_ok=True)
+        (project_root / ".opencode" / "opencode.json").write_text(
+            json.dumps({"myKey": "myVal"}) + "\n"
+        )
+        MemoryInitializer().initialize(project_root)
+        config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
+        assert config["myKey"] == "myVal"
+        assert config["$schema"] == "https://opencode.ai/config.json"
+
 
 class TestMemoryConfigManager:
 
@@ -515,58 +552,17 @@ class TestMemoryConfigManager:
         assert "journal" in loaded.stores
 
 
-class TestMemoryNudgeHook:
-    """Memory Nudge — Stop hook that reminds agent to update memory."""
-
-    def test_creates_hooks_dir(self, project_root):
-        """memory init creates .claude/hooks/ directory."""
-        MemoryInitializer().initialize(project_root)
-        assert (project_root / ".claude" / "hooks").is_dir()
-
-    def test_creates_nudge_script(self, project_root):
-        """memory-nudge.sh created in hooks directory."""
-        MemoryInitializer().initialize(project_root)
-        script = project_root / ".claude" / "hooks" / "memory-nudge.sh"
-        assert script.exists()
-
-    def test_nudge_script_is_executable(self, project_root):
-        """Hook script has executable permission."""
-        MemoryInitializer().initialize(project_root)
-        import os
-        script = project_root / ".claude" / "hooks" / "memory-nudge.sh"
-        assert os.access(script, os.X_OK)
-
-    def test_nudge_script_references_memory(self, project_root):
-        """Hook script mentions MEMORY.md and understanding."""
-        MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "hooks" / "memory-nudge.sh").read_text()
-        assert "MEMORY.md" in content
-        assert "understanding" in content
-
-    def test_creates_l1_loader_script(self, project_root):
-        """memory-load.sh created — injects MEMORY.md into context."""
-        MemoryInitializer().initialize(project_root)
-        script = project_root / ".claude" / "hooks" / "memory-load.sh"
-        assert script.exists()
-
-    def test_l1_loader_reads_memory_md(self, project_root):
-        """Loader script cats MEMORY.md content."""
-        MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "hooks" / "memory-load.sh").read_text()
-        assert "MEMORY.md" in content
-
-
 class TestReflectCommand:
     """/reflect — structured self-reflection to maintain memory quality."""
 
     def test_creates_reflect_command(self, project_root):
         MemoryInitializer().initialize(project_root)
-        assert (project_root / ".claude" / "commands" / "reflect.md").exists()
+        assert (project_root / ".opencode" / "commands" / "reflect.md").exists()
 
     def test_reflect_mentions_all_tiers(self, project_root):
         """reflect.md references L1, L2, and L3."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
         assert "MEMORY.md" in content
         assert "understanding" in content
         assert "journal" in content
@@ -574,7 +570,7 @@ class TestReflectCommand:
     def test_reflect_has_checklist(self, project_root):
         """reflect.md has a structured checklist for the agent."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
         assert "## How" in content or "## Checklist" in content or "## Steps" in content
 
 
@@ -590,26 +586,26 @@ class TestFeedbackLoop:
     def test_remember_command_logs_usage(self, project_root):
         """remember.md instructs agent to log usage."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "usage.log" in content
 
     def test_recall_command_logs_usage(self, project_root):
         """recall.md instructs agent to log usage."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "recall.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "recall.md").read_text()
         assert "usage.log" in content
 
     def test_reflect_reads_usage_log(self, project_root):
         """reflect.md includes usage review step."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
         assert "usage.log" in content
         assert "Usage Review" in content or "usage review" in content
 
     def test_reflect_generates_insights(self, project_root):
         """reflect.md has an insights generation step."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
         assert "Insight" in content or "insight" in content
 
 
@@ -619,12 +615,12 @@ class TestJournalFrontmatterTemplates:
 
     def test_remember_template_has_v1_sentinel(self, project_root):
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "allmight_journal: v1" in content
 
     def test_reflect_template_has_v1_sentinel(self, project_root):
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
         assert "allmight_journal: v1" in content
 
 
