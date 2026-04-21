@@ -123,22 +123,22 @@ class TestCloneIsReadOnly:
     def test_no_ingest_command(self, source_project, target_dir):
         """Clone does NOT have ingest.md command."""
         ProjectCloner().clone(source_project, target_dir)
-        assert not (target_dir / ".claude" / "commands" / "ingest.md").exists()
+        assert not (target_dir / ".opencode" / "commands" / "ingest.md").exists()
 
     def test_no_enrich_command(self, source_project, target_dir):
         """Clone does NOT have enrich.md command."""
         ProjectCloner().clone(source_project, target_dir)
-        assert not (target_dir / ".claude" / "commands" / "enrich.md").exists()
+        assert not (target_dir / ".opencode" / "commands" / "enrich.md").exists()
 
     def test_has_search_command(self, source_project, target_dir):
         """Clone still has search.md command."""
         ProjectCloner().clone(source_project, target_dir)
-        assert (target_dir / ".claude" / "commands" / "search.md").exists()
+        assert (target_dir / ".opencode" / "commands" / "search.md").exists()
 
-    def test_claude_md_emphasizes_readonly(self, source_project, target_dir):
-        """CLAUDE.md in clone emphasizes read-only access."""
+    def test_agents_md_emphasizes_readonly(self, source_project, target_dir):
+        """AGENTS.md in clone emphasizes read-only access."""
         ProjectCloner().clone(source_project, target_dir)
-        content = (target_dir / "CLAUDE.md").read_text()
+        content = (target_dir / "AGENTS.md").read_text()
         assert "read-only" in content.lower()
 
 

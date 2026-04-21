@@ -379,14 +379,10 @@ class TestMergeInstallsSync:
     def test_merge_creates_sync_command(self, source_project, target_project, merger):
         _make_allmight_project(source_project, workspaces={"pll": {"rtl": ["./src"]}})
         _make_allmight_project(target_project)
-        # Create .claude/commands so sync can be installed
-        (target_project / ".claude" / "commands").mkdir(parents=True, exist_ok=True)
-        (target_project / ".claude" / "skills").mkdir(parents=True, exist_ok=True)
-
         merger.merge(source=source_project, target=target_project)
 
-        assert (target_project / ".claude" / "commands" / "sync.md").exists()
-        assert (target_project / ".claude" / "skills" / "sync" / "SKILL.md").exists()
+        assert (target_project / ".opencode" / "commands" / "sync.md").exists()
+        assert (target_project / ".opencode" / "skills" / "sync" / "SKILL.md").exists()
 
 
 # ======================================================================

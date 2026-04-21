@@ -86,7 +86,7 @@ class TestProjectInitializer:
         initializer.initialize(manifest)
 
         # SMAK skill should NOT be installed (agents go through All-Might)
-        smak_skill = sample_project / ".claude" / "skills" / "smak" / "SKILL.md"
+        smak_skill = sample_project / ".opencode" / "skills" / "smak" / "SKILL.md"
         assert not smak_skill.exists()
 
     def test_creates_commands(self, sample_project):
@@ -96,7 +96,7 @@ class TestProjectInitializer:
         initializer = ProjectInitializer()
         initializer.initialize(manifest, writable=True)
 
-        commands_dir = sample_project / ".claude" / "commands"
+        commands_dir = sample_project / ".opencode" / "commands"
         # Core commands: search, enrich, ingest (writable mode)
         assert (commands_dir / "search.md").exists()
         assert (commands_dir / "enrich.md").exists()
@@ -107,56 +107,52 @@ class TestProjectInitializer:
         assert not (commands_dir / "power-level.md").exists()
         assert not (commands_dir / "regenerate.md").exists()
 
-    def test_updates_claude_md(self, sample_project):
+    def test_creates_agents_md_content(self, sample_project):
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
         initializer.initialize(manifest)
 
-        claude_md = sample_project / "CLAUDE.md"
-        assert claude_md.exists()
-        content = claude_md.read_text()
+        agents_md = sample_project / "AGENTS.md"
+        assert agents_md.exists()
+        content = agents_md.read_text()
         assert "ALL-MIGHT" in content
         assert "/search" in content
 
-    def test_claude_md_is_what_not_how(self, sample_project):
-        """CLAUDE.md should say WHAT you can do, not HOW (that's in commands)."""
+    def test_agents_md_is_what_not_how(self, sample_project):
+        """AGENTS.md should say WHAT you can do, not HOW (that's in commands)."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
         initializer.initialize(manifest)
 
-        claude_md = sample_project / "CLAUDE.md"
-        content = claude_md.read_text()
-        # Should NOT contain SMAK implementation details
+        content = (sample_project / "AGENTS.md").read_text()
         assert "smak search" not in content
         assert "smak enrich" not in content
 
-    def test_claude_md_has_getting_started(self, sample_project):
-        """Test that CLAUDE.md has getting started steps (writable mode)."""
+    def test_agents_md_has_getting_started(self, sample_project):
+        """Test that AGENTS.md has getting started steps (writable mode)."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
         initializer.initialize(manifest, writable=True)
 
-        claude_md = sample_project / "CLAUDE.md"
-        content = claude_md.read_text()
+        content = (sample_project / "AGENTS.md").read_text()
         assert "Getting Started" in content
         assert "/ingest" in content
 
-    def test_claude_md_has_online_vs_vc_awareness(self, sample_project):
-        """Test that CLAUDE.md lists all commands (writable mode)."""
+    def test_agents_md_has_all_commands(self, sample_project):
+        """Test that AGENTS.md lists all commands (writable mode)."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
         initializer.initialize(manifest, writable=True)
 
-        claude_md = sample_project / "CLAUDE.md"
-        content = claude_md.read_text()
+        content = (sample_project / "AGENTS.md").read_text()
         assert "/search" in content
         assert "/enrich" in content
 
@@ -172,17 +168,16 @@ class TestProjectInitializer:
         # Should still work — no errors, files still exist
         assert (sample_project / "knowledge_graph").is_dir()
 
-    def test_opencode_agents_md_symlink(self, sample_project):
-        """AGENTS.md symlink should be created pointing to CLAUDE.md."""
+    def test_creates_agents_md(self, sample_project):
+        """AGENTS.md created as a real file (not a symlink) for OpenCode."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
         ProjectInitializer().initialize(manifest)
 
         agents_md = sample_project / "AGENTS.md"
-        claude_md = sample_project / "CLAUDE.md"
-        assert claude_md.exists()
-        assert agents_md.is_symlink()
-        assert agents_md.resolve() == claude_md.resolve()
+        assert agents_md.is_file()
+        assert not agents_md.is_symlink()
+        assert "<!-- ALL-MIGHT -->" in agents_md.read_text()
 
     def test_opencode_dotdir_created(self, sample_project):
         """.opencode/ directory created with symlinks into .claude/."""
@@ -192,37 +187,36 @@ class TestProjectInitializer:
 
         assert (sample_project / ".opencode").is_dir()
 
-    def test_opencode_skills_symlink(self, sample_project):
-        """.opencode/skills/ symlinks to .claude/skills/."""
+    def test_opencode_commands_real_dir(self, sample_project):
+        """.opencode/commands/ is a real directory (not a symlink)."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
         ProjectInitializer().initialize(manifest)
 
-        target = sample_project / ".opencode" / "skills"
-        source = sample_project / ".claude" / "skills"
-        assert target.is_symlink()
-        assert target.resolve() == source.resolve()
+        cmds = sample_project / ".opencode" / "commands"
+        assert cmds.is_dir()
+        assert not cmds.is_symlink()
+        assert (cmds / "search.md").is_file()
 
-    def test_opencode_commands_symlink(self, sample_project):
-        """.opencode/commands/ symlinks to .claude/commands/."""
+    def test_no_claude_commands_dir(self, sample_project):
+        """.claude/commands/ must NOT be created."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
         ProjectInitializer().initialize(manifest)
 
-        target = sample_project / ".opencode" / "commands"
-        source = sample_project / ".claude" / "commands"
-        assert target.is_symlink()
-        assert target.resolve() == source.resolve()
+        assert not (sample_project / ".claude" / "commands").exists()
 
     def test_opencode_compat_idempotent(self, sample_project):
-        """Running init twice should not duplicate or break symlinks."""
+        """Running init twice should not break AGENTS.md."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
         init = ProjectInitializer()
         init.initialize(manifest)
         init.initialize(manifest)
 
-        assert (sample_project / "AGENTS.md").is_symlink()
+        agents_md = sample_project / "AGENTS.md"
+        assert agents_md.is_file()
+        assert not agents_md.is_symlink()
 
     def test_enrich_command_sos_has_dry_run(self, sample_project):
         """SOS enrich.md references --dry-run and cliosoft-sos MCP tools."""
@@ -232,7 +226,7 @@ class TestProjectInitializer:
 
         ProjectInitializer().initialize(manifest, writable=True)
 
-        content = (sample_project / ".claude" / "commands" / "enrich.md").read_text()
+        content = (sample_project / ".opencode" / "commands" / "enrich.md").read_text()
         assert "--dry-run" in content
         assert "sos_checkout" in content
         assert "sos_checkin" in content
@@ -245,7 +239,7 @@ class TestProjectInitializer:
 
         ProjectInitializer().initialize(manifest, writable=True)
 
-        content = (sample_project / ".claude" / "commands" / "enrich.md").read_text()
+        content = (sample_project / ".opencode" / "commands" / "enrich.md").read_text()
         assert "--dry-run" not in content
         assert "sos_checkout" not in content
         assert "smak enrich" in content

@@ -24,17 +24,16 @@ SYNC_SKILL_BODY = """\
 
 1. List all files in `.allmight/templates/`
 2. For each staged file, find the corresponding working file:
-   - `.allmight/templates/commands/search.md` → `.claude/commands/search.md`
-   - `.allmight/templates/hooks/memory-nudge.sh` → `.claude/hooks/memory-nudge.sh`
-   - `.allmight/templates/claude-md-section.md` → `CLAUDE.md` (within `<!-- ALL-MIGHT -->` markers)
-   - `.allmight/templates/memory-md-section.md` → `CLAUDE.md` (within `<!-- ALL-MIGHT-MEMORY -->` markers)
+   - `.allmight/templates/commands/search.md` → `.opencode/commands/search.md`
+   - `.allmight/templates/claude-md-section.md` → `AGENTS.md` (within `<!-- ALL-MIGHT -->` markers)
+   - `.allmight/templates/memory-md-section.md` → `AGENTS.md` (within `<!-- ALL-MIGHT-MEMORY -->` markers)
    - `.allmight/templates/opencode.json` → `.opencode/opencode.json`
    - `.allmight/templates/memory-load.ts` → `.opencode/plugins/memory-load.ts`
 3. Compare staged vs. working file:
    - **Identical or nearly identical**: overwrite working file with staged version
    - **User has meaningful customizations**: merge — keep user customizations,
      incorporate new template changes. Present a summary to the user.
-4. For CLAUDE.md section files (`claude-md-section.md`, `memory-md-section.md`):
+4. For AGENTS.md section files (`claude-md-section.md`, `memory-md-section.md`):
    - Replace only the content between the markers (`<!-- ALL-MIGHT -->`, `<!-- ALL-MIGHT-MEMORY -->`)
    - Never touch content outside the markers
 5. After all files are merged, delete `.allmight/templates/`
@@ -46,12 +45,12 @@ If `.allmight/mode` exists, check whether the project's access mode has changed:
 1. Read `.allmight/mode` to determine the current access mode (`read-only` or `writable`)
 2. If `.allmight/templates/remove.txt` exists:
    - Read the list of command files to remove (one filename per line)
-   - Delete each listed file from `.claude/commands/`
+   - Delete each listed file from `.opencode/commands/`
    - Delete `remove.txt` when done
 3. Verify only commands appropriate for the current mode remain:
    - **read-only**: only `search.md` (remove `enrich.md`, `ingest.md` if present)
    - **writable**: `search.md`, `enrich.md`, `ingest.md`
-4. Update the CLAUDE.md ALL-MIGHT section to match the staged `claude-md-section.md`
+4. Update the AGENTS.md ALL-MIGHT section to match the staged `claude-md-section.md`
 
 ### Merge conflict resolution (after `allmight merge`)
 
@@ -71,20 +70,19 @@ If `.allmight/mode` exists, check whether the project's access mode has changed:
 
 | Staged location | Working location |
 |-----------------|-----------------|
-| `.allmight/templates/skills/**` | `.claude/skills/**` |
-| `.allmight/templates/commands/**` | `.claude/commands/**` |
-| `.allmight/templates/hooks/**` | `.claude/hooks/**` |
-| `.allmight/templates/claude-md-section.md` | `CLAUDE.md` (ALL-MIGHT marker) |
-| `.allmight/templates/memory-md-section.md` | `CLAUDE.md` (ALL-MIGHT-MEMORY marker) |
+| `.allmight/templates/skills/**` | `.opencode/skills/**` |
+| `.allmight/templates/commands/**` | `.opencode/commands/**` |
+| `.allmight/templates/claude-md-section.md` | `AGENTS.md` (ALL-MIGHT marker) |
+| `.allmight/templates/memory-md-section.md` | `AGENTS.md` (ALL-MIGHT-MEMORY marker) |
 | `.allmight/templates/opencode.json` | `.opencode/opencode.json` |
 | `.allmight/templates/memory-load.ts` | `.opencode/plugins/memory-load.ts` |
 
 ## Important
 
 - **MEMORY.md** is never staged or overwritten — it is agent-writable
-- **Hook scripts** may need `chmod +x` after merging
 - After syncing, run `/ingest` if workspace configs changed
 - This skill handles both init-update and merge conflicts — same workflow
+- Any legacy `.claude/` directory can be deleted manually once sync is complete
 """
 
 SYNC_COMMAND_BODY = """\

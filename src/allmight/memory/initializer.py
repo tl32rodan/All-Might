@@ -79,22 +79,13 @@ class MemoryInitializer:
         if not skills_log.exists():
             skills_log.write_text(self._skills_log_template())
 
-        # 5. Generate hook scripts (nudge + L1 loader)
-        self._generate_hooks(root)
-
-        # 5b. Register hooks in .claude/settings.json (idempotent, marker-bounded)
-        self._wire_claude_settings(root)
-
-        # 6. Generate memory commands (remember, recall, reflect)
+        # 5. Generate memory commands (remember, recall, reflect)
         self._generate_memory_commands(root)
 
-        # 7. Update CLAUDE.md
-        self._update_claude_md(root)
+        # 7. Update AGENTS.md
+        self._update_agents_md(root)
 
-        # 8. Refresh OpenCode compatibility (symlinks + opencode.json hooks)
-        self._refresh_opencode_compat(root)
-
-        # 9. Generate opencode.json with hooks for OpenCode
+        # 8. Generate opencode.json with hooks for OpenCode
         self._generate_opencode_json(root)
 
     # ------------------------------------------------------------------
@@ -106,17 +97,12 @@ class MemoryInitializer:
         tpl = root / ".allmight" / "templates"
         tpl.mkdir(parents=True, exist_ok=True)
 
-        # Stage hook scripts
-        hooks_tpl = tpl / "hooks"
-        hooks_tpl.mkdir(parents=True, exist_ok=True)
-        self._write_hook_content(hooks_tpl)
-
         # Stage memory commands
         cmds_tpl = tpl / "commands"
         cmds_tpl.mkdir(parents=True, exist_ok=True)
         self._write_memory_command_content(cmds_tpl)
 
-        # Stage CLAUDE.md memory section
+        # Stage AGENTS.md memory section
         (tpl / "memory-md-section.md").write_text(self._memory_claude_md_section())
 
         # Stage opencode.json and memory-load.ts
@@ -126,106 +112,6 @@ class MemoryInitializer:
         (tpl / "package.json").write_text(self._opencode_package_json_content())
         for filename, content in self._opencode_plugin_map().items():
             (tpl / filename).write_text(content)
-
-    def _write_hook_content(self, hooks_dir: Path) -> None:
-        """Write hook script content to a directory."""
-        nudge_text = _reminder_nudge_text()
-        (hooks_dir / "memory-nudge.sh").write_text(f"""\
-#!/usr/bin/env bash
-# Memory Nudge — Claude Code Stop hook (throttled per-session)
-#
-# Fires every Stop. Reads cwd + session_id from stdin JSON. Keeps a
-# per-session counter at memory/.nudge-counter-<session_id> (separate
-# files per session -> no race across parallel sessions) and emits the
-# nudge only when count % reminder_every_turns == 0.
-set -euo pipefail
-
-INPUT=$(cat 2>/dev/null || echo "{{}}")
-PROJECT_DIR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd','.'))" 2>/dev/null || echo ".")
-SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || echo "")
-
-# Without a session id we can't throttle safely — skip rather than risk
-# a race on a shared counter.
-if [ -z "$SESSION_ID" ]; then
-    exit 0
-fi
-
-EVERY=$(python3 -c "
-import sys, pathlib
-try:
-    import yaml  # type: ignore
-except ImportError:
-    print(5); sys.exit(0)
-p = pathlib.Path('$PROJECT_DIR') / 'memory' / 'config.yaml'
-try:
-    data = yaml.safe_load(p.read_text()) or {{}}
-    print(int(data.get('reminder_every_turns', 5)))
-except Exception:
-    print(5)
-" 2>/dev/null || echo 5)
-
-COUNTER_DIR="$PROJECT_DIR/memory"
-mkdir -p "$COUNTER_DIR"
-COUNTER_FILE="$COUNTER_DIR/.nudge-counter-$SESSION_ID"
-
-COUNT=$(cat "$COUNTER_FILE" 2>/dev/null || echo 0)
-COUNT=$((COUNT + 1))
-echo "$COUNT" > "$COUNTER_FILE"
-
-if [ "$((COUNT % EVERY))" -eq 0 ]; then
-    cat <<'NUDGE'
-{nudge_text}
-NUDGE
-fi
-exit 0
-""")
-        (hooks_dir / "memory-load.sh").write_text("""\
-#!/usr/bin/env bash
-# L1 Loader — UserPromptSubmit hook
-# Injects MEMORY.md content into agent context every turn.
-# When memory/.l1-over-cap exists (set by cap_audit after Stop), prepend
-# a triage warning *before* MEMORY.md so the agent sees it first.
-set -euo pipefail
-
-INPUT=$(cat)
-PROJECT_DIR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd','.'))" 2>/dev/null || echo ".")
-
-NUDGE_FILE="$PROJECT_DIR/memory/.l1-over-cap"
-if [ -f "$NUDGE_FILE" ]; then
-    OVERFLOW=$(grep '^overflow_bytes:' "$NUDGE_FILE" 2>/dev/null | awk '{print $2}')
-    OVERFLOW=${OVERFLOW:-?}
-    cat <<NUDGE
-\u26a0 L1 over cap by ${OVERFLOW} bytes. Triage required:
-- Distill cross-cutting facts; remove stale/duplicate lines.
-- Move corpus-specific content to memory/understanding/<workspace>.md.
-- Move open TODOs to memory/todos/<workspace>.md.
-Run /reflect and complete the cap-triage step (sentinel clears on next Stop).
-
-NUDGE
-fi
-
-MEMORY_FILE="$PROJECT_DIR/MEMORY.md"
-if [ -f "$MEMORY_FILE" ]; then
-    echo "--- Project Memory (MEMORY.md) ---"
-    cat "$MEMORY_FILE"
-    echo "--- End Project Memory ---"
-fi
-exit 0
-""")
-        (hooks_dir / "memory-cap.sh").write_text("""\
-#!/usr/bin/env bash
-# L1 Cap Audit — Stop hook (F1.5)
-# Audits MEMORY.md body size against the cap and writes/removes the
-# memory/.l1-over-cap nudge sentinel. NEVER modifies MEMORY.md.
-# Must never block Stop.
-set -euo pipefail
-
-INPUT=$(cat 2>/dev/null || echo "{}")
-PROJECT_DIR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd','.'))" 2>/dev/null || echo ".")
-
-python3 -m allmight.memory.cap_audit "$PROJECT_DIR" >/dev/null 2>&1 || true
-exit 0
-""")
 
     def _write_memory_command_content(self, commands_dir: Path) -> None:
         """Write memory command content to a directory."""
@@ -242,6 +128,7 @@ exit 0
 The agent can **remember things across sessions**: preferences,
 decisions, corrections, learned patterns, and per-corpus personal
 state (TODOs, shortcuts, ad-hoc notes).
+(*corpus = workspace; see the All-Might section above for definition*)
 
 | Command | What it does |
 |---------|-------------|
@@ -714,42 +601,6 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
 
 *(none recorded yet)*
 """)
-
-    # ------------------------------------------------------------------
-    # Hooks — Memory Nudge + L1 Loader
-    # ------------------------------------------------------------------
-
-    def _generate_hooks(self, root: Path) -> None:
-        """Generate hook scripts for active memory management."""
-        import stat
-
-        hooks_dir = root / ".claude" / "hooks"
-        hooks_dir.mkdir(parents=True, exist_ok=True)
-
-        self._write_hook_content(hooks_dir)
-
-        # Make executable
-        for script_name in ("memory-nudge.sh", "memory-load.sh", "memory-cap.sh"):
-            script = hooks_dir / script_name
-            script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-    def _wire_claude_settings(self, root: Path) -> None:
-        """Register All-Might hooks in ``.claude/settings.json``."""
-        from .settings_json import merge_hooks
-
-        merge_hooks(
-            root / ".claude" / "settings.json",
-            {
-                "Stop": [
-                    {"command": "./.claude/hooks/memory-cap.sh"},
-                    {"command": "./.claude/hooks/memory-nudge.sh"},
-                ],
-                "UserPromptSubmit": [
-                    {"command": "./.claude/hooks/memory-load.sh"},
-                ],
-            },
-        )
-
     def _skills_log_template(self) -> str:
         """Return the initial ``memory/skills-log.md`` body."""
         return (
@@ -767,7 +618,7 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
 
     def _generate_memory_commands(self, root: Path) -> None:
         """Generate /remember, /recall, and /reflect commands."""
-        commands_dir = root / ".claude" / "commands"
+        commands_dir = root / ".opencode" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
         self._write_memory_command_content(commands_dir)
 
@@ -1141,40 +992,33 @@ Append to `memory/usage.log`:
     # CLAUDE.md update
     # ------------------------------------------------------------------
 
-    def _update_claude_md(self, root: Path) -> None:
-        """Append memory system section to CLAUDE.md."""
-        claude_md = root / "CLAUDE.md"
+    def _update_agents_md(self, root: Path) -> None:
+        """Append memory system section to AGENTS.md."""
+        agents_md = root / "AGENTS.md"
+
+        if agents_md.is_symlink():
+            agents_md.unlink()
+
         marker = "<!-- ALL-MIGHT-MEMORY -->"
         memory_section = self._memory_claude_md_section()
 
-        if claude_md.exists():
-            content = claude_md.read_text()
+        if agents_md.exists():
+            content = agents_md.read_text()
             if marker in content:
                 before = content[: content.index(marker)]
                 content = before.rstrip() + "\n\n" + memory_section
             else:
                 content = content.rstrip() + "\n\n" + memory_section
-            claude_md.write_text(content)
+            agents_md.write_text(content)
         else:
-            claude_md.write_text(f"# Project\n\n{memory_section}")
+            agents_md.write_text(f"# Project\n\n{memory_section}")
 
     # ------------------------------------------------------------------
     # OpenCode compatibility
     # ------------------------------------------------------------------
 
     def _generate_opencode_json(self, root: Path) -> None:
-        """Generate opencode.json for OpenCode compatibility.
-
-        OpenCode owns its own reminder throttle inside
-        ``remember-trigger.ts`` (in-memory ``Map<sessionID, State>``), so
-        ``session_completed`` no longer needs to invoke the shell nudge
-        — that hook is now Claude-Code-only, wired via
-        ``.claude/settings.json``.
-
-        This function clears any stale All-Might entry in
-        ``experimental.hook.session_completed`` (left by older releases)
-        while preserving any unrelated user-authored hook entries.
-        """
+        """Generate opencode.json for OpenCode compatibility."""
         import json
 
         opencode_dir = root / ".opencode"
@@ -1189,24 +1033,7 @@ Append to `memory/usage.log`:
         else:
             config = {}
 
-        experimental = config.setdefault("experimental", {})
-        hook = experimental.setdefault("hook", {})
-
-        # Drop any session_completed entry that called the shell nudge.
-        entries = hook.get("session_completed") or []
-        filtered = [
-            entry for entry in entries
-            if "memory-nudge.sh" not in " ".join(entry.get("command", []))
-        ]
-        if filtered:
-            hook["session_completed"] = filtered
-        else:
-            hook.pop("session_completed", None)
-
-        if not hook:
-            experimental.pop("hook", None)
-        if not experimental:
-            config.pop("experimental", None)
+        config["$schema"] = "https://opencode.ai/config.json"
 
         opencode_json.write_text(json.dumps(config, indent=2) + "\n")
 
@@ -1491,30 +1318,3 @@ export const TrajectoryWriterPlugin: Plugin = async ({ directory }: any) => {
 export default TrajectoryWriterPlugin;
 """
 
-    def _refresh_opencode_compat(self, root: Path) -> None:
-        """Ensure OpenCode compatibility symlinks exist after memory init."""
-        import os
-
-        # --- AGENTS.md → CLAUDE.md ---
-        agents_md = root / "AGENTS.md"
-        claude_md = root / "CLAUDE.md"
-        if claude_md.exists() and not agents_md.exists():
-            os.symlink("CLAUDE.md", str(agents_md))
-
-        # --- .opencode/ directory with symlinks into .claude/ ---
-        opencode_dir = root / ".opencode"
-        claude_dir = root / ".claude"
-
-        if not claude_dir.is_dir():
-            return
-
-        opencode_dir.mkdir(exist_ok=True)
-
-        for subdir in ("skills", "commands"):
-            source = claude_dir / subdir
-            target = opencode_dir / subdir
-            if source.is_dir() and not target.exists():
-                os.symlink(
-                    os.path.relpath(str(source), str(opencode_dir)),
-                    str(target),
-                )

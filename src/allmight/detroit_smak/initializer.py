@@ -69,8 +69,7 @@ class ProjectInitializer:
         else:
             # First init (or --force): write everything directly
             self._generate_commands(root, manifest, writable=writable)
-            self._update_claude_md(root, manifest, writable=writable)
-            self._create_opencode_compat(root)
+            self._update_agents_md(root, manifest, writable=writable)
 
             # Create .allmight/ marker (clean up any stale templates)
             allmight_dir.mkdir(exist_ok=True)
@@ -136,7 +135,7 @@ class ProjectInitializer:
         from .sync_skill_content import SYNC_SKILL_BODY, SYNC_COMMAND_BODY
 
         self._write_skill(
-            root / ".claude" / "skills" / "sync" / "SKILL.md",
+            root / ".opencode" / "skills" / "sync" / "SKILL.md",
             name="sync",
             description=(
                 "Reconcile staged All-Might templates or merge conflicts. "
@@ -144,7 +143,7 @@ class ProjectInitializer:
             ),
             body=SYNC_SKILL_BODY,
         )
-        commands_dir = root / ".claude" / "commands"
+        commands_dir = root / ".opencode" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
         (commands_dir / "sync.md").write_text(SYNC_COMMAND_BODY)
 
@@ -161,7 +160,7 @@ class ProjectInitializer:
     def _claude_md_section_readonly(
         self, marker: str, manifest: ProjectManifest,
     ) -> str:
-        """CLAUDE.md section for read-only mode — search only."""
+        """AGENTS.md section for read-only mode — search only."""
         sos_prereq = ""
         if manifest.has_path_env:
             sos_prereq = """
@@ -188,13 +187,15 @@ modify corpora (no ingesting, no enriching, no sidecar edits).
 
 ### Concepts
 
-- **Corpus** = a pre-built vector index of source files.  Source files are
-  indexed **in-place** — nothing is copied into this project.
-  Only the vector index (in `knowledge_graph/<workspace>/store/`) is local.
+- **Corpus** (= **workspace**) — one independently-indexed source domain.
+  Each corpus maps to `knowledge_graph/<workspace>/` and has its own SMAK
+  vector store. A project may have multiple corpora (e.g. `stdcell`, `pll`).
+  Source files are indexed **in-place** — only the index is stored locally.
+  The corpus name and workspace name are the same string throughout All-Might.
 
 ### How to learn the details
 
-The `/search` command has a detailed operational guide in `.claude/commands/`.
+The `/search` command has a detailed operational guide in `.opencode/commands/`.
 {sos_prereq}
 ### Getting Started
 
@@ -204,7 +205,7 @@ The `/search` command has a detailed operational guide in `.claude/commands/`.
     def _claude_md_section_writable(
         self, marker: str, manifest: ProjectManifest,
     ) -> str:
-        """CLAUDE.md section for writable mode — full access."""
+        """AGENTS.md section for writable mode — full access."""
         sos_prereq = ""
         if manifest.has_path_env:
             sos_prereq = """
@@ -230,16 +231,18 @@ code by meaning, annotate what it learns, and remember across sessions.
 
 ### Concepts
 
-- **Corpus** = a vector index built from source files by `/ingest`. Source
-  files are indexed **in-place** — nothing is copied into this project.
-  Only the vector index (in `knowledge_graph/<workspace>/store/`) is local.
+- **Corpus** (= **workspace**) — one independently-indexed source domain.
+  Each corpus maps to `knowledge_graph/<workspace>/` and has its own SMAK
+  vector store. A project may have multiple corpora (e.g. `stdcell`, `pll`).
+  Source files are indexed **in-place** — only the index is stored locally.
+  The corpus name and workspace name are the same string throughout All-Might.
 - **Annotation** = a note on a code symbol (function, class) describing its
   purpose and connections. Stored in `.sidecar.yaml` files beside the source code.
 
 ### How to learn the details
 
 Each command (`/search`, `/enrich`, `/ingest`) has a detailed operational
-guide in `.claude/commands/`.
+guide in `.opencode/commands/`.
 {sos_prereq}
 ### Getting Started
 
@@ -334,11 +337,8 @@ smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code
     def _generate_commands(
         self, root: Path, manifest: ProjectManifest, writable: bool = False,
     ) -> None:
-        """Generate .claude/commands/ — thick operational guides."""
-        # Ensure .claude/ structure exists (skills/ is a container for
-        # user-installed skills and the sync skill on re-init)
-        (root / ".claude" / "skills").mkdir(parents=True, exist_ok=True)
-        commands_dir = root / ".claude" / "commands"
+        """Generate .opencode/commands/ — thick operational guides."""
+        commands_dir = root / ".opencode" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
 
         (commands_dir / "search.md").write_text(self._search_command_body())
@@ -348,26 +348,28 @@ smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code
             )
             (commands_dir / "ingest.md").write_text(self._ingest_command_body())
 
-    def _update_claude_md(
+    def _update_agents_md(
         self, root: Path, manifest: ProjectManifest, writable: bool = False,
     ) -> None:
-        """Append All-Might baseline instructions to CLAUDE.md at project root."""
-        claude_md = root / "CLAUDE.md"
+        """Append All-Might baseline instructions to AGENTS.md at project root."""
+        agents_md = root / "AGENTS.md"
+
+        if agents_md.is_symlink():
+            agents_md.unlink()
 
         marker = "<!-- ALL-MIGHT -->"
         allmight_section = self._claude_md_section(manifest, writable=writable)
 
-        if claude_md.exists():
-            content = claude_md.read_text()
+        if agents_md.exists():
+            content = agents_md.read_text()
             if marker in content:
-                # Replace existing section
                 before = content[: content.index(marker)]
                 content = before.rstrip() + "\n\n" + allmight_section
             else:
                 content = content.rstrip() + "\n\n" + allmight_section
-            claude_md.write_text(content)
+            agents_md.write_text(content)
         else:
-            claude_md.write_text(f"# {manifest.name}\n\n{allmight_section}")
+            agents_md.write_text(f"# {manifest.name}\n\n{allmight_section}")
 
     @staticmethod
     def _enrich_command_body(has_path_env: bool) -> str:
@@ -465,50 +467,6 @@ Use `--dry-run` with the `cliosoft-sos` MCP tools to enrich safely:
 - After check-in, re-ingest to update the search index
 """
         return base + sos_section
-
-    def _create_opencode_compat(self, root: Path) -> None:
-        """Create OpenCode-compatible symlinks.
-
-        OpenCode prefers ``AGENTS.md`` over ``CLAUDE.md`` and looks in
-        ``.opencode/`` alongside ``.claude/``.  We create symlinks so
-        that a single set of files serves both tools.
-
-        Symlinks created::
-
-            AGENTS.md            → CLAUDE.md
-            .opencode/skills/    → .claude/skills/
-            .opencode/commands/  → .claude/commands/
-
-        OpenCode also reads ``.claude/`` natively as a compatibility
-        fallback, so the symlinks are an optimisation, not a hard
-        requirement.
-        """
-        import os
-
-        # --- AGENTS.md → CLAUDE.md ---
-        agents_md = root / "AGENTS.md"
-        claude_md = root / "CLAUDE.md"
-        if claude_md.exists() and not agents_md.exists():
-            os.symlink("CLAUDE.md", str(agents_md))
-
-        # --- .opencode/ directory with symlinks into .claude/ ---
-        opencode_dir = root / ".opencode"
-        claude_dir = root / ".claude"
-
-        if not claude_dir.is_dir():
-            return  # Nothing to link to
-
-        opencode_dir.mkdir(exist_ok=True)
-
-        for subdir in ("skills", "commands"):
-            source = claude_dir / subdir
-            target = opencode_dir / subdir
-            if source.is_dir() and not target.exists():
-                # Relative symlink: .opencode/skills → ../.claude/skills
-                os.symlink(
-                    os.path.relpath(str(source), str(opencode_dir)),
-                    str(target),
-                )
 
     def _write_skill(
         self,
