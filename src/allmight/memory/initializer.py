@@ -444,6 +444,7 @@ export const RememberTriggerPlugin: Plugin = async () => {
 
     "chat.message": async (input: any, output: any) => {
       const sid = input?.sessionID;
+      if (!sid) return;
       const s = sessions.get(sid);
       if (!s?.pendingNudge) return;
       if (!Array.isArray(output?.parts)) return;
@@ -454,7 +455,9 @@ export const RememberTriggerPlugin: Plugin = async () => {
 
     // Pre-compaction hook: inject the scope reminder directly into the
     // compaction prompt so the generated summary carries the framing.
-    "experimental.session.compacting": async (_input: any, output: any) => {
+    "experimental.session.compacting": async (input: any, output: any) => {
+      const sid = input?.sessionID;
+      if (!sid) return;
       if (!output) return;
       const context = output.context ?? (output.context = []);
       if (Array.isArray(context)) {
@@ -627,6 +630,7 @@ export const TodoCuratorPlugin: Plugin = async ({ directory }: any) => {
 
     "chat.message": async (input: any, output: any) => {
       const sid = input?.sessionID;
+      if (!sid) return;
       const s = sessions.get(sid);
       if (!s?.pendingSurface) return;
       if (!Array.isArray(output?.parts)) return;
