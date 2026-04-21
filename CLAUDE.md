@@ -34,7 +34,7 @@ All-Might/                          ← This repo (the framework)
 
 | File | What it generates |
 |------|-------------------|
-| `detroit_smak/initializer.py` | CLAUDE.md, knowledge_graph/, skills, commands |
+| `detroit_smak/initializer.py` | AGENTS.md, knowledge_graph/, .opencode/skills, .opencode/commands |
 | `one_for_all/templates/skill-base.md.j2` | The one-for-all SKILL.md |
 | `memory/initializer.py` | MEMORY.md (L1), understanding/ (L2), journal/ (L3), /remember /recall |
 | `detroit_smak/scanner.py` | Detects languages, frameworks, proposes indices |
@@ -44,7 +44,7 @@ All-Might/                          ← This repo (the framework)
 | Layer | What | For whom |
 |-------|------|----------|
 | README.md | How to talk to the agent | Human |
-| CLAUDE.md (in workspace) | What capabilities exist | Agent (high-level) |
+| AGENTS.md (in workspace) | What capabilities exist | Agent (high-level) |
 | Skills/Commands | How to execute operations (smak CLI) | Agent (low-level) |
 | CLI | `allmight init` only | Human (bootstrap) |
 
@@ -59,20 +59,21 @@ SMAK workspaces** (corpora). Example with 3 EDA flows:
 
 ```
 my-chip-project/                          ← One All-Might project
-├── CLAUDE.md                             ← Agent: WHAT can I do (high-level)
-├── AGENTS.md → CLAUDE.md                 ← OpenCode compatibility
+├── AGENTS.md                             ← Agent: WHAT can I do (high-level)
 │
-├── .claude/
+├── .opencode/
 │   ├── skills/
 │   │   └── one-for-all/SKILL.md          ← Agent: HOW to operate (low-level)
-│   └── commands/
-│       ├── search.md                     ← /search operational guide
-│       ├── enrich.md                     ← /enrich operational guide
-│       ├── ingest.md                     ← /ingest operational guide
-│       ├── remember.md                   ← /remember (memory)
-│       └── recall.md                     ← /recall (memory)
+│   ├── commands/
+│   │   ├── search.md                     ← /search operational guide
+│   │   ├── enrich.md                     ← /enrich operational guide
+│   │   ├── ingest.md                     ← /ingest operational guide
+│   │   ├── remember.md                   ← /remember (memory)
+│   │   └── recall.md                     ← /recall (memory)
+│   ├── plugins/                          ← TypeScript plugins (L1 loader, nudge)
+│   └── opencode.json                     ← OpenCode config ($schema + plugins)
 │
-├── MEMORY.md                             ← L1: project map + user prefs (hook-loaded)
+├── MEMORY.md                             ← L1: project map + user prefs (plugin-loaded)
 │
 │
 ├── memory/                               ← Shared: agent memory across ALL workspaces
@@ -108,11 +109,11 @@ the All-Might project. Only the vector index (`store/`) and SMAK config
 
 | Layer | Audience | Abstraction | Contains |
 |-------|----------|-------------|----------|
-| **CLAUDE.md** | Agent | High-level WHAT | Capabilities, commands, "see skill for details" |
+| **AGENTS.md** | Agent | High-level WHAT | Capabilities, commands, "see skill for details" |
 | **Skills/Commands** | Agent | Low-level HOW | SMAK CLI commands, YAML schemas, troubleshooting |
 | **README.md** | Human | Conversational | "Tell the agent to search for..." |
 
-- **CLAUDE.md** knows about `/search`, `/enrich` but NOT about `smak search --config ...`
+- **AGENTS.md** knows about `/search`, `/enrich` but NOT about `smak search --config ...`
 - **Skills** know about SMAK internals but never expose them to the human user
 - **README.md** doesn't mention SMAK, sidecars, or YAML — only natural-language examples
 
@@ -147,8 +148,8 @@ by their directory structure, not by a registry file.
 | `MEMORY.md` | Project-wide | L1 cache: project map, user prefs (hook-loaded) |
 | `memory/understanding/` | Project-wide | L2: per-corpus knowledge (agent reads/writes) |
 | `memory/journal/` | Project-wide | L3: searchable log (SMAK indexed) |
-| `.claude/skills/` | Project-wide | One skill teaches agent about all workspaces |
-| `.claude/commands/` | Project-wide | One set of commands for the whole project |
+| `.opencode/skills/` | Project-wide | One skill teaches agent about all workspaces |
+| `.opencode/commands/` | Project-wide | One set of commands for the whole project |
 | `knowledge_graph/<name>/config.yaml` | Per-workspace | Each SMAK DB has its own index config |
 | `knowledge_graph/<name>/store/` | Per-workspace | Each SMAK DB has its own search data |
 | Sidecar files | Per-source-file | Live beside source code (external) |

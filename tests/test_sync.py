@@ -290,6 +290,13 @@ class TestSyncSkillContent:
         content = (sample_project / ".opencode" / "skills" / "sync" / "SKILL.md").read_text()
         assert ".allmight/mode" in content
 
+    def test_sync_skill_references_opencode_paths(self, sample_project):
+        """Sync skill only references .opencode paths, not .claude paths."""
+        from allmight.detroit_smak.sync_skill_content import SYNC_SKILL_BODY
+        assert ".opencode/commands" in SYNC_SKILL_BODY
+        assert ".claude/commands" not in SYNC_SKILL_BODY
+        assert ".claude/hooks" not in SYNC_SKILL_BODY
+
 
 # ======================================================================
 # Mode Transitions — re-init with different mode
