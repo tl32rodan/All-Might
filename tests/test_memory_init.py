@@ -12,6 +12,20 @@ from allmight.memory.config import MemoryConfigManager
 from allmight.memory.initializer import MemoryInitializer
 
 
+def _slice_hook(content: str, hook_key: str) -> str:
+    """Extract one hook body from a generated OpenCode plugin.
+
+    Returns the substring from the hook's opening line through its
+    matching `    },` close. Generated plugins indent hook bodies by
+    four spaces, so that marker reliably delimits one block.
+    """
+    marker = f'"{hook_key}":'
+    start = content.index(marker)
+    end_marker = "\n    },"
+    end = content.index(end_marker, start) + len(end_marker)
+    return content[start:end]
+
+
 @pytest.fixture
 def project_root(tmp_path):
     """A minimal project root."""
@@ -321,6 +335,72 @@ class TestOpenCodeHooks:
             # No stale msg.content mutations remain
             assert "msg.content =" not in content, (
                 f"{name}: stale msg.content mutation remains"
+            )
+
+    def test_remember_trigger_compacting_extracts_sessionid(self, project_root):
+        """Pre-compaction hook must extract sessionID and guard early.
+
+        Regression: the hook previously ignored input (signature
+        `(_input, output)`) and unconditionally mutated output.context,
+        which caused OpenCode to throw
+        `SyncEvent.run: "sessionID" required but not found` when
+        compaction fired without an active session. Align with
+        trajectory-writer / todo-curator.
+        """
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "plugins" / "remember-trigger.ts").read_text()
+        block = _slice_hook(content, "experimental.session.compacting")
+        # Positive: proper signature, sessionID extraction, guard.
+        assert "(input: any, output: any)" in block, (
+            "compacting hook must accept (input, output), not (_input, output)"
+        )
+        assert "input?.sessionID" in block, (
+            "compacting hook must read sessionID from input"
+        )
+        assert "if (!sid) return;" in block, (
+            "compacting hook must early-return when sessionID is absent"
+        )
+        # Negative: the broken pattern must not regress.
+        assert "_input" not in block, (
+            "compacting hook must not mark input unused (_input prefix); "
+            "that indicates sessionID is being ignored"
+        )
+
+    def test_plugin_hooks_guard_on_sessionid(self, project_root):
+        """Every hook that reads input must short-circuit when sessionID is missing.
+
+        OpenCode's hook contract passes sessionID on `input`; without a
+        guard, a hook can mutate output for a session it doesn't own,
+        which fails downstream Zod validation in the event bus.
+        """
+        MemoryInitializer().initialize(project_root)
+        cases = [
+            ("memory-load.ts", "chat.message"),
+            ("remember-trigger.ts", "chat.message"),
+            ("remember-trigger.ts", "experimental.session.compacting"),
+            ("todo-curator.ts", "chat.message"),
+            ("todo-curator.ts", "experimental.session.compacting"),
+            ("trajectory-writer.ts", "experimental.session.compacting"),
+        ]
+        for plugin, hook in cases:
+            content = (project_root / ".opencode" / "plugins" / plugin).read_text()
+            block = _slice_hook(content, hook)
+            assert "input?.sessionID" in block, (
+                f"{plugin}:{hook} must read input?.sessionID"
+            )
+            # Calling sessions.get(undefined) silently returns undefined
+            # and the hook keeps running on a session it doesn't own. Two
+            # acceptable guards: an explicit `if (!sid) return;` before
+            # the lookup, or a ternary short-circuit
+            # `sid ? sessions.get(sid) : undefined`.
+            get_idx = block.find("sessions.get(sid)")
+            if get_idx == -1:
+                continue
+            guard_idx = block.find("if (!sid")
+            has_explicit_guard = guard_idx != -1 and guard_idx < get_idx
+            has_ternary_guard = "sid ? sessions.get(sid)" in block
+            assert has_explicit_guard or has_ternary_guard, (
+                f"{plugin}:{hook} must guard on !sid before sessions.get(sid)"
             )
 
     def test_creates_todo_curator_plugin(self, project_root):
