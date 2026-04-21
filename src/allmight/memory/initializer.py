@@ -1014,18 +1014,7 @@ Append to `memory/usage.log`:
     # ------------------------------------------------------------------
 
     def _generate_opencode_json(self, root: Path) -> None:
-        """Generate opencode.json for OpenCode compatibility.
-
-        OpenCode owns its own reminder throttle inside
-        ``remember-trigger.ts`` (in-memory ``Map<sessionID, State>``), so
-        ``session_completed`` no longer needs to invoke the shell nudge
-        — that hook is now Claude-Code-only, wired via
-        ``.claude/settings.json``.
-
-        This function clears any stale All-Might entry in
-        ``experimental.hook.session_completed`` (left by older releases)
-        while preserving any unrelated user-authored hook entries.
-        """
+        """Generate opencode.json for OpenCode compatibility."""
         import json
 
         opencode_dir = root / ".opencode"
@@ -1040,24 +1029,7 @@ Append to `memory/usage.log`:
         else:
             config = {}
 
-        experimental = config.setdefault("experimental", {})
-        hook = experimental.setdefault("hook", {})
-
-        # Drop any session_completed entry that called the shell nudge.
-        entries = hook.get("session_completed") or []
-        filtered = [
-            entry for entry in entries
-            if "memory-nudge.sh" not in " ".join(entry.get("command", []))
-        ]
-        if filtered:
-            hook["session_completed"] = filtered
-        else:
-            hook.pop("session_completed", None)
-
-        if not hook:
-            experimental.pop("hook", None)
-        if not experimental:
-            config.pop("experimental", None)
+        config["$schema"] = "https://opencode.ai/config.json"
 
         opencode_json.write_text(json.dumps(config, indent=2) + "\n")
 

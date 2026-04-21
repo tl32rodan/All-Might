@@ -413,6 +413,41 @@ class TestOpenCodeHooks:
         assert config["model"] == "claude-sonnet-4-6"
         assert config["experimental"]["other"] is True
 
+    def test_opencode_json_has_schema(self, project_root):
+        """opencode.json includes $schema for IDE tooling."""
+        import json
+        MemoryInitializer().initialize(project_root)
+        config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
+        assert config["$schema"] == "https://opencode.ai/config.json"
+
+    def test_opencode_json_no_experimental_section(self, project_root):
+        """opencode.json must not contain an experimental section."""
+        import json
+        MemoryInitializer().initialize(project_root)
+        config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
+        assert "experimental" not in config
+
+    def test_opencode_json_schema_preserved_on_reinit(self, project_root):
+        """$schema survives a second call to initialize()."""
+        import json
+        init = MemoryInitializer()
+        init.initialize(project_root)
+        init.initialize(project_root)
+        config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
+        assert config["$schema"] == "https://opencode.ai/config.json"
+
+    def test_opencode_json_preserves_user_keys_with_schema(self, project_root):
+        """User keys are preserved and $schema is added on top."""
+        import json
+        (project_root / ".opencode").mkdir(exist_ok=True)
+        (project_root / ".opencode" / "opencode.json").write_text(
+            json.dumps({"myKey": "myVal"}) + "\n"
+        )
+        MemoryInitializer().initialize(project_root)
+        config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
+        assert config["myKey"] == "myVal"
+        assert config["$schema"] == "https://opencode.ai/config.json"
+
 
 class TestMemoryConfigManager:
 
