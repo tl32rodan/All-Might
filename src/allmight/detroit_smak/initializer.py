@@ -70,7 +70,6 @@ class ProjectInitializer:
             # First init (or --force): write everything directly
             self._generate_commands(root, manifest, writable=writable)
             self._update_agents_md(root, manifest, writable=writable)
-            self._create_opencode_compat(root)
 
             # Create .allmight/ marker (clean up any stale templates)
             allmight_dir.mkdir(exist_ok=True)
@@ -136,7 +135,7 @@ class ProjectInitializer:
         from .sync_skill_content import SYNC_SKILL_BODY, SYNC_COMMAND_BODY
 
         self._write_skill(
-            root / ".claude" / "skills" / "sync" / "SKILL.md",
+            root / ".opencode" / "skills" / "sync" / "SKILL.md",
             name="sync",
             description=(
                 "Reconcile staged All-Might templates or merge conflicts. "
@@ -144,7 +143,7 @@ class ProjectInitializer:
             ),
             body=SYNC_SKILL_BODY,
         )
-        commands_dir = root / ".claude" / "commands"
+        commands_dir = root / ".opencode" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
         (commands_dir / "sync.md").write_text(SYNC_COMMAND_BODY)
 
@@ -338,11 +337,8 @@ smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code
     def _generate_commands(
         self, root: Path, manifest: ProjectManifest, writable: bool = False,
     ) -> None:
-        """Generate .claude/commands/ — thick operational guides."""
-        # Ensure .claude/ structure exists (skills/ is a container for
-        # user-installed skills and the sync skill on re-init)
-        (root / ".claude" / "skills").mkdir(parents=True, exist_ok=True)
-        commands_dir = root / ".claude" / "commands"
+        """Generate .opencode/commands/ — thick operational guides."""
+        commands_dir = root / ".opencode" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
 
         (commands_dir / "search.md").write_text(self._search_command_body())
@@ -471,50 +467,6 @@ Use `--dry-run` with the `cliosoft-sos` MCP tools to enrich safely:
 - After check-in, re-ingest to update the search index
 """
         return base + sos_section
-
-    def _create_opencode_compat(self, root: Path) -> None:
-        """Create OpenCode-compatible symlinks.
-
-        OpenCode prefers ``AGENTS.md`` over ``CLAUDE.md`` and looks in
-        ``.opencode/`` alongside ``.claude/``.  We create symlinks so
-        that a single set of files serves both tools.
-
-        Symlinks created::
-
-            AGENTS.md            → CLAUDE.md
-            .opencode/skills/    → .claude/skills/
-            .opencode/commands/  → .claude/commands/
-
-        OpenCode also reads ``.claude/`` natively as a compatibility
-        fallback, so the symlinks are an optimisation, not a hard
-        requirement.
-        """
-        import os
-
-        # --- AGENTS.md → CLAUDE.md ---
-        agents_md = root / "AGENTS.md"
-        claude_md = root / "CLAUDE.md"
-        if claude_md.exists() and not agents_md.exists():
-            os.symlink("CLAUDE.md", str(agents_md))
-
-        # --- .opencode/ directory with symlinks into .claude/ ---
-        opencode_dir = root / ".opencode"
-        claude_dir = root / ".claude"
-
-        if not claude_dir.is_dir():
-            return  # Nothing to link to
-
-        opencode_dir.mkdir(exist_ok=True)
-
-        for subdir in ("skills", "commands"):
-            source = claude_dir / subdir
-            target = opencode_dir / subdir
-            if source.is_dir() and not target.exists():
-                # Relative symlink: .opencode/skills → ../.claude/skills
-                os.symlink(
-                    os.path.relpath(str(source), str(opencode_dir)),
-                    str(target),
-                )
 
     def _write_skill(
         self,

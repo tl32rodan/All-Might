@@ -91,10 +91,7 @@ class MemoryInitializer:
         # 7. Update AGENTS.md
         self._update_agents_md(root)
 
-        # 8. Refresh OpenCode compatibility (symlinks + opencode.json hooks)
-        self._refresh_opencode_compat(root)
-
-        # 9. Generate opencode.json with hooks for OpenCode
+        # 8. Generate opencode.json with hooks for OpenCode
         self._generate_opencode_json(root)
 
     # ------------------------------------------------------------------
@@ -764,7 +761,7 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
 
     def _generate_memory_commands(self, root: Path) -> None:
         """Generate /remember, /recall, and /reflect commands."""
-        commands_dir = root / ".claude" / "commands"
+        commands_dir = root / ".opencode" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
         self._write_memory_command_content(commands_dir)
 
@@ -1492,30 +1489,3 @@ export const TrajectoryWriterPlugin: Plugin = async ({ directory }: any) => {
 export default TrajectoryWriterPlugin;
 """
 
-    def _refresh_opencode_compat(self, root: Path) -> None:
-        """Ensure OpenCode compatibility symlinks exist after memory init."""
-        import os
-
-        # --- AGENTS.md → CLAUDE.md ---
-        agents_md = root / "AGENTS.md"
-        claude_md = root / "CLAUDE.md"
-        if claude_md.exists() and not agents_md.exists():
-            os.symlink("CLAUDE.md", str(agents_md))
-
-        # --- .opencode/ directory with symlinks into .claude/ ---
-        opencode_dir = root / ".opencode"
-        claude_dir = root / ".claude"
-
-        if not claude_dir.is_dir():
-            return
-
-        opencode_dir.mkdir(exist_ok=True)
-
-        for subdir in ("skills", "commands"):
-            source = claude_dir / subdir
-            target = opencode_dir / subdir
-            if source.is_dir() and not target.exists():
-                os.symlink(
-                    os.path.relpath(str(source), str(opencode_dir)),
-                    str(target),
-                )

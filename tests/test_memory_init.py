@@ -94,33 +94,33 @@ class TestMemoryInitializer:
 
     def test_generates_remember_command(self, project_root):
         MemoryInitializer().initialize(project_root)
-        assert (project_root / ".claude" / "commands" / "remember.md").exists()
+        assert (project_root / ".opencode" / "commands" / "remember.md").exists()
 
     def test_generates_recall_command(self, project_root):
         MemoryInitializer().initialize(project_root)
-        assert (project_root / ".claude" / "commands" / "recall.md").exists()
+        assert (project_root / ".opencode" / "commands" / "recall.md").exists()
 
     def test_no_consolidate_command(self, project_root):
         """consolidate removed — no more episode-to-semantic pipeline."""
         MemoryInitializer().initialize(project_root)
-        assert not (project_root / ".claude" / "commands" / "consolidate.md").exists()
+        assert not (project_root / ".opencode" / "commands" / "consolidate.md").exists()
 
     def test_remember_command_mentions_journal(self, project_root):
         """remember.md should reference journal/ (L3)."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "journal" in content
 
     def test_remember_command_mentions_understanding(self, project_root):
         """remember.md should reference understanding/ (L2)."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "understanding" in content
 
     def test_recall_command_mentions_smak(self, project_root):
         """recall.md should use smak search against journal."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "recall.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "recall.md").read_text()
         assert "smak search" in content
 
     # -- Per-corpus scoping principle ----------------------------------
@@ -128,7 +128,7 @@ class TestMemoryInitializer:
     def test_remember_teaches_scope_first(self, project_root):
         """/remember leads with scope-first decision (not a /kind/ list)."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "scope" in content.lower()
         # Principle is expressed generically
         assert "<kind>/<workspace>.md" in content
@@ -136,26 +136,26 @@ class TestMemoryInitializer:
     def test_remember_shows_todos_as_example(self, project_root):
         """TODOs appear as an example of per-corpus personal state."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "todo" in content.lower()
 
     def test_remember_usage_log_has_scope_tag(self, project_root):
         """Usage log format includes scope= so /reflect can audit drift."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "scope=" in content
 
     def test_recall_scans_per_corpus_folders(self, project_root):
         """/recall instructs agent to scan memory/<kind>/<workspace>.md files."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "recall.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "recall.md").read_text()
         assert "<kind>/<workspace>.md" in content
         # And calls out picking up unfinished state
         assert "unfinished" in content.lower() or "pick up where" in content.lower()
 
     def test_reflect_audits_scoping(self, project_root):
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
         assert "scop" in content.lower()  # scope / scoping
 
     def test_agents_md_teaches_scoping(self, project_root):
@@ -487,12 +487,12 @@ class TestReflectCommand:
 
     def test_creates_reflect_command(self, project_root):
         MemoryInitializer().initialize(project_root)
-        assert (project_root / ".claude" / "commands" / "reflect.md").exists()
+        assert (project_root / ".opencode" / "commands" / "reflect.md").exists()
 
     def test_reflect_mentions_all_tiers(self, project_root):
         """reflect.md references L1, L2, and L3."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
         assert "MEMORY.md" in content
         assert "understanding" in content
         assert "journal" in content
@@ -500,7 +500,7 @@ class TestReflectCommand:
     def test_reflect_has_checklist(self, project_root):
         """reflect.md has a structured checklist for the agent."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
         assert "## How" in content or "## Checklist" in content or "## Steps" in content
 
 
@@ -516,26 +516,26 @@ class TestFeedbackLoop:
     def test_remember_command_logs_usage(self, project_root):
         """remember.md instructs agent to log usage."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "usage.log" in content
 
     def test_recall_command_logs_usage(self, project_root):
         """recall.md instructs agent to log usage."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "recall.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "recall.md").read_text()
         assert "usage.log" in content
 
     def test_reflect_reads_usage_log(self, project_root):
         """reflect.md includes usage review step."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
         assert "usage.log" in content
         assert "Usage Review" in content or "usage review" in content
 
     def test_reflect_generates_insights(self, project_root):
         """reflect.md has an insights generation step."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
         assert "Insight" in content or "insight" in content
 
 
@@ -545,12 +545,12 @@ class TestJournalFrontmatterTemplates:
 
     def test_remember_template_has_v1_sentinel(self, project_root):
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "allmight_journal: v1" in content
 
     def test_reflect_template_has_v1_sentinel(self, project_root):
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
         assert "allmight_journal: v1" in content
 
 
