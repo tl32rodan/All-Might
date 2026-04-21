@@ -164,11 +164,20 @@ class TestMemoryInitializer:
         assert "<kind>/<workspace>.md" in content
         assert "scope" in content.lower()
 
-    def test_nudge_asks_scope_question(self, project_root):
+    def test_no_claude_hooks_directory(self, project_root):
+        """No .claude/hooks/ should be generated — TS plugins handle memory loading."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "hooks" / "memory-nudge.sh").read_text()
-        assert "scope" in content.lower()
-        assert "<kind>/<workspace>.md" in content
+        assert not (project_root / ".claude" / "hooks").exists()
+
+    def test_no_claude_settings_json(self, project_root):
+        """No .claude/settings.json should be generated."""
+        MemoryInitializer().initialize(project_root)
+        assert not (project_root / ".claude" / "settings.json").exists()
+
+    def test_no_claude_dir_at_all(self, project_root):
+        """After memory init, .claude/ directory must not exist."""
+        MemoryInitializer().initialize(project_root)
+        assert not (project_root / ".claude").exists()
 
     def test_no_hardcoded_todos_dir(self, project_root):
         """Initializer does NOT precreate memory/todos/ — agents make it on demand."""
@@ -238,19 +247,6 @@ class TestOpenCodeHooks:
         """opencode.json created inside .opencode/."""
         MemoryInitializer().initialize(project_root)
         assert (project_root / ".opencode" / "opencode.json").exists()
-
-    def test_opencode_json_does_not_wire_shell_nudge(self, project_root):
-        """OpenCode's nudge lives in remember-trigger.ts, not a shell hook."""
-        import json
-        MemoryInitializer().initialize(project_root)
-        config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
-        entries = (
-            config.get("experimental", {})
-                  .get("hook", {})
-                  .get("session_completed", [])
-        )
-        commands = [" ".join(e.get("command", [])) for e in entries]
-        assert not any("memory-nudge.sh" in c for c in commands)
 
     def test_creates_memory_load_plugin(self, project_root):
         """OpenCode plugin for L1 loader created."""
@@ -439,47 +435,6 @@ class TestMemoryConfigManager:
         mgr.save(cfg)
         loaded = mgr.load()
         assert "journal" in loaded.stores
-
-
-class TestMemoryNudgeHook:
-    """Memory Nudge — Stop hook that reminds agent to update memory."""
-
-    def test_creates_hooks_dir(self, project_root):
-        """memory init creates .claude/hooks/ directory."""
-        MemoryInitializer().initialize(project_root)
-        assert (project_root / ".claude" / "hooks").is_dir()
-
-    def test_creates_nudge_script(self, project_root):
-        """memory-nudge.sh created in hooks directory."""
-        MemoryInitializer().initialize(project_root)
-        script = project_root / ".claude" / "hooks" / "memory-nudge.sh"
-        assert script.exists()
-
-    def test_nudge_script_is_executable(self, project_root):
-        """Hook script has executable permission."""
-        MemoryInitializer().initialize(project_root)
-        import os
-        script = project_root / ".claude" / "hooks" / "memory-nudge.sh"
-        assert os.access(script, os.X_OK)
-
-    def test_nudge_script_references_memory(self, project_root):
-        """Hook script mentions MEMORY.md and understanding."""
-        MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "hooks" / "memory-nudge.sh").read_text()
-        assert "MEMORY.md" in content
-        assert "understanding" in content
-
-    def test_creates_l1_loader_script(self, project_root):
-        """memory-load.sh created — injects MEMORY.md into context."""
-        MemoryInitializer().initialize(project_root)
-        script = project_root / ".claude" / "hooks" / "memory-load.sh"
-        assert script.exists()
-
-    def test_l1_loader_reads_memory_md(self, project_root):
-        """Loader script cats MEMORY.md content."""
-        MemoryInitializer().initialize(project_root)
-        content = (project_root / ".claude" / "hooks" / "memory-load.sh").read_text()
-        assert "MEMORY.md" in content
 
 
 class TestReflectCommand:

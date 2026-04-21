@@ -79,13 +79,7 @@ class MemoryInitializer:
         if not skills_log.exists():
             skills_log.write_text(self._skills_log_template())
 
-        # 5. Generate hook scripts (nudge + L1 loader)
-        self._generate_hooks(root)
-
-        # 5b. Register hooks in .claude/settings.json (idempotent, marker-bounded)
-        self._wire_claude_settings(root)
-
-        # 6. Generate memory commands (remember, recall, reflect)
+        # 5. Generate memory commands (remember, recall, reflect)
         self._generate_memory_commands(root)
 
         # 7. Update AGENTS.md
@@ -103,11 +97,6 @@ class MemoryInitializer:
         tpl = root / ".allmight" / "templates"
         tpl.mkdir(parents=True, exist_ok=True)
 
-        # Stage hook scripts
-        hooks_tpl = tpl / "hooks"
-        hooks_tpl.mkdir(parents=True, exist_ok=True)
-        self._write_hook_content(hooks_tpl)
-
         # Stage memory commands
         cmds_tpl = tpl / "commands"
         cmds_tpl.mkdir(parents=True, exist_ok=True)
@@ -123,106 +112,6 @@ class MemoryInitializer:
         (tpl / "package.json").write_text(self._opencode_package_json_content())
         for filename, content in self._opencode_plugin_map().items():
             (tpl / filename).write_text(content)
-
-    def _write_hook_content(self, hooks_dir: Path) -> None:
-        """Write hook script content to a directory."""
-        nudge_text = _reminder_nudge_text()
-        (hooks_dir / "memory-nudge.sh").write_text(f"""\
-#!/usr/bin/env bash
-# Memory Nudge — Claude Code Stop hook (throttled per-session)
-#
-# Fires every Stop. Reads cwd + session_id from stdin JSON. Keeps a
-# per-session counter at memory/.nudge-counter-<session_id> (separate
-# files per session -> no race across parallel sessions) and emits the
-# nudge only when count % reminder_every_turns == 0.
-set -euo pipefail
-
-INPUT=$(cat 2>/dev/null || echo "{{}}")
-PROJECT_DIR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd','.'))" 2>/dev/null || echo ".")
-SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || echo "")
-
-# Without a session id we can't throttle safely — skip rather than risk
-# a race on a shared counter.
-if [ -z "$SESSION_ID" ]; then
-    exit 0
-fi
-
-EVERY=$(python3 -c "
-import sys, pathlib
-try:
-    import yaml  # type: ignore
-except ImportError:
-    print(5); sys.exit(0)
-p = pathlib.Path('$PROJECT_DIR') / 'memory' / 'config.yaml'
-try:
-    data = yaml.safe_load(p.read_text()) or {{}}
-    print(int(data.get('reminder_every_turns', 5)))
-except Exception:
-    print(5)
-" 2>/dev/null || echo 5)
-
-COUNTER_DIR="$PROJECT_DIR/memory"
-mkdir -p "$COUNTER_DIR"
-COUNTER_FILE="$COUNTER_DIR/.nudge-counter-$SESSION_ID"
-
-COUNT=$(cat "$COUNTER_FILE" 2>/dev/null || echo 0)
-COUNT=$((COUNT + 1))
-echo "$COUNT" > "$COUNTER_FILE"
-
-if [ "$((COUNT % EVERY))" -eq 0 ]; then
-    cat <<'NUDGE'
-{nudge_text}
-NUDGE
-fi
-exit 0
-""")
-        (hooks_dir / "memory-load.sh").write_text("""\
-#!/usr/bin/env bash
-# L1 Loader — UserPromptSubmit hook
-# Injects MEMORY.md content into agent context every turn.
-# When memory/.l1-over-cap exists (set by cap_audit after Stop), prepend
-# a triage warning *before* MEMORY.md so the agent sees it first.
-set -euo pipefail
-
-INPUT=$(cat)
-PROJECT_DIR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd','.'))" 2>/dev/null || echo ".")
-
-NUDGE_FILE="$PROJECT_DIR/memory/.l1-over-cap"
-if [ -f "$NUDGE_FILE" ]; then
-    OVERFLOW=$(grep '^overflow_bytes:' "$NUDGE_FILE" 2>/dev/null | awk '{print $2}')
-    OVERFLOW=${OVERFLOW:-?}
-    cat <<NUDGE
-\u26a0 L1 over cap by ${OVERFLOW} bytes. Triage required:
-- Distill cross-cutting facts; remove stale/duplicate lines.
-- Move corpus-specific content to memory/understanding/<workspace>.md.
-- Move open TODOs to memory/todos/<workspace>.md.
-Run /reflect and complete the cap-triage step (sentinel clears on next Stop).
-
-NUDGE
-fi
-
-MEMORY_FILE="$PROJECT_DIR/MEMORY.md"
-if [ -f "$MEMORY_FILE" ]; then
-    echo "--- Project Memory (MEMORY.md) ---"
-    cat "$MEMORY_FILE"
-    echo "--- End Project Memory ---"
-fi
-exit 0
-""")
-        (hooks_dir / "memory-cap.sh").write_text("""\
-#!/usr/bin/env bash
-# L1 Cap Audit — Stop hook (F1.5)
-# Audits MEMORY.md body size against the cap and writes/removes the
-# memory/.l1-over-cap nudge sentinel. NEVER modifies MEMORY.md.
-# Must never block Stop.
-set -euo pipefail
-
-INPUT=$(cat 2>/dev/null || echo "{}")
-PROJECT_DIR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd','.'))" 2>/dev/null || echo ".")
-
-python3 -m allmight.memory.cap_audit "$PROJECT_DIR" >/dev/null 2>&1 || true
-exit 0
-""")
 
     def _write_memory_command_content(self, commands_dir: Path) -> None:
         """Write memory command content to a directory."""
@@ -708,42 +597,6 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
 
 *(none recorded yet)*
 """)
-
-    # ------------------------------------------------------------------
-    # Hooks — Memory Nudge + L1 Loader
-    # ------------------------------------------------------------------
-
-    def _generate_hooks(self, root: Path) -> None:
-        """Generate hook scripts for active memory management."""
-        import stat
-
-        hooks_dir = root / ".claude" / "hooks"
-        hooks_dir.mkdir(parents=True, exist_ok=True)
-
-        self._write_hook_content(hooks_dir)
-
-        # Make executable
-        for script_name in ("memory-nudge.sh", "memory-load.sh", "memory-cap.sh"):
-            script = hooks_dir / script_name
-            script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-    def _wire_claude_settings(self, root: Path) -> None:
-        """Register All-Might hooks in ``.claude/settings.json``."""
-        from .settings_json import merge_hooks
-
-        merge_hooks(
-            root / ".claude" / "settings.json",
-            {
-                "Stop": [
-                    {"command": "./.claude/hooks/memory-cap.sh"},
-                    {"command": "./.claude/hooks/memory-nudge.sh"},
-                ],
-                "UserPromptSubmit": [
-                    {"command": "./.claude/hooks/memory-load.sh"},
-                ],
-            },
-        )
-
     def _skills_log_template(self) -> str:
         """Return the initial ``memory/skills-log.md`` body."""
         return (

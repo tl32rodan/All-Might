@@ -69,13 +69,10 @@ class TestFirstInit:
         assert (commands / "enrich.md").exists()
         assert (commands / "ingest.md").exists()
 
-    def test_first_init_writes_hooks_directly(self, sample_project):
+    def test_no_claude_hooks_generated(self, sample_project):
+        """No .claude/hooks/ generated — TS plugins handle memory in OpenCode."""
         _full_init(sample_project)
-        hooks = sample_project / ".claude" / "hooks"
-        assert (hooks / "memory-nudge.sh").exists()
-        assert (hooks / "memory-load.sh").exists()
-        assert os.access(hooks / "memory-nudge.sh", os.X_OK)
-        assert os.access(hooks / "memory-load.sh", os.X_OK)
+        assert not (sample_project / ".claude" / "hooks").exists()
 
     def test_first_init_writes_agents_md(self, sample_project):
         _full_init(sample_project)
@@ -121,17 +118,12 @@ class TestReInit:
         assert staged.exists()
         assert "MY CUSTOM" not in staged.read_text()
 
-    def test_reinit_does_not_overwrite_hooks(self, sample_project):
+    def test_no_hooks_staged_on_reinit(self, sample_project):
+        """Hooks are no longer generated, so nothing to stage on re-init."""
         _full_init(sample_project)
-        nudge = sample_project / ".claude" / "hooks" / "memory-nudge.sh"
-        nudge.write_text("#!/bin/bash\necho CUSTOM")
-
         _full_init(sample_project)
-
-        assert "CUSTOM" in nudge.read_text()
-        staged = sample_project / ".allmight" / "templates" / "hooks" / "memory-nudge.sh"
-        assert staged.exists()
-        assert "CUSTOM" not in staged.read_text()
+        staged_hooks = sample_project / ".allmight" / "templates" / "hooks"
+        assert not staged_hooks.exists()
 
     def test_reinit_does_not_overwrite_agents_md(self, sample_project):
         _full_init(sample_project)
