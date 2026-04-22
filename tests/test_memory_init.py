@@ -339,6 +339,60 @@ class TestOpenCodeHooks:
                 f"{name}: stale msg.content mutation remains"
             )
 
+    def test_chat_message_injects_full_part_shape(self, project_root):
+        """Injected parts must carry id / sessionID / messageID.
+
+        Regression: plugins previously unshifted
+        ``{ type: "text", text }`` — a Part shape missing the three
+        identifier fields required by OpenCode's TextPart schema
+        (``packages/opencode/src/session/message-v2.ts`` in sst/opencode).
+        When ``SyncEvent.run`` Zod-validates the mutated
+        ``output.parts``, it fails on the first missing field and raises
+        ``SyncEvent.run: "sessionID" required but not found: {"part":...}``.
+
+        Guarding on ``input?.sessionID`` only prevents cross-session
+        mutation; it does not fix the shape of parts actually inserted.
+        """
+        MemoryInitializer().initialize(project_root)
+        plugins = ["memory-load.ts", "remember-trigger.ts", "todo-curator.ts"]
+        for name in plugins:
+            content = (project_root / ".opencode" / "plugins" / name).read_text()
+            block = _slice_hook(content, "chat.message")
+
+            # Positive: the hook must read the UserMessage id from output
+            # (input.messageID is typed optional in the plugin API), guard
+            # on it, and populate the three required ID fields plus the
+            # synthetic marker on the injected part.
+            assert "output?.message?.id" in block or "output.message?.id" in block, (
+                f"{name}:chat.message must read the message id from output.message"
+            )
+            assert "if (!mid) return;" in block, (
+                f"{name}:chat.message must early-return when the message id is absent"
+            )
+            assert "sessionID: sid" in block, (
+                f"{name}:chat.message must populate sessionID on the injected part"
+            )
+            assert "messageID: mid" in block, (
+                f"{name}:chat.message must populate messageID on the injected part"
+            )
+            assert '"prt_"' in block, (
+                f"{name}:chat.message must generate a PartID with the 'prt_' prefix"
+            )
+            assert "synthetic: true" in block, (
+                f"{name}:chat.message must mark the injected part as synthetic"
+            )
+
+            # Negative: the broken two-field shape must not regress.
+            assert '{ type: "text", text }' not in block, (
+                f"{name}:chat.message still uses the broken 2-field Part shape"
+            )
+            assert '{ type: "text", text: nudge }' not in block, (
+                f"{name}:chat.message still uses the broken 2-field Part shape"
+            )
+            assert '{ type: "text", text: surface }' not in block, (
+                f"{name}:chat.message still uses the broken 2-field Part shape"
+            )
+
     def test_remember_trigger_compacting_extracts_sessionid(self, project_root):
         """Pre-compaction hook must extract sessionID and guard early.
 

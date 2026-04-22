@@ -236,11 +236,22 @@ export const MemoryLoadPlugin: Plugin = async ({ directory }: any) => {
       const text = buildPrefix(cwd);
       if (!text.trim()) return;
 
-      // Prepend as a text part — UserMessage content lives in output.parts
-      if (Array.isArray(output?.parts)) {
-        output.parts.unshift({ type: "text", text });
-        primed.add(sid);
-      }
+      // Prepend as a text part — UserMessage content lives in output.parts.
+      // Each Part requires id / sessionID / messageID (see OpenCode's
+      // TextPart schema in session/message-v2.ts); omitting them makes
+      // SyncEvent.run reject the mutated part with "sessionID required".
+      const mid = output?.message?.id;
+      if (!mid) return;
+      if (!Array.isArray(output?.parts)) return;
+      output.parts.unshift({
+        id: "prt_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10),
+        sessionID: sid,
+        messageID: mid,
+        type: "text",
+        text,
+        synthetic: true,
+      });
+      primed.add(sid);
     },
   };
 };
@@ -335,9 +346,21 @@ export const RememberTriggerPlugin: Plugin = async () => {
       const s = sessions.get(sid);
       if (!s?.pendingNudge) return;
       if (!Array.isArray(output?.parts)) return;
+      // Each Part requires id / sessionID / messageID (see OpenCode's
+      // TextPart schema in session/message-v2.ts); omitting them makes
+      // SyncEvent.run reject the mutated part with "sessionID required".
+      const mid = output?.message?.id;
+      if (!mid) return;
       const nudge = s.pendingNudge;
       s.pendingNudge = null;
-      output.parts.unshift({ type: "text", text: nudge });
+      output.parts.unshift({
+        id: "prt_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10),
+        sessionID: sid,
+        messageID: mid,
+        type: "text",
+        text: nudge,
+        synthetic: true,
+      });
     },
 
     // Pre-compaction hook: inject the scope reminder directly into the
@@ -521,9 +544,21 @@ export const TodoCuratorPlugin: Plugin = async ({ directory }: any) => {
       const s = sessions.get(sid);
       if (!s?.pendingSurface) return;
       if (!Array.isArray(output?.parts)) return;
+      // Each Part requires id / sessionID / messageID (see OpenCode's
+      // TextPart schema in session/message-v2.ts); omitting them makes
+      // SyncEvent.run reject the mutated part with "sessionID required".
+      const mid = output?.message?.id;
+      if (!mid) return;
       const surface = s.pendingSurface;
       s.pendingSurface = null;
-      output.parts.unshift({ type: "text", text: surface });
+      output.parts.unshift({
+        id: "prt_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10),
+        sessionID: sid,
+        messageID: mid,
+        type: "text",
+        text: surface,
+        synthetic: true,
+      });
     },
 
     // Pre-compaction: append session's TODOs to the per-corpus ledger
