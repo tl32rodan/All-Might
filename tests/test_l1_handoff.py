@@ -8,7 +8,6 @@ The cap never silently evicts anything.
 
 from __future__ import annotations
 
-import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -155,85 +154,51 @@ class TestMemoryMdTemplate:
 
 
 class TestStopHookCap:
+    """The cap audit module must be importable and runnable as a script.
 
-    def test_memory_cap_hook_script_exists(self, tmp_path):
-        MemoryInitializer().initialize(tmp_path)
-        script = tmp_path / ".claude" / "hooks" / "memory-cap.sh"
-        assert script.exists()
+    The Claude-Code Stop hook (``.claude/hooks/memory-cap.sh``) was
+    removed when All-Might moved to an OpenCode-only runtime — its
+    behaviour is now expected to be triggered externally (e.g. by an
+    OpenCode plugin or a user-configured hook) via the same module
+    entry point that ``TestModuleRunnableAsScript`` exercises.
+    """
 
-    def test_memory_cap_hook_is_executable(self, tmp_path):
-        MemoryInitializer().initialize(tmp_path)
-        script = tmp_path / ".claude" / "hooks" / "memory-cap.sh"
-        mode = script.stat().st_mode
-        assert mode & stat.S_IXUSR
-        assert mode & stat.S_IXGRP
+    def test_cap_audit_exposes_entry_point(self):
+        from allmight.memory import cap_audit
 
-    def test_memory_cap_hook_invokes_python_module(self, tmp_path):
-        """Hook must call the module directly, not a CLI subcommand."""
-        MemoryInitializer().initialize(tmp_path)
-        content = (tmp_path / ".claude" / "hooks" / "memory-cap.sh").read_text()
-        assert "python3 -m allmight.memory.cap_audit" in content
-        # Negative: old CLI call is gone.
-        assert "allmight memory cap" not in content
-
-    def test_memory_cap_hook_tolerates_failure(self, tmp_path):
-        """Must never block Stop — errors swallowed."""
-        MemoryInitializer().initialize(tmp_path)
-        content = (tmp_path / ".claude" / "hooks" / "memory-cap.sh").read_text()
-        assert "|| true" in content
+        assert hasattr(cap_audit, "audit_and_update_sentinel")
+        assert callable(cap_audit.audit_and_update_sentinel)
 
 
 class TestMemoryLoadHookWarning:
+    """L1-over-cap nudge surfaces through MEMORY.md content, not a shell hook.
 
-    def test_memory_load_injects_over_cap_warning_when_nudge_present(self, tmp_path):
+    The TS plugin ``memory-load.ts`` injects MEMORY.md every session,
+    and the agent reads ``memory/.l1-over-cap`` directly during
+    /reflect's cap-triage step. There is no longer a ``.claude/`` hook
+    that prefixes a warning to stdout, so the only contract left to
+    test here is the sentinel file itself, covered by
+    ``TestAuditAndUpdateSentinel``.
+    """
+
+    def test_memory_load_plugin_replaces_shell_hook(self, tmp_path):
         MemoryInitializer().initialize(tmp_path)
-        (tmp_path / "MEMORY.md").write_text("# tiny\n")
-        sentinel = tmp_path / "memory" / ".l1-over-cap"
-        sentinel.write_text(
-            "overflow_bytes: 1234\ncap: 4096\nbody_bytes: 5330\n"
-            "timestamp: 2026-04-20T10:15:00Z\n"
-        )
-
-        script = tmp_path / ".claude" / "hooks" / "memory-load.sh"
-        stdin = f'{{"cwd":"{tmp_path}"}}'
-        result = subprocess.run(
-            ["bash", str(script)],
-            input=stdin,
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, result.stderr
-        assert "L1 over cap" in result.stdout
-        # Warning must precede MEMORY.md content.
-        assert result.stdout.index("L1 over cap") < result.stdout.index("# tiny")
-
-    def test_memory_load_no_warning_when_nudge_absent(self, tmp_path):
-        MemoryInitializer().initialize(tmp_path)
-        (tmp_path / "MEMORY.md").write_text("# tiny\n")
-
-        script = tmp_path / ".claude" / "hooks" / "memory-load.sh"
-        stdin = f'{{"cwd":"{tmp_path}"}}'
-        result = subprocess.run(
-            ["bash", str(script)],
-            input=stdin,
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0
-        assert "L1 over cap" not in result.stdout
+        # Plugin exists; legacy shell hook does not.
+        assert (tmp_path / ".opencode" / "plugins" / "memory-load.ts").exists()
+        assert not (tmp_path / ".claude").exists()
 
 
 class TestCommandBodies:
 
     def test_remember_command_states_portable_only_rule(self, tmp_path):
         MemoryInitializer().initialize(tmp_path)
-        body = (tmp_path / ".claude" / "commands" / "remember.md").read_text()
+        body = (tmp_path / ".opencode" / "commands" / "remember.md").read_text()
         # The portable-only test: "no matter which corpus"
         assert "portable" in body.lower() or "no matter which corpus" in body.lower()
 
     def test_reflect_has_cap_triage_step(self, tmp_path):
         MemoryInitializer().initialize(tmp_path)
-        body = (tmp_path / ".claude" / "commands" / "reflect.md").read_text()
+        body = (tmp_path / ".opencode" / "commands" / "reflect.md").read_text()
         assert "cap triage" in body.lower() or "L1 cap" in body
         # References the sentinel file so the agent knows what clears the nudge.
         assert ".l1-over-cap" in body
