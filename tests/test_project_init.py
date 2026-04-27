@@ -200,3 +200,52 @@ class TestWritableMode:
         _init(project_root, writable=True)
         content = (project_root / "AGENTS.md").read_text()
         assert "/enrich" in content
+
+
+class TestOverwriteGuard:
+    """init must not silently clobber user-owned files at the same paths."""
+
+    def test_init_emits_marker_on_commands(self, project_root):
+        """Every generated command file carries the All-Might marker."""
+        _init(project_root, writable=True)
+        cmds = project_root / ".opencode" / "commands"
+        for name in ("search.md", "enrich.md", "ingest.md"):
+            assert "<!-- all-might generated -->" in (cmds / name).read_text(), name
+
+    def test_reinit_emits_marker_on_sync_skill(self, project_root):
+        """Sync SKILL.md (installed on re-init) keeps frontmatter on line 1
+        but carries the marker after it."""
+        _init(project_root)  # first init creates .allmight/
+        _init(project_root)  # re-init triggers sync skill install
+        skill = project_root / ".opencode" / "skills" / "sync" / "SKILL.md"
+        text = skill.read_text()
+        assert text.startswith("---\n"), "SKILL.md frontmatter must be on line 1"
+        assert "<!-- all-might generated -->" in text
+
+    def test_init_skips_existing_unmarked_command(
+        self, project_root, capsys
+    ):
+        """A pre-existing user command at the same path is left untouched."""
+        cmds = project_root / ".opencode" / "commands"
+        cmds.mkdir(parents=True)
+        (cmds / "search.md").write_text("MY OWN COMMAND")
+
+        _init(project_root)
+
+        assert (cmds / "search.md").read_text() == "MY OWN COMMAND"
+        warn = capsys.readouterr().err
+        assert "search.md" in warn and "All-Might marker" in warn
+
+    def test_init_overwrites_existing_marked_file(self, project_root):
+        """A pre-existing file we own (has the marker) is overwritten."""
+        cmds = project_root / ".opencode" / "commands"
+        cmds.mkdir(parents=True)
+        (cmds / "search.md").write_text(
+            "<!-- all-might generated -->\nstale body from a previous version"
+        )
+
+        _init(project_root)
+
+        body = (cmds / "search.md").read_text()
+        assert "stale body from a previous version" not in body
+        assert "<!-- all-might generated -->" in body

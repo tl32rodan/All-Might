@@ -836,3 +836,37 @@ class TestMemoryConfigAbsolutePaths:
         assert _Path(journal["paths"][0]).is_absolute()
         assert _Path(journal["uri"]).is_absolute()
 
+
+class TestMemoryOverwriteGuard:
+    """Memory commands and plugins must respect the overwrite-guard."""
+
+    def test_memory_commands_carry_marker(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        cmds = project_root / ".opencode" / "commands"
+        for name in ("remember.md", "recall.md", "reflect.md"):
+            assert "<!-- all-might generated -->" in (cmds / name).read_text(), name
+
+    def test_plugins_carry_ts_marker(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        plugins = project_root / ".opencode" / "plugins"
+        for name in (
+            "memory-load.ts",
+            "remember-trigger.ts",
+            "todo-curator.ts",
+            "trajectory-writer.ts",
+            "usage-logger.ts",
+        ):
+            text = (plugins / name).read_text()
+            assert text.startswith("// all-might generated\n"), name
+
+    def test_init_skips_existing_unmarked_plugin(self, project_root, capsys):
+        plugins = project_root / ".opencode" / "plugins"
+        plugins.mkdir(parents=True)
+        (plugins / "memory-load.ts").write_text("// my own plugin")
+
+        MemoryInitializer().initialize(project_root)
+
+        assert (plugins / "memory-load.ts").read_text() == "// my own plugin"
+        warn = capsys.readouterr().err
+        assert "memory-load.ts" in warn and "All-Might marker" in warn
+

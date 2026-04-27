@@ -29,14 +29,23 @@ SYNC_SKILL_BODY = """\
    - `.allmight/templates/memory-md-section.md` → `AGENTS.md` (within `<!-- ALL-MIGHT-MEMORY -->` markers)
    - `.allmight/templates/opencode.json` → `.opencode/opencode.json`
    - `.allmight/templates/memory-load.ts` → `.opencode/plugins/memory-load.ts`
-3. Compare staged vs. working file:
+3. **Verify the working file is All-Might-owned before merging.**
+   Read the working file's first lines and check for one of:
+   - `<!-- all-might generated -->` (markdown — commands, SKILL.md)
+   - `// all-might generated` (TypeScript — plugins)
+
+   If the working file exists **without** that marker, the user authored
+   it (or it pre-existed before All-Might). Do **NOT** merge or
+   overwrite — surface a warning naming the file and ask the user
+   whether to delete/rename their version or skip this template.
+4. If the working file is ours (or doesn't exist), compare staged vs. working:
    - **Identical or nearly identical**: overwrite working file with staged version
    - **User has meaningful customizations**: merge — keep user customizations,
      incorporate new template changes. Present a summary to the user.
-4. For AGENTS.md section files (`claude-md-section.md`, `memory-md-section.md`):
+5. For AGENTS.md section files (`claude-md-section.md`, `memory-md-section.md`):
    - Replace only the content between the markers (`<!-- ALL-MIGHT -->`, `<!-- ALL-MIGHT-MEMORY -->`)
    - Never touch content outside the markers
-5. After all files are merged, delete `.allmight/templates/`
+6. After all files are merged, delete `.allmight/templates/`
 
 ### Mode-aware cleanup (after mode change)
 
