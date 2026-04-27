@@ -713,3 +713,126 @@ class TestTrajectoryWriterPlugin:
         # Emits the sentinel so downstream export can distinguish it.
         assert "allmight_journal: v1" in content
 
+
+class TestUsageLoggerPlugin:
+    """usage-logger.ts — real-time appends to memory/usage.log so the
+    drift audit doesn't depend on the agent remembering to log."""
+
+    def test_usage_logger_plugin_exists(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        assert (project_root / ".opencode" / "plugins" / "usage-logger.ts").exists()
+
+    def test_usage_logger_uses_sync_append(self, project_root):
+        """appendFileSync ensures every entry hits disk before the hook returns."""
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "plugins" / "usage-logger.ts"
+        ).read_text()
+        assert "appendFileSync" in content
+        # Negative: async writes would buffer and break "real-time".
+        assert "appendFile(" not in content
+        assert "writeFile(" not in content
+
+    def test_usage_logger_targets_usage_log(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "plugins" / "usage-logger.ts"
+        ).read_text()
+        assert '"usage.log"' in content
+        assert '"memory"' in content
+
+    def test_usage_logger_detects_slash_commands(self, project_root):
+        """Plugin must catch /remember, /recall, /reflect in user text."""
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "plugins" / "usage-logger.ts"
+        ).read_text()
+        assert "remember|recall|reflect" in content
+        assert '"chat.message":' in content
+
+    def test_usage_logger_tracks_memory_writes(self, project_root):
+        """Tool writes under memory/ are logged via tool.execute.after."""
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "plugins" / "usage-logger.ts"
+        ).read_text()
+        assert '"tool.execute.after":' in content
+        assert '"Write"' in content
+        assert '"Edit"' in content
+
+    def test_usage_logger_guards_on_sessionid(self, project_root):
+        """Hooks must short-circuit when sessionID is absent."""
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "plugins" / "usage-logger.ts"
+        ).read_text()
+        for hook in ("chat.message", "tool.execute.after"):
+            block = _slice_hook(content, hook)
+            assert "input?.sessionID" in block, (
+                f"usage-logger:{hook} must read input?.sessionID"
+            )
+            assert "if (!sid) return;" in block, (
+                f"usage-logger:{hook} must early-return without sessionID"
+            )
+
+
+class TestRememberReflectsFirst:
+    """`/remember` runs a reflection sweep before recording so lessons
+    learned aren't silently dropped by the agent's importance filter."""
+
+    def test_remember_has_reflect_first_section(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        assert "Reflect first" in content
+        assert "lessons learned" in content.lower()
+
+    def test_remember_warns_against_importance_filter(self, project_root):
+        """Body must explicitly call out the 'feels important' bias."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        # The reflection step exists before the scope decision.
+        reflect_idx = content.lower().find("reflect first")
+        scope_idx = content.lower().find("decide the scope")
+        assert reflect_idx != -1 and scope_idx != -1
+        assert reflect_idx < scope_idx, (
+            "Reflect-first must come before scope decision"
+        )
+
+
+class TestMemoryConfigAbsolutePaths:
+    """memory/config.yaml stores resolve to absolute paths so SMAK and
+    the agent never depend on the caller's cwd."""
+
+    def test_journal_path_is_absolute(self, tmp_path):
+        mgr = MemoryConfigManager(tmp_path)
+        cfg = mgr.initialize()
+        from pathlib import Path as _Path
+        assert _Path(cfg.stores["journal"].path).is_absolute()
+        assert _Path(cfg.stores["journal"].store_uri).is_absolute()
+
+    def test_journal_path_resolves_under_root(self, tmp_path):
+        mgr = MemoryConfigManager(tmp_path)
+        cfg = mgr.initialize()
+        from pathlib import Path as _Path
+        expected = (tmp_path.resolve() / "memory" / "journal")
+        assert _Path(cfg.stores["journal"].path) == expected
+
+    def test_config_yaml_persists_absolute_path(self, tmp_path):
+        """The YAML on disk must contain the absolute path, not './memory/...'."""
+        mgr = MemoryConfigManager(tmp_path)
+        mgr.initialize()
+        raw = (tmp_path / "memory" / "config.yaml").read_text()
+        assert "./memory/journal" not in raw
+        assert str(tmp_path.resolve() / "memory" / "journal") in raw
+
+    def test_smak_config_uses_absolute_paths(self, tmp_path):
+        """smak_config.yaml propagates the absolute paths."""
+        import yaml as _yaml
+        mgr = MemoryConfigManager(tmp_path)
+        mgr.initialize()
+        smak = _yaml.safe_load((tmp_path / "memory" / "smak_config.yaml").read_text())
+        journal = next(i for i in smak["indices"] if i["name"] == "journal")
+        from pathlib import Path as _Path
+        assert _Path(journal["paths"][0]).is_absolute()
+        assert _Path(journal["uri"]).is_absolute()
+
