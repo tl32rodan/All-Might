@@ -11,6 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..core.domain import ProjectManifest
+from ..core.markers import ALLMIGHT_MARKER_MD
+from ..core.safe_write import write_guarded
 
 
 class ProjectInitializer:
@@ -68,7 +70,7 @@ class ProjectInitializer:
             )
         else:
             # First init (or --force): write everything directly
-            self._generate_commands(root, manifest, writable=writable)
+            self._generate_commands(root, manifest, writable=writable, force=force)
             self._update_agents_md(root, manifest, writable=writable)
 
             # Create .allmight/ marker (clean up any stale templates)
@@ -123,12 +125,22 @@ class ProjectInitializer:
         self, cmds_tpl: Path, manifest: ProjectManifest, writable: bool = False,
     ) -> None:
         """Write fresh command template content to staging dir."""
-        (cmds_tpl / "search.md").write_text(self._search_command_body())
+        write_guarded(
+            cmds_tpl / "search.md",
+            self._search_command_body(),
+            ALLMIGHT_MARKER_MD,
+        )
         if writable:
-            (cmds_tpl / "enrich.md").write_text(
-                self._enrich_command_body(manifest.has_path_env)
+            write_guarded(
+                cmds_tpl / "enrich.md",
+                self._enrich_command_body(manifest.has_path_env),
+                ALLMIGHT_MARKER_MD,
             )
-            (cmds_tpl / "ingest.md").write_text(self._ingest_command_body())
+            write_guarded(
+                cmds_tpl / "ingest.md",
+                self._ingest_command_body(),
+                ALLMIGHT_MARKER_MD,
+            )
 
     def _install_sync_skill(self, root: Path) -> None:
         """Install /sync skill and command directly (not staged)."""
@@ -145,7 +157,7 @@ class ProjectInitializer:
         )
         commands_dir = root / ".opencode" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
-        (commands_dir / "sync.md").write_text(SYNC_COMMAND_BODY)
+        write_guarded(commands_dir / "sync.md", SYNC_COMMAND_BODY, ALLMIGHT_MARKER_MD)
 
     def _claude_md_section(
         self, manifest: ProjectManifest, writable: bool = False,
@@ -335,18 +347,35 @@ smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code
 """
 
     def _generate_commands(
-        self, root: Path, manifest: ProjectManifest, writable: bool = False,
+        self,
+        root: Path,
+        manifest: ProjectManifest,
+        writable: bool = False,
+        force: bool = False,
     ) -> None:
         """Generate .opencode/commands/ — thick operational guides."""
         commands_dir = root / ".opencode" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
 
-        (commands_dir / "search.md").write_text(self._search_command_body())
+        write_guarded(
+            commands_dir / "search.md",
+            self._search_command_body(),
+            ALLMIGHT_MARKER_MD,
+            force=force,
+        )
         if writable:
-            (commands_dir / "enrich.md").write_text(
-                self._enrich_command_body(manifest.has_path_env)
+            write_guarded(
+                commands_dir / "enrich.md",
+                self._enrich_command_body(manifest.has_path_env),
+                ALLMIGHT_MARKER_MD,
+                force=force,
             )
-            (commands_dir / "ingest.md").write_text(self._ingest_command_body())
+            write_guarded(
+                commands_dir / "ingest.md",
+                self._ingest_command_body(),
+                ALLMIGHT_MARKER_MD,
+                force=force,
+            )
 
     def _update_agents_md(
         self, root: Path, manifest: ProjectManifest, writable: bool = False,
@@ -477,8 +506,6 @@ Use `--dry-run` with the `cliosoft-sos` MCP tools to enrich safely:
         disable_model_invocation: bool = False,
     ) -> None:
         """Write a SKILL.md file with YAML frontmatter."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-
         frontmatter_lines = [
             "---",
             f"name: {name}",
@@ -488,6 +515,14 @@ Use `--dry-run` with the `cliosoft-sos` MCP tools to enrich safely:
             frontmatter_lines.append("disable-model-invocation: true")
         frontmatter_lines.append("---")
 
-        content = "\n".join(frontmatter_lines) + "\n\n" + body
-        path.write_text(content)
+        # Marker goes after the frontmatter so OpenCode still parses the
+        # leading "---"; write_guarded sees it and won't re-prepend.
+        content = (
+            "\n".join(frontmatter_lines)
+            + "\n\n"
+            + ALLMIGHT_MARKER_MD
+            + "\n\n"
+            + body
+        )
+        write_guarded(path, content, ALLMIGHT_MARKER_MD)
 

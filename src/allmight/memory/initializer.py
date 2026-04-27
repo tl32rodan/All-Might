@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..core.markers import ALLMIGHT_MARKER_MD, ALLMIGHT_MARKER_TS
+from ..core.safe_write import write_guarded
 from .config import MemoryConfigManager
 
 
@@ -111,13 +113,25 @@ class MemoryInitializer:
         (tpl / "opencode.json").write_text(json.dumps(opencode_config, indent=2) + "\n")
         (tpl / "package.json").write_text(self._opencode_package_json_content())
         for filename, content in self._opencode_plugin_map().items():
-            (tpl / filename).write_text(content)
+            write_guarded(tpl / filename, content, ALLMIGHT_MARKER_TS)
 
     def _write_memory_command_content(self, commands_dir: Path) -> None:
         """Write memory command content to a directory."""
-        (commands_dir / "remember.md").write_text(self._remember_command_body())
-        (commands_dir / "recall.md").write_text(self._recall_command_body())
-        (commands_dir / "reflect.md").write_text(self._reflect_command_body())
+        write_guarded(
+            commands_dir / "remember.md",
+            self._remember_command_body(),
+            ALLMIGHT_MARKER_MD,
+        )
+        write_guarded(
+            commands_dir / "recall.md",
+            self._recall_command_body(),
+            ALLMIGHT_MARKER_MD,
+        )
+        write_guarded(
+            commands_dir / "reflect.md",
+            self._reflect_command_body(),
+            ALLMIGHT_MARKER_MD,
+        )
 
     def _memory_claude_md_section(self) -> str:
         """Return the ALL-MIGHT-MEMORY section content for CLAUDE.md."""
@@ -1160,7 +1174,7 @@ Append to `memory/usage.log`:
         plugins_dir.mkdir(parents=True, exist_ok=True)
 
         for filename, content in self._opencode_plugin_map().items():
-            (plugins_dir / filename).write_text(content)
+            write_guarded(plugins_dir / filename, content, ALLMIGHT_MARKER_TS)
 
     def _opencode_plugin_map(self) -> dict[str, str]:
         """Return mapping of plugin filename → content."""
