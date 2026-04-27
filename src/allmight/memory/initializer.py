@@ -661,9 +661,35 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
         return """\
 Record something worth persisting beyond this session.
 
-## Decide the scope first
+## Reflect first, then record
 
-Before writing anything, ask: **what is this about?**
+Do not jump straight to "what feels important". That filter is biased
+toward what you happened to notice and routinely drops lessons learned.
+Run a short reflection sweep first; only then decide what to write.
+
+1. **Replay the last few turns.** What did the user actually say? What
+   did you do? Where were the course corrections, surprises, retries,
+   or near-misses?
+2. **Hunt for lessons learned** — these are the easiest to drop:
+   - A misstep you recovered from (so the next session avoids it)
+   - A non-obvious gotcha discovered while debugging
+   - A user clarification that changed your understanding
+   - A tool / command / API quirk you had to work around
+   - A failed approach worth ruling out
+   - An assumption that turned out to be wrong
+3. **List candidates explicitly** before filtering. Write them out
+   (mentally or in a scratch buffer) — every candidate gets considered,
+   not just the headline result.
+4. **Then filter.** Drop only items that are trivially re-derivable
+   from code or already captured elsewhere. Small frictions still
+   compound; a two-line debug-SOP note saves the next session 20
+   minutes. Bias toward writing.
+5. If the sweep comes up empty, skip the write — but always run the
+   sweep first so a lesson is never silently filtered out.
+
+## Decide the scope
+
+Once you have something worth persisting, ask: **what is this about?**
 
 | Scope | Location | Examples |
 |-------|----------|----------|
@@ -1123,11 +1149,12 @@ Append to `memory/usage.log`:
     def _generate_opencode_plugins(self, root: Path) -> None:
         """Generate all OpenCode plugins under .opencode/plugins/.
 
-        Writes four plugin files:
+        Writes five plugin files:
         - memory-load.ts   — primes MEMORY.md + scope-first principle per session
         - remember-trigger.ts — throttled per-session nudge (/remember + skills-log)
         - todo-curator.ts  — tracks TODOs across sessions per corpus
         - trajectory-writer.ts — F5: captures structured session trajectory
+        - usage-logger.ts  — real-time appends to memory/usage.log
         """
         plugins_dir = root / ".opencode" / "plugins"
         plugins_dir.mkdir(parents=True, exist_ok=True)
@@ -1142,7 +1169,102 @@ Append to `memory/usage.log`:
             "remember-trigger.ts": self._remember_trigger_plugin_content(),
             "todo-curator.ts": self._todo_curator_plugin_content(),
             "trajectory-writer.ts": self._trajectory_writer_plugin_content(),
+            "usage-logger.ts": self._usage_logger_plugin_content(),
         }
+
+    def _usage_logger_plugin_content(self) -> str:
+        """Return the OpenCode usage-logger.ts plugin content.
+
+        Real-time append to memory/usage.log so /reflect's drift audit
+        never depends on the agent remembering to log. The agent's
+        manual post-action log entries (in /remember, /recall, /reflect)
+        still add richer scope/kind annotations on top — this plugin
+        only guarantees that the file is populated as events happen.
+
+        Writes use appendFileSync (sync I/O) so each entry lands on disk
+        before the hook returns; nothing is buffered.
+        """
+        return """\
+/**
+ * Usage Logger — OpenCode plugin (All-Might)
+ *
+ * Real-time appends to memory/usage.log. Independent of the agent
+ * remembering to log inside /remember, /recall, /reflect — the
+ * file is updated as events happen, not at end-of-action.
+ *
+ * Captured:
+ *   - chat.message       — detects /remember, /recall, /reflect in user text
+ *   - tool.execute.after — detects writes under memory/ via Write/Edit
+ *
+ * appendFileSync flushes synchronously, so every entry hits disk
+ * before the hook returns.
+ */
+import type { Plugin } from "@opencode-ai/plugin";
+import { appendFileSync, mkdirSync } from "fs";
+import { join, dirname } from "path";
+
+const COMMAND_RE = /(?:^|\\s)\\/(remember|recall|reflect)\\b/;
+
+function append(cwd: string, line: string): void {
+  const p = join(cwd, "memory", "usage.log");
+  try {
+    mkdirSync(dirname(p), { recursive: true });
+    appendFileSync(p, line.endsWith("\\n") ? line : line + "\\n");
+  } catch {
+    // Best-effort: a plugin hook must never throw.
+  }
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function extractUserText(parts: unknown): string {
+  if (!Array.isArray(parts)) return "";
+  const texts: string[] = [];
+  for (const p of parts as any[]) {
+    if (p?.type === "text" && typeof p.text === "string") texts.push(p.text);
+  }
+  return texts.join("\\n");
+}
+
+const MEMORY_PATH_RE = /(?:^|\\/)memory\\//;
+
+export const UsageLoggerPlugin: Plugin = async ({ directory }: any) => {
+  const cwd = (directory as string | undefined) ?? process.cwd();
+
+  return {
+    "chat.message": async (input: any, _output: any) => {
+      const sid = input?.sessionID;
+      if (!sid) return;
+      const text = extractUserText(input?.parts);
+      if (!text) return;
+      const m = text.match(COMMAND_RE);
+      if (!m) return;
+      const cmd = m[1];
+      append(cwd, `${nowIso()} ${cmd} invoked session=${String(sid).slice(0, 8)}`);
+      void _output;
+    },
+
+    "tool.execute.after": async (input: any) => {
+      const sid = input?.sessionID;
+      if (!sid) return;
+      const tool = String(input?.tool ?? "");
+      if (tool !== "Write" && tool !== "Edit") return;
+      const args = input?.args ?? {};
+      const filePath: string =
+        (typeof args?.file_path === "string" && args.file_path) ||
+        (typeof args?.filePath === "string" && args.filePath) ||
+        "";
+      if (!filePath) return;
+      if (!MEMORY_PATH_RE.test(filePath) && !filePath.endsWith("MEMORY.md")) return;
+      append(cwd, `${nowIso()} memory-write tool=${tool} file=${filePath}`);
+    },
+  };
+};
+
+export default UsageLoggerPlugin;
+"""
 
     def _trajectory_writer_plugin_content(self) -> str:
         """Return the OpenCode trajectory-writer.ts plugin content.

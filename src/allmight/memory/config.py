@@ -62,8 +62,18 @@ class MemoryConfigManager:
         self._write_smak_config(cfg)
 
     def initialize(self) -> MemoryConfig:
-        """Create ``memory/config.yaml`` with defaults and generate smak_config."""
-        cfg = MemoryConfig()
+        """Create ``memory/config.yaml`` with defaults and generate smak_config.
+
+        Stores resolve to absolute paths so SMAK and the agent never
+        depend on the caller's cwd to find the journal.
+        """
+        abs_root = self.root.resolve()
+        journal = MemoryStoreSpec(
+            name="journal",
+            path=str(abs_root / "memory" / "journal"),
+            store_uri=str(abs_root / "memory" / "store" / "journal"),
+        )
+        cfg = MemoryConfig(stores={"journal": journal})
         self.save(cfg)
         return cfg
 
