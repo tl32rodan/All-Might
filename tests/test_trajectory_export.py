@@ -12,12 +12,12 @@ import pytest
 from click.testing import CliRunner
 
 from allmight.cli import main
-from allmight.memory.journal_schema import (
+from allmight.personalities.memory_keeper.journal_schema import (
     JournalEntry,
     ToolCallRecord,
     dump_frontmatter,
 )
-from allmight.memory.trajectory_export import export_to_jsonl
+from allmight.personalities.memory_keeper.trajectory_export import export_to_jsonl
 
 
 def _seed_entry(journal_dir, workspace, entry_id, outcome="success"):

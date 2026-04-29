@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from allmight.memory.journal_schema import (
+from allmight.personalities.memory_keeper.journal_schema import (
     JournalEntry,
     ToolCallRecord,
     dump_frontmatter,

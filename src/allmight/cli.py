@@ -53,7 +53,7 @@ def init(path: str, sos: bool, force: bool, writable: bool):
 
     from .personalities.corpus_keeper.initializer import ProjectInitializer
     from .personalities.corpus_keeper.scanner import ProjectScanner
-    from .memory.initializer import MemoryInitializer
+    from .personalities.memory_keeper.initializer import MemoryInitializer
 
     root = P(path).resolve()
     scanner = ProjectScanner()
@@ -209,7 +209,7 @@ def memory_init(path: str):
     """
     from pathlib import Path as P
 
-    from .memory.initializer import MemoryInitializer
+    from .personalities.memory_keeper.initializer import MemoryInitializer
 
     root = P(path).resolve()
 
@@ -238,7 +238,7 @@ def memory_export(fmt: str, root: str, out: str):
     """
     from pathlib import Path as P
 
-    from .memory.trajectory_export import export_to_jsonl
+    from .personalities.memory_keeper.trajectory_export import export_to_jsonl
 
     root_path = P(root).resolve()
     out_path = P(out).resolve()

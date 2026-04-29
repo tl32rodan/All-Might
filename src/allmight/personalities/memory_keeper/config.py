@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..core.domain import MemoryConfig, MemoryStoreSpec, _default_stores
-from ..utils.yaml_io import load_config, write_yaml
+from ...core.domain import MemoryConfig, MemoryStoreSpec, _default_stores
+from ...utils.yaml_io import load_config, write_yaml
 
 
 class MemoryConfigManager:

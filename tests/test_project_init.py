@@ -28,7 +28,7 @@ def _init(root, writable=False):
 
 def _init_with_memory(root, writable=False):
     """Mirrors what `allmight init` does: project init + memory init."""
-    from allmight.memory.initializer import MemoryInitializer
+    from allmight.personalities.memory_keeper.initializer import MemoryInitializer
 
     _init(root, writable=writable)
     MemoryInitializer().initialize(root)

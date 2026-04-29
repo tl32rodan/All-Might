@@ -14,7 +14,7 @@ import pytest
 
 from allmight.personalities.corpus_keeper.scanner import ProjectScanner
 from allmight.personalities.corpus_keeper.initializer import ProjectInitializer
-from allmight.memory.initializer import MemoryInitializer
+from allmight.personalities.memory_keeper.initializer import MemoryInitializer
 
 
 @pytest.fixture

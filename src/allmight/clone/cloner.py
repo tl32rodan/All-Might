@@ -85,7 +85,7 @@ class ProjectCloner:
         """Run ProjectInitializer + MemoryInitializer on the target (read-only)."""
         from ..personalities.corpus_keeper.initializer import ProjectInitializer
         from ..personalities.corpus_keeper.scanner import ProjectScanner
-        from ..memory.initializer import MemoryInitializer
+        from ..personalities.memory_keeper.initializer import MemoryInitializer
 
         # Scan the source to get manifest info, then retarget to clone
         scanner = ProjectScanner()

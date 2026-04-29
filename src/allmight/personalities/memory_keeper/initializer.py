@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..core.markers import ALLMIGHT_MARKER_MD, ALLMIGHT_MARKER_TS
-from ..core.safe_write import write_guarded
+from ...core.markers import ALLMIGHT_MARKER_MD, ALLMIGHT_MARKER_TS
+from ...core.safe_write import write_guarded
 from .config import MemoryConfigManager
 
 
@@ -43,14 +43,29 @@ def _reminder_nudge_text() -> str:
 class MemoryInitializer:
     """Creates the agent memory system."""
 
-    def initialize(self, root: Path, staging: bool = False) -> None:
+    def initialize(
+        self,
+        root: Path,
+        staging: bool = False,
+        instance_root: Path | None = None,
+    ) -> None:
         """Bootstrap the memory subsystem at *root*.
 
         Args:
             root: Project root path.
             staging: If True, stage templates to .allmight/templates/
                      instead of writing to working locations.
+            instance_root: Personality instance directory. When ``None``
+                (transitional default) the memory data dir, commands,
+                and plugins live under ``root`` to match the
+                pre-personalities layout. Once the registry wires
+                composition (commit 5), memory_keeper passes its own
+                ``personalities/<name>/`` here and the per-instance
+                content lives there instead.
         """
+        # Plumbed but unused in this transitional commit; commit 4 swaps
+        # the per-instance writes over to ``instance_root``.
+        del instance_root
         if staging:
             self._stage_memory_templates(root)
             return
