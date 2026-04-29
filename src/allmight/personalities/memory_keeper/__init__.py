@@ -64,6 +64,7 @@ TEMPLATE = PersonalityTemplate(
     name="memory_keeper",
     short_name="memory",
     version="1.0.0",
+    default_instance_name="memory",
     description=(
         "L1/L2/L3 agent memory: MEMORY.md, /remember (record + reflect) "
         "/recall, OpenCode plugins."

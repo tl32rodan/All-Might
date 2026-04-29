@@ -63,6 +63,7 @@ TEMPLATE = PersonalityTemplate(
     name="corpus_keeper",
     short_name="corpus",
     version="1.0.0",
+    default_instance_name="knowledge",
     description=(
         "Knowledge-graph workspaces, /search /enrich /ingest /sync "
         "commands, AGENTS.md section."

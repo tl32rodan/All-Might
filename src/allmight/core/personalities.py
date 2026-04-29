@@ -95,6 +95,11 @@ class PersonalityTemplate:
     Plain dataclass holding metadata plus the two operation callables.
     Built-in templates live as module-level ``TEMPLATE`` constants
     inside ``allmight.personalities.<name>``.
+
+    ``default_instance_name`` is the slug used when ``allmight init``
+    runs non-interactively (or the user accepts the default). Should be
+    a filesystem-safe slug (slugify_instance_name-friendly) — e.g.
+    ``"knowledge"`` for corpus_keeper, ``"memory"`` for memory_keeper.
     """
 
     name: str
@@ -105,6 +110,7 @@ class PersonalityTemplate:
     cli_options: list[CliOption]
     install: Callable[["InstallContext", "Personality"], InstallResult]
     status: Callable[[Path, "Personality"], PersonalityStatus]
+    default_instance_name: str = ""
 
 
 @dataclass

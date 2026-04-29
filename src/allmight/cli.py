@@ -118,10 +118,16 @@ def _init_callback(path: str, force: bool, **template_options: object) -> None:
     instances: list[Personality] = []
     notes: list[str] = []
     for template in templates:
+        # Default instance name comes from the template (e.g.
+        # "knowledge" for corpus_keeper, "memory" for memory_keeper).
+        # Older templates that didn't set one fall back to the legacy
+        # "<project>-<short_name>" form so we don't break unknown
+        # third-party kinds.
+        default_name = template.default_instance_name or f"{manifest.name}-{template.short_name}"
         instance = Personality(
             template=template,
             project_root=root,
-            name=f"{manifest.name}-{template.short_name}",
+            name=default_name,
             options=dict(template_options),
         )
         result = template.install(ctx, instance)
