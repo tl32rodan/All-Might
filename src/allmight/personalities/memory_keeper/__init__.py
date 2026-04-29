@@ -2,7 +2,7 @@
 
 Generates the L1/L2/L3 agent memory system: ``MEMORY.md`` at the
 project root, ``memory/`` inside the instance dir (config + journal +
-understanding + store), the ``/remember`` ``/recall`` ``/reflect``
+understanding + store), the ``/remember`` ``/recall``
 commands, the AGENTS.md memory section, and the OpenCode plugins
 (``memory-load``, ``remember-trigger``, ``todo-curator``,
 ``trajectory-writer``, ``usage-logger``).
@@ -65,8 +65,8 @@ TEMPLATE = PersonalityTemplate(
     short_name="memory",
     version="1.0.0",
     description=(
-        "L1/L2/L3 agent memory: MEMORY.md, /remember /recall /reflect, "
-        "OpenCode plugins."
+        "L1/L2/L3 agent memory: MEMORY.md, /remember (record + reflect) "
+        "/recall, OpenCode plugins."
     ),
     owned_paths=[
         "personalities/{instance}/commands/**",

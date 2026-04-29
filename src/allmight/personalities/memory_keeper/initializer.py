@@ -184,7 +184,13 @@ class MemoryInitializer:
             write_guarded(tpl / filename, content, ALLMIGHT_MARKER_TS)
 
     def _write_memory_command_content(self, commands_dir: Path) -> None:
-        """Write memory command content to a directory."""
+        """Write memory command content (just /remember and /recall).
+
+        ``/reflect`` is no longer a separate command — its end-of-session
+        review work folds into ``/remember`` under a ``## Reflect``
+        section, since both flows touch the same memory layers and the
+        agent picks the mode based on trigger context.
+        """
         write_guarded(
             commands_dir / "remember.md",
             self._remember_command_body(),
@@ -193,11 +199,6 @@ class MemoryInitializer:
         write_guarded(
             commands_dir / "recall.md",
             self._recall_command_body(),
-            ALLMIGHT_MARKER_MD,
-        )
-        write_guarded(
-            commands_dir / "reflect.md",
-            self._reflect_command_body(),
             ALLMIGHT_MARKER_MD,
         )
 
@@ -735,13 +736,27 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
     # ------------------------------------------------------------------
 
     def _generate_memory_commands(self, root: Path) -> None:
-        """Generate /remember, /recall, and /reflect commands."""
+        """Generate /remember and /recall commands."""
         commands_dir, _ = self._agent_surface_dirs(root)
         commands_dir.mkdir(parents=True, exist_ok=True)
         self._write_memory_command_content(commands_dir)
 
     def _remember_command_body(self) -> str:
         return """\
+Persist memory and maintain its quality. Two modes — pick the one that
+matches the trigger context:
+
+- **Record** — default for explicit "remember X" requests and the
+  per-turn nudges. Capture a single observation now.
+- **Reflect** — default for end-of-session, pre-compaction, and the
+  L1 cap-audit nudge (`memory/.l1-over-cap`). Audit the whole memory
+  surface for staleness, scope drift, and missing insights.
+
+If unsure which mode applies, run **Record**; if `memory/.l1-over-cap`
+exists or the trigger is a session-boundary event, run **Reflect**.
+
+# Record
+
 Record something worth persisting beyond this session.
 
 ## Reflect first, then record
@@ -883,13 +898,13 @@ narrower per-corpus location.
 
 `MEMORY.md` is loaded every turn by a hook, so unbounded growth costs
 every agent turn. A Stop hook audits the byte cap and — if exceeded —
-writes `memory/.l1-over-cap` to nudge the next turn to triage via
-`/reflect`.
+writes `memory/.l1-over-cap` to nudge the next turn into the
+**Reflect** mode below for triage.
 
 ## After remembering
 
 1. Log what you remembered to `memory/usage.log` (scope tag enables
-   `/reflect` to audit drift):
+   the Reflect mode to audit drift):
 ```
 <ISO-8601> remember scope=<project|workspace> workspace=<name|-> kind=<understanding|todos|journal|…> "<brief>"
 ```
@@ -902,6 +917,131 @@ writes `memory/.l1-over-cap` to nudge the next turn to triage via
 - Trivial observations re-derivable from code
 - Information already captured in sidecar enrichment
 - Temporary debug notes
+
+# Reflect
+
+Structured self-reflection to maintain memory quality.
+
+Run periodically (end of session, after major work, when the cap-audit
+sentinel appears) to keep memory accurate and tidy.
+
+## Steps
+
+### 1. Review L1 — MEMORY.md
+
+Read `MEMORY.md` at project root. Ask yourself:
+- Is the Project Map still accurate? Any new workspaces to add?
+- Are Active Goals still current? Remove completed ones.
+- Any Key Facts that are stale or wrong?
+
+Update directly if anything changed.
+
+### 2. Review L2 — Understanding
+
+For each workspace you worked on this session, read
+`memory/understanding/<workspace>.md`. Ask:
+- Did I learn new architecture details? Add them.
+- Did I discover a debug SOP or gotcha? Document it.
+- Is the Key Files section still accurate?
+
+Create the file if it doesn't exist yet.
+
+### 2b. Audit per-corpus scoping
+
+List the files under `memory/` and check that each is scoped correctly
+under the **scope-first** principle (see the **Record** section above):
+
+- Anything in `MEMORY.md` that is really about *one* workspace?
+  → Move it to the per-corpus file and leave at most a one-line
+  pointer in `MEMORY.md` if the user truly needs it up front.
+- Any `memory/journal/general/` entry that is really workspace-specific?
+  → Move it under `memory/journal/<workspace>/`.
+- Any ad-hoc per-corpus files you (or a past session) created —
+  `memory/todos/<workspace>.md`, `memory/shortcuts/<workspace>.md`,
+  etc.? → Confirm the name follows `<kind>/<workspace>.md` and the
+  content is genuinely workspace-specific.
+
+The goal: no matter what `<kind>` of personalized memory exists, it
+lives under a consistent `memory/<kind>/<workspace>.md` path.
+
+### 2c. L1 cap triage
+
+Check for the cap-audit nudge sentinel:
+
+```bash
+cat memory/.l1-over-cap 2>/dev/null
+```
+
+If the file exists, MEMORY.md has grown past its byte cap. Triage
+without waiting:
+
+1. Read `MEMORY.md` line by line. For each line, classify it:
+   - **Portable** (still useful in *any* corpus) → keep in L1.
+   - **Corpus-specific** → move to
+     `memory/understanding/<workspace>.md`.
+   - **Open TODO / WIP** → move to `memory/todos/<workspace>.md` (or
+     the matching `<kind>/<workspace>.md`).
+2. Distill duplicates and stale bullets; keep the essence only.
+3. Save `MEMORY.md`. The next Stop hook re-audits and removes
+   `memory/.l1-over-cap` automatically when the body is back under
+   cap.
+
+**The cap never silently evicts anything** — this step is the only
+place non-portable content leaves L1.
+
+### 3. Log to L3 — Journal
+
+Summarize what you learned this session as a journal entry in
+`memory/journal/<workspace>/` or `memory/journal/general/`. Wrap it
+with **v1 frontmatter** (see the **Record** section for the full
+field list) so future offline analysis can query it; set
+`type: reflection` and `trigger: slash_remember_reflect`.
+
+### 4. Usage Review — Feedback Loop
+
+Read `memory/usage.log` and analyze this session's activity:
+
+- **Recalls**: How many `/recall` searches? Were results useful (`used` > 0)?
+  - If a topic was recalled often → consider promoting it to L2 understanding
+  - If recalls returned 0 results → knowledge gap, write it to journal
+- **Remembers**: What categories? Are you remembering broadly or narrowly?
+  - All in one workspace → good depth
+  - Scattered across many → check if L1 project map needs updating
+- **Enrichments**: Did you `/enrich` any symbols this session?
+  - If you read code but didn't enrich → were there opportunities missed?
+- **Stale L2**: List `memory/understanding/*.md` files. Any not loaded this
+  session that haven't been updated in a while? Flag them.
+- **Scope drift**: Count `remember` entries grouped by `scope=` and
+  `kind=`. If per-corpus personal state is piling up under
+  `scope=project` or `workspace=-`, the agent is being too generic —
+  re-scope those entries to their workspace.
+
+### 5. Generate Insights
+
+Based on your usage review, write 2-3 actionable insights to
+`memory/journal/general/` as a reflection entry.
+
+### 6. Re-index (if needed)
+
+If you added journal entries, re-index for `/recall`:
+```bash
+smak ingest --config memory/smak_config.yaml
+```
+
+### 7. Log the reflection
+
+Append to `memory/usage.log`:
+```
+<ISO-8601> reflect insights=<N>
+```
+
+## When to reflect
+
+- End of a productive session
+- After completing a major task
+- When the Memory Nudge reminds you
+- When `memory/.l1-over-cap` appears
+- When the user asks you to consolidate what you learned
 """
 
     def _recall_command_body(self) -> str:
@@ -970,166 +1110,6 @@ Log the recall to `memory/usage.log`:
 ```
 <ISO-8601> recall "<query>" results=<N> used=<how many were relevant>
 ```
-"""
-
-    def _reflect_command_body(self) -> str:
-        return """\
-Structured self-reflection to maintain memory quality.
-
-Run periodically (end of session, after major work) to keep memory
-accurate and tidy.
-
-## Steps
-
-### 1. Review L1 — MEMORY.md
-
-Read `MEMORY.md` at project root. Ask yourself:
-- Is the Project Map still accurate? Any new workspaces to add?
-- Are Active Goals still current? Remove completed ones.
-- Any Key Facts that are stale or wrong?
-
-Update directly if anything changed.
-
-### 2. Review L2 — Understanding
-
-For each workspace you worked on this session, read
-`memory/understanding/<workspace>.md`. Ask:
-- Did I learn new architecture details? Add them.
-- Did I discover a debug SOP or gotcha? Document it.
-- Is the Key Files section still accurate?
-
-Create the file if it doesn't exist yet.
-
-### 2b. Audit per-corpus scoping
-
-List the files under `memory/` and check that each is scoped correctly
-under the **scope-first** principle (see `/remember`):
-
-- Anything in `MEMORY.md` that is really about *one* workspace?
-  → Move it to the per-corpus file and leave at most a one-line
-  pointer in `MEMORY.md` if the user truly needs it up front.
-- Any `memory/journal/general/` entry that is really workspace-specific?
-  → Move it under `memory/journal/<workspace>/`.
-- Any ad-hoc per-corpus files you (or a past session) created —
-  `memory/todos/<workspace>.md`, `memory/shortcuts/<workspace>.md`,
-  etc.? → Confirm the name follows `<kind>/<workspace>.md` and the
-  content is genuinely workspace-specific.
-
-The goal: no matter what `<kind>` of personalized memory exists, it
-lives under a consistent `memory/<kind>/<workspace>.md` path.
-
-### 2c. L1 cap triage
-
-Check for the cap-audit nudge sentinel:
-
-```bash
-cat memory/.l1-over-cap 2>/dev/null
-```
-
-If the file exists, MEMORY.md has grown past its byte cap. Triage
-without waiting:
-
-1. Read `MEMORY.md` line by line. For each line, classify it:
-   - **Portable** (still useful in *any* corpus) → keep in L1.
-   - **Corpus-specific** → move to
-     `memory/understanding/<workspace>.md`.
-   - **Open TODO / WIP** → move to `memory/todos/<workspace>.md` (or
-     the matching `<kind>/<workspace>.md`).
-2. Distill duplicates and stale bullets; keep the essence only.
-3. Save `MEMORY.md`. The next Stop hook re-audits and removes
-   `memory/.l1-over-cap` automatically when the body is back under
-   cap.
-
-**The cap never silently evicts anything** — this step is the only
-place non-portable content leaves L1.
-
-### 3. Log to L3 — Journal
-
-Summarize what you learned this session as a journal entry in
-`memory/journal/<workspace>/` or `memory/journal/general/`. Wrap it with
-**v1 frontmatter** (see `/remember` for the full field list) so future
-offline analysis can query it:
-
-```markdown
----
-allmight_journal: v1
-id: <ISO-8601 timestamp + short hash>
-type: reflection
-workspace: <name>      # or: general
-trigger: slash_reflect
-input: |
-  <what prompted this reflection>
-tool_calls: []
-output: |
-  <the reflection in one line>
-outcome_label: success
-tags: [<keywords>]
-supersedes: null
-created_at: <ISO-8601>
----
-# <date> — <brief title>
-
-<Summary of discoveries, decisions, and insights.>
-```
-
-### 4. Usage Review — Feedback Loop
-
-Read `memory/usage.log` and analyze this session's activity:
-
-- **Recalls**: How many `/recall` searches? Were results useful (`used` > 0)?
-  - If a topic was recalled often → consider promoting it to L2 understanding
-  - If recalls returned 0 results → knowledge gap, write it to journal
-- **Remembers**: What categories? Are you remembering broadly or narrowly?
-  - All in one workspace → good depth
-  - Scattered across many → check if L1 project map needs updating
-- **Enrichments**: Did you `/enrich` any symbols this session?
-  - If you read code but didn't enrich → were there opportunities missed?
-- **Stale L2**: List `memory/understanding/*.md` files. Any not loaded this
-  session that haven't been updated in a while? Flag them.
-- **Scope drift**: Count `remember` entries grouped by `scope=` and
-  `kind=`. If per-corpus personal state is piling up under
-  `scope=project` or `workspace=-`, the agent is being too generic —
-  re-scope those entries to their workspace.
-
-### 5. Generate Insights
-
-Based on your usage review, write 2-3 actionable insights to
-`memory/journal/general/` as a reflection entry:
-
-```markdown
-# <date> — Reflection Insights
-
-## Usage Summary
-- Recalls: N (M useful)
-- Remembers: N (topics: ...)
-- Enrichments: N symbols
-
-## Insights
-- <what worked well>
-- <what could improve>
-- <knowledge gaps discovered>
-```
-
-### 6. Re-index (if needed)
-
-If you added journal entries, re-index for `/recall`:
-```bash
-smak ingest --config memory/smak_config.yaml
-```
-
-### 7. Log the reflection
-
-Append to `memory/usage.log`:
-```
-<ISO-8601> reflect insights=<N>
-```
-
-## When to reflect
-
-- End of a productive session
-- After completing a major task
-- When the Memory Nudge reminds you
-- When the user asks you to consolidate what you learned
 """
 
     # ------------------------------------------------------------------
@@ -1295,11 +1275,12 @@ Append to `memory/usage.log`:
     def _usage_logger_plugin_content(self) -> str:
         """Return the OpenCode usage-logger.ts plugin content.
 
-        Real-time append to memory/usage.log so /reflect's drift audit
-        never depends on the agent remembering to log. The agent's
-        manual post-action log entries (in /remember, /recall, /reflect)
-        still add richer scope/kind annotations on top — this plugin
-        only guarantees that the file is populated as events happen.
+        Real-time append to memory/usage.log so the Reflect-mode drift
+        audit (inside /remember) never depends on the agent remembering
+        to log. The agent's manual post-action log entries (in
+        /remember and /recall) still add richer scope/kind annotations
+        on top — this plugin only guarantees that the file is populated
+        as events happen.
 
         Writes use appendFileSync (sync I/O) so each entry lands on disk
         before the hook returns; nothing is buffered.
@@ -1309,11 +1290,11 @@ Append to `memory/usage.log`:
  * Usage Logger — OpenCode plugin (All-Might)
  *
  * Real-time appends to memory/usage.log. Independent of the agent
- * remembering to log inside /remember, /recall, /reflect — the
- * file is updated as events happen, not at end-of-action.
+ * remembering to log inside /remember and /recall — the file is
+ * updated as events happen, not at end-of-action.
  *
  * Captured:
- *   - chat.message       — detects /remember, /recall, /reflect in user text
+ *   - chat.message       — detects /remember and /recall in user text
  *   - tool.execute.after — detects writes under memory/ via Write/Edit
  *
  * appendFileSync flushes synchronously, so every entry hits disk
@@ -1323,7 +1304,7 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { appendFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 
-const COMMAND_RE = /(?:^|\\s)\\/(remember|recall|reflect)\\b/;
+const COMMAND_RE = /(?:^|\\s)\\/(remember|recall)\\b/;
 
 function append(cwd: string, line: string): void {
   const p = join(cwd, "memory", "usage.log");
