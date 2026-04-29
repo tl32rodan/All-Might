@@ -413,6 +413,57 @@ def merge(source: str, instance_name: str, as_name: str | None, dry_run: bool):
 
 
 # ------------------------------------------------------------------
+# Migrate (one-shot upgrade for old-layout projects)
+# ------------------------------------------------------------------
+
+@main.command()
+@click.argument("path", default=".", type=click.Path(exists=True))
+@click.option("--dry-run", is_flag=True,
+              help="Print the migration plan without modifying disk.")
+def migrate(path: str, dry_run: bool):
+    """Migrate an All-Might project to the post-Part-C layout.
+
+    Detects the legacy shape (``<project>-corpus``/``-memory`` instance
+    dirs, ``/reflect`` command, single-file AGENTS.md with marker
+    fences) and rewrites it in place. Idempotent on already-migrated
+    projects.
+    """
+    from pathlib import Path as P
+
+    from .migrate.migrator import migrate as run_migrate
+
+    root = P(path).resolve()
+    plan = run_migrate(root, dry_run=dry_run)
+
+    prefix = "[DRY RUN] " if dry_run else ""
+    if not plan.needs_migration:
+        click.echo(f"{prefix}Nothing to migrate — '{root.name}' already on the new layout.")
+        return
+
+    click.echo(f"{prefix}Migration plan for '{root.name}':")
+    if plan.rename:
+        click.echo("  Rename instance dirs:")
+        for old, new in plan.rename.items():
+            click.echo(f"    personalities/{old}/ -> personalities/{new}/")
+    if plan.dropped_files:
+        click.echo("  Drop legacy files:")
+        for entry in plan.dropped_files:
+            click.echo(f"    {entry}")
+    if plan.written_role_files:
+        click.echo("  Wrote ROLE.md:")
+        for entry in plan.written_role_files:
+            click.echo(f"    {entry}")
+    if plan.notes:
+        click.echo("  Notes:")
+        for note in plan.notes:
+            click.echo(f"    - {note}")
+
+    if dry_run:
+        click.echo("")
+        click.echo("Re-run without --dry-run to apply.")
+
+
+# ------------------------------------------------------------------
 # Agent Memory System
 # ------------------------------------------------------------------
 
