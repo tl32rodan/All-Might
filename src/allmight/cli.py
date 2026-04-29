@@ -91,6 +91,7 @@ def _init_callback(path: str, force: bool, **template_options: object) -> None:
         Personality,
         RegistryEntry,
         compose,
+        compose_agents_md,
         discover,
         stage_compose_conflicts,
         write_init_scaffold,
@@ -135,6 +136,9 @@ def _init_callback(path: str, force: bool, **template_options: object) -> None:
     for instance in instances:
         all_conflicts.extend(compose(root, instance, force=force))
     stage_compose_conflicts(root, all_conflicts)
+
+    # Stitch every instance's ROLE.md into the single root AGENTS.md.
+    compose_agents_md(root, instances, project_name=manifest.name)
 
     # Persist the registry so allmight list/status can find them again.
     write_registry(root, [

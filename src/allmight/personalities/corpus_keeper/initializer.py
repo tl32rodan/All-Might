@@ -89,7 +89,7 @@ class ProjectInitializer:
         else:
             # First init (or --force): write everything directly
             self._generate_commands(root, manifest, writable=writable, force=force)
-            self._update_agents_md(root, manifest, writable=writable)
+            self._write_role_md(root, manifest, writable=writable, force=force)
 
             # Create .allmight/ marker (clean up any stale templates)
             allmight_dir.mkdir(exist_ok=True)
@@ -133,21 +133,35 @@ class ProjectInitializer:
     ) -> None:
         """Stage new templates to .allmight/templates/ for agent-driven /sync.
 
-        Called on re-init when .allmight/ already exists.  Writes the same
-        content that first-init would write, but to .allmight/templates/
-        instead of the working locations.
+        Called on re-init when .allmight/ already exists. Writes the same
+        content that first-init would write, but to
+        ``.allmight/templates/`` (mirroring the project layout) instead
+        of the live locations.
         """
         tpl = root / ".allmight" / "templates"
 
-        # --- Commands ---
+        # --- Commands (still under .allmight/templates/commands/ for
+        # backwards compat with existing /sync flow; instance-aware
+        # staging is a follow-up) ---
         cmds_tpl = tpl / "commands"
         cmds_tpl.mkdir(parents=True, exist_ok=True)
-
         self._stage_command_content(cmds_tpl, manifest, writable=writable)
 
-        # --- CLAUDE.md sections ---
-        allmight_section = self._claude_md_section(manifest, writable=writable)
-        (tpl / "claude-md-section.md").write_text(allmight_section)
+        # --- ROLE / AGENTS section staged ---
+        if self._instance_root is not None and self._instance_root != root:
+            # Registry-driven: mirror project layout for /sync to find.
+            inst_rel = self._instance_root.relative_to(root)
+            staged_role = tpl / inst_rel / "ROLE.md"
+            staged_role.parent.mkdir(parents=True, exist_ok=True)
+            write_guarded(staged_role, self._role_md_body(manifest, writable=writable), ALLMIGHT_MARKER_MD)
+        else:
+            # Legacy: stage the marker-fenced section file like before
+            # so existing /sync flow + tests keep working.
+            marker = "<!-- ALL-MIGHT -->"
+            body = self._role_md_body(manifest, writable=writable)
+            if body.startswith(ALLMIGHT_MARKER_MD):
+                body = body[len(ALLMIGHT_MARKER_MD):].lstrip("\n")
+            (tpl / "claude-md-section.md").write_text(f"{marker}\n{body}")
 
         # --- Install /sync skill + command (directly, not staged) ---
         self._install_sync_skill(root)
@@ -207,20 +221,16 @@ class ProjectInitializer:
             return root / ".opencode" / "skills", root / ".opencode" / "commands"
         return self._instance_root / "skills", self._instance_root / "commands"
 
-    def _claude_md_section(
+    def _role_md_body(
         self, manifest: ProjectManifest, writable: bool = False,
     ) -> str:
-        """Return the ALL-MIGHT section content for CLAUDE.md."""
-        marker = "<!-- ALL-MIGHT -->"
-
+        """Return the corpus keeper's ROLE.md body."""
         if writable:
-            return self._claude_md_section_writable(marker, manifest)
-        return self._claude_md_section_readonly(marker, manifest)
+            return self._role_md_writable(manifest)
+        return self._role_md_readonly(manifest)
 
-    def _claude_md_section_readonly(
-        self, marker: str, manifest: ProjectManifest,
-    ) -> str:
-        """AGENTS.md section for read-only mode — search only."""
+    def _role_md_readonly(self, manifest: ProjectManifest) -> str:
+        """ROLE.md for the corpus keeper, read-only mode."""
         kg_root = self._instance_rel + "knowledge_graph"
         sos_prereq = ""
         if manifest.has_path_env:
@@ -229,13 +239,13 @@ class ProjectInitializer:
 
 This project uses **CliosoftSOS**. Set `$DDI_ROOT_PATH` before opening
 the project — it determines which source layer (online vs. version
-control) All-Might operates on.
+control) the corpus operates on.
 """
-        return f"""{marker}
-## All-Might: Active Knowledge Graph (read-only)
+        return f"""{ALLMIGHT_MARKER_MD}
+# Corpus Keeper
 
-This project has an **All-Might knowledge graph** — the agent can search
-code by meaning and remember across sessions.
+You manage a **knowledge graph** for this project — searching code by
+meaning and tracking what the agent has learned across sessions.
 
 **Access: read-only** — you may search the knowledge graph but must NOT
 modify corpora (no ingesting, no enriching, no sidecar edits).
@@ -263,10 +273,8 @@ The `/search` command has a detailed operational guide in `.opencode/commands/`.
 1. `/search "query"` — explore the codebase
 """
 
-    def _claude_md_section_writable(
-        self, marker: str, manifest: ProjectManifest,
-    ) -> str:
-        """AGENTS.md section for writable mode — full access."""
+    def _role_md_writable(self, manifest: ProjectManifest) -> str:
+        """ROLE.md for the corpus keeper, writable mode."""
         kg_root = self._instance_rel + "knowledge_graph"
         sos_prereq = ""
         if manifest.has_path_env:
@@ -275,13 +283,14 @@ The `/search` command has a detailed operational guide in `.opencode/commands/`.
 
 This project uses **CliosoftSOS**. Set `$DDI_ROOT_PATH` before opening
 the project — it determines which source layer (online vs. version
-control) All-Might operates on.
+control) the corpus operates on.
 """
-        return f"""{marker}
-## All-Might: Active Knowledge Graph
+        return f"""{ALLMIGHT_MARKER_MD}
+# Corpus Keeper
 
-This project has an **All-Might knowledge graph** — the agent can search
-code by meaning, annotate what it learns, and remember across sessions.
+You manage a **knowledge graph** for this project — searching code by
+meaning, annotating what the agent learns, and tracking knowledge
+across sessions.
 
 ### Capabilities
 
@@ -433,28 +442,61 @@ smak ingest --config {kg_root}/<workspace>/config.yaml --index source_code --jso
                 force=force,
             )
 
-    def _update_agents_md(
+    def _write_role_md(
+        self,
+        root: Path,
+        manifest: ProjectManifest,
+        writable: bool = False,
+        force: bool = False,
+    ) -> None:
+        """Write the corpus keeper's role description.
+
+        Registry-driven mode (``instance_root`` set and != ``root``):
+        writes ``personalities/<n>/ROLE.md``; the registry's
+        ``compose_agents_md`` stitches every instance's ROLE.md into
+        the single root ``AGENTS.md`` afterwards.
+
+        Legacy direct-call mode (no ``instance_root`` — used by tests,
+        clone, merge that bypass the registry): writes a marker-fenced
+        section directly into root ``AGENTS.md``. This path goes away
+        once those callers migrate to the registry-driven flow
+        (tracked in §B.6.3).
+        """
+        if self._instance_root is not None and self._instance_root != root:
+            self._instance_root.mkdir(parents=True, exist_ok=True)
+            write_guarded(
+                self._instance_root / "ROLE.md",
+                self._role_md_body(manifest, writable=writable),
+                ALLMIGHT_MARKER_MD,
+                force=force,
+            )
+        else:
+            self._write_legacy_agents_md(root, manifest, writable=writable)
+
+    def _write_legacy_agents_md(
         self, root: Path, manifest: ProjectManifest, writable: bool = False,
     ) -> None:
-        """Append All-Might baseline instructions to AGENTS.md at project root."""
+        """Splice the corpus section into root AGENTS.md (legacy path)."""
         agents_md = root / "AGENTS.md"
-
         if agents_md.is_symlink():
             agents_md.unlink()
 
         marker = "<!-- ALL-MIGHT -->"
-        allmight_section = self._claude_md_section(manifest, writable=writable)
+        body = self._role_md_body(manifest, writable=writable)
+        if body.startswith(ALLMIGHT_MARKER_MD):
+            body = body[len(ALLMIGHT_MARKER_MD):].lstrip("\n")
+        section = f"{marker}\n{body}"
 
         if agents_md.exists():
             content = agents_md.read_text()
             if marker in content:
                 before = content[: content.index(marker)]
-                content = before.rstrip() + "\n\n" + allmight_section
+                content = before.rstrip() + "\n\n" + section
             else:
-                content = content.rstrip() + "\n\n" + allmight_section
+                content = content.rstrip() + "\n\n" + section
             agents_md.write_text(content)
         else:
-            agents_md.write_text(f"# {manifest.name}\n\n{allmight_section}")
+            agents_md.write_text(f"# {manifest.name}\n\n{section}")
 
     @staticmethod
     def _enrich_command_body(has_path_env: bool) -> str:

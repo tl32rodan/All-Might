@@ -105,8 +105,8 @@ class MemoryInitializer:
         # 5. Generate memory commands (remember, recall, reflect)
         self._generate_memory_commands(root)
 
-        # 7. Update AGENTS.md
-        self._update_agents_md(root)
+        # 7. Write ROLE.md (root AGENTS.md is composed by the registry)
+        self._write_role_md(root)
 
         # 8. Generate opencode.json with hooks for OpenCode
         self._generate_opencode_json(root)
@@ -161,10 +161,21 @@ class MemoryInitializer:
         cmds_tpl.mkdir(parents=True, exist_ok=True)
         self._write_memory_command_content(cmds_tpl)
 
-        # Stage AGENTS.md memory section
-        (tpl / "memory-md-section.md").write_text(self._memory_claude_md_section())
+        # Stage ROLE / AGENTS section.
+        if self._instance_root is not None and self._instance_root != root:
+            inst_rel = self._instance_root.relative_to(root)
+            staged_role = tpl / inst_rel / "ROLE.md"
+            staged_role.parent.mkdir(parents=True, exist_ok=True)
+            write_guarded(staged_role, self._role_md_body(), ALLMIGHT_MARKER_MD)
+        else:
+            # Legacy: stage marker-fenced section file like before.
+            marker = "<!-- ALL-MIGHT-MEMORY -->"
+            body = self._role_md_body()
+            if body.startswith(ALLMIGHT_MARKER_MD):
+                body = body[len(ALLMIGHT_MARKER_MD):].lstrip("\n")
+            (tpl / "memory-md-section.md").write_text(f"{marker}\n{body}")
 
-        # Stage opencode.json and memory-load.ts
+        # Stage opencode.json and plugins
         import json
         opencode_config = {}
         (tpl / "opencode.json").write_text(json.dumps(opencode_config, indent=2) + "\n")
@@ -190,22 +201,23 @@ class MemoryInitializer:
             ALLMIGHT_MARKER_MD,
         )
 
-    def _memory_claude_md_section(self) -> str:
-        """Return the ALL-MIGHT-MEMORY section content for CLAUDE.md."""
-        marker = "<!-- ALL-MIGHT-MEMORY -->"
-        return f"""{marker}
-## Agent Memory
+    def _role_md_body(self) -> str:
+        """Return the memory keeper's ROLE.md body."""
+        return f"""{ALLMIGHT_MARKER_MD}
+# Memory Keeper
 
-The agent can **remember things across sessions**: preferences,
+You remember things across sessions for this project: preferences,
 decisions, corrections, learned patterns, and per-corpus personal
 state (TODOs, shortcuts, ad-hoc notes).
-(*corpus = workspace; see the All-Might section above for definition*)
+(*corpus = workspace; see the corpus keeper's role for the
+definition*)
+
+### Capabilities
 
 | Command | What it does |
 |---------|-------------|
-| `/remember` | Save knowledge under the right scope |
+| `/remember` | Save knowledge under the right scope; also runs end-of-session reflection (cap audit, scoping audit, insights) |
 | `/recall` | Search past journal entries via SMAK |
-| `/reflect` | End-of-session review to keep memory tidy |
 
 ### Scope-first principle
 
@@ -224,7 +236,7 @@ per-corpus, or a historical log before choosing where to write it.
 When unsure, prefer **narrower scope**: a workspace file beats a
 project-wide file beats `journal/general/`.
 
-See `/remember`, `/recall`, and `/reflect` commands for detailed guides.
+See `/remember` and `/recall` commands for detailed guides.
 """
 
     def _opencode_plugin_content(self) -> str:
@@ -1121,29 +1133,54 @@ Append to `memory/usage.log`:
 """
 
     # ------------------------------------------------------------------
-    # CLAUDE.md update
+    # ROLE.md (per-personality role description)
     # ------------------------------------------------------------------
 
-    def _update_agents_md(self, root: Path) -> None:
-        """Append memory system section to AGENTS.md."""
-        agents_md = root / "AGENTS.md"
+    def _write_role_md(self, root: Path, force: bool = False) -> None:
+        """Write the memory keeper's role description.
 
+        Registry-driven mode (``instance_root`` set and != ``root``):
+        writes ``personalities/<n>/ROLE.md``; the registry's
+        ``compose_agents_md`` stitches into the single root AGENTS.md.
+
+        Legacy direct-call mode: splices a marker-fenced section into
+        root ``AGENTS.md`` for backward compat with tests / clone /
+        merge that bypass the registry. Removed once those callers
+        migrate (§B.6.3).
+        """
+        if self._instance_root is not None and self._instance_root != root:
+            self._instance_root.mkdir(parents=True, exist_ok=True)
+            write_guarded(
+                self._instance_root / "ROLE.md",
+                self._role_md_body(),
+                ALLMIGHT_MARKER_MD,
+                force=force,
+            )
+        else:
+            self._write_legacy_agents_md(root)
+
+    def _write_legacy_agents_md(self, root: Path) -> None:
+        """Splice the memory section into root AGENTS.md (legacy path)."""
+        agents_md = root / "AGENTS.md"
         if agents_md.is_symlink():
             agents_md.unlink()
 
         marker = "<!-- ALL-MIGHT-MEMORY -->"
-        memory_section = self._memory_claude_md_section()
+        body = self._role_md_body()
+        if body.startswith(ALLMIGHT_MARKER_MD):
+            body = body[len(ALLMIGHT_MARKER_MD):].lstrip("\n")
+        section = f"{marker}\n{body}"
 
         if agents_md.exists():
             content = agents_md.read_text()
             if marker in content:
                 before = content[: content.index(marker)]
-                content = before.rstrip() + "\n\n" + memory_section
+                content = before.rstrip() + "\n\n" + section
             else:
-                content = content.rstrip() + "\n\n" + memory_section
+                content = content.rstrip() + "\n\n" + section
             agents_md.write_text(content)
         else:
-            agents_md.write_text(f"# Project\n\n{memory_section}")
+            agents_md.write_text(f"# Project\n\n{section}")
 
     # ------------------------------------------------------------------
     # OpenCode compatibility
