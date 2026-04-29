@@ -416,6 +416,203 @@ def write_init_scaffold(project_root: Path) -> None:
     else:
         pkg_json.write_text(_OPENCODE_PACKAGE_JSON)
 
+    _write_role_load_plugin(project_root)
+
+
+# ---------------------------------------------------------------------------
+# ROLE.md composition + role-load.ts plugin
+# ---------------------------------------------------------------------------
+
+
+_AGENTS_MD_HEADER = (
+    "<!-- all-might generated -->\n"
+    "<!--\n"
+    "  This file is composed from each personality's ROLE.md.\n"
+    "  Edit personalities/<name>/ROLE.md, not this file.\n"
+    "-->\n\n"
+    "# {project_name}\n\n"
+)
+
+
+def compose_agents_md(
+    project_root: Path,
+    instances: list["Personality"],
+    *,
+    project_name: str | None = None,
+) -> Path:
+    """Stitch each instance's ROLE.md into the single root AGENTS.md.
+
+    Order is the order ``instances`` is passed (registry order: corpus
+    before memory). Instances missing a ROLE.md are skipped.
+
+    The composed file carries the All-Might marker so re-init can tell
+    its own composed output from a user-edited AGENTS.md and stage a
+    conflict for ``/sync`` if the user has hand-edited the root.
+    """
+    name = project_name or project_root.name
+    parts = [_AGENTS_MD_HEADER.format(project_name=name)]
+    for instance in instances:
+        role_md = instance.root / "ROLE.md"
+        if not role_md.is_file():
+            continue
+        body = role_md.read_text().rstrip()
+        # Strip the leading marker line — it's already on the composed
+        # file, no need to repeat it inside each section.
+        from .markers import ALLMIGHT_MARKER_MD
+
+        if body.startswith(ALLMIGHT_MARKER_MD):
+            body = body[len(ALLMIGHT_MARKER_MD):].lstrip("\n")
+        parts.append(body)
+        parts.append("")  # blank line between sections
+    agents_md = project_root / "AGENTS.md"
+    agents_md.write_text("\n".join(parts).rstrip() + "\n")
+    return agents_md
+
+
+def _write_role_load_plugin(project_root: Path) -> None:
+    """Write ``.opencode/plugins/role-load.ts`` if absent or owned.
+
+    Mirrors the memory-load.ts pattern: at every ``chat.message`` for
+    an un-primed session, scan ``personalities/*/ROLE.md`` and inject
+    them as a synthetic prefix part. ``session.created``,
+    ``session.compacted``, ``session.deleted`` events clear the primed
+    flag so the next message re-injects.
+
+    The plugin is project-level (not owned by any personality) — same
+    status as ``opencode.json``.
+    """
+    from .markers import ALLMIGHT_MARKER_TS
+    from .safe_write import write_guarded
+
+    plugins_dir = project_root / ".opencode" / "plugins"
+    plugins_dir.mkdir(parents=True, exist_ok=True)
+    write_guarded(
+        plugins_dir / "role-load.ts",
+        _ROLE_LOAD_PLUGIN_CONTENT,
+        ALLMIGHT_MARKER_TS,
+    )
+
+
+_ROLE_LOAD_PLUGIN_CONTENT = """\
+// all-might generated
+/**
+ * Role Loader — OpenCode plugin (All-Might)
+ *
+ * Primes the agent's context with each personality's ROLE.md at the
+ * start of every (un-primed) session, and re-primes after compaction
+ * — compaction summarises history and dilutes the role description,
+ * so a fresh injection keeps each personality's identity stable.
+ *
+ * Events:
+ *   session.created    -> mark session un-primed
+ *   session.compacted  -> mark session un-primed (re-inject next message)
+ *   session.deleted    -> drop state
+ *
+ * Hook:
+ *   chat.message -> inject ROLE.md prefix once per (un-primed) session
+ */
+import type { Plugin } from "@opencode-ai/plugin";
+import { readFileSync, existsSync, readdirSync, statSync } from "fs";
+import { join } from "path";
+
+const primed = new Set<string>();
+
+function readAllRoles(cwd: string): string {
+  const personalitiesDir = join(cwd, "personalities");
+  if (!existsSync(personalitiesDir)) return "";
+  const parts: string[] = [];
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(personalitiesDir).sort();
+  } catch {
+    return "";
+  }
+  for (const name of entries) {
+    const rolePath = join(personalitiesDir, name, "ROLE.md");
+    if (!existsSync(rolePath)) continue;
+    let stat;
+    try {
+      stat = statSync(rolePath);
+    } catch {
+      continue;
+    }
+    if (!stat.isFile()) continue;
+    try {
+      parts.push(`--- Role: ${name} (ROLE.md) ---`);
+      parts.push(readFileSync(rolePath, "utf-8"));
+      parts.push(`--- End Role: ${name} ---`);
+      parts.push("");
+    } catch {
+      // ignore unreadable role files
+    }
+  }
+  return parts.join("\\n");
+}
+
+export const RoleLoadPlugin: Plugin = async ({ directory }: any) => {
+  const cwd = (directory as string | undefined) ?? process.cwd();
+
+  return {
+    event: async ({ event }: { event: any }) => {
+      const type = event?.type;
+      const sid = event?.properties?.sessionID ?? "";
+      if (!sid) return;
+      if (
+        type === "session.created" ||
+        type === "session.compacted" ||
+        type === "session.deleted"
+      ) {
+        primed.delete(sid);
+      }
+    },
+
+    "chat.message": async (input: any, output: any) => {
+      const sid = input?.sessionID;
+      if (!sid) return;
+      if (primed.has(sid)) return;
+
+      const text = readAllRoles(cwd);
+      if (!text.trim()) return;
+
+      const mid = output?.message?.id;
+      if (!mid) return;
+      if (!Array.isArray(output?.parts)) return;
+      output.parts.unshift({
+        id: "prt_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10),
+        sessionID: sid,
+        messageID: mid,
+        type: "text",
+        text,
+        synthetic: true,
+      });
+      primed.add(sid);
+    },
+  };
+};
+
+export default RoleLoadPlugin;
+"""
+
+
+# ---------------------------------------------------------------------------
+# Slug helper
+# ---------------------------------------------------------------------------
+
+
+def slugify_instance_name(name: str) -> str:
+    """Normalise a user-supplied instance name into a filesystem slug.
+
+    Spaces collapse to ``_``; characters outside ``[a-z0-9_-]`` drop;
+    leading/trailing ``_-`` strip; result is lowercased. Empty input
+    returns the empty string so callers can detect and re-prompt.
+    """
+    import re
+
+    s = name.strip().lower().replace(" ", "_")
+    s = re.sub(r"[^a-z0-9_-]+", "", s)
+    s = s.strip("_-")
+    return s
+
 
 # ---------------------------------------------------------------------------
 # Registry record (.allmight/personalities.yaml)
