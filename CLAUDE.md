@@ -13,6 +13,23 @@ After modifying initializer, skill templates, commands, or memory init:
    Python tests only verify strings written — they cannot catch
    wrong-shape API calls in the generated `.ts`.
 
+## Planning Workflow
+
+When the task requires designing before coding:
+
+- **Write plan files incrementally to disk via the Edit tool.** Do
+  not stream a long single-shot response. Stream-idle timeouts have
+  lost whole plans before; write each section, save, then continue.
+- **Confirm core premises before drafting.** Naming choices,
+  deprecated concepts (`detroit_smak` is deprecated), and
+  non-negotiable rules (no Composer pattern; one `Personality`
+  instance per template by default) — surface assumptions and ask
+  for confirmation in 30 seconds, instead of redrafting after
+  rejection.
+- **Close every design session with a written artifact.** Plan
+  files and CLAUDE.md additions both count; chat memory does not.
+  Context bled across sessions when this was skipped.
+
 ## Project Structure
 
 ```
@@ -43,6 +60,34 @@ All-Might/                          ← This repo (the framework)
 | `personalities/memory_keeper/initializer.py` | MEMORY.md (L1), understanding/ (L2), journal/ (L3), /remember /recall |
 | `personalities/corpus_keeper/scanner.py` | Detects languages, frameworks, proposes indices |
 | `one_for_all/templates/skill-base.md.j2` | The one-for-all SKILL.md |
+
+## Personality Platform Conventions
+
+These rules are non-negotiable; proposals that violate them have been
+rejected before and will be rejected again.
+
+- **`corpus_keeper` is the canonical name** for the corpus-side
+  personality. The legacy name `detroit_smak` is **deprecated** —
+  do not re-introduce it in proposals, skill bodies, plugin code,
+  or test names.
+- **Two-tier model.** Every capability is a `PersonalityTemplate`
+  (the *kind* — registered as a module-level `TEMPLATE` constant
+  inside `src/allmight/personalities/<name>/__init__.py`) plus
+  zero-or-more `Personality` instances (one per project, default
+  name `f"{manifest.name}-{template.short_name}"`). The framework
+  instantiates the instance; the template never instantiates itself.
+- **No Composer pattern.** Templates do not mix runtime state
+  across personalities, do not share helpers via mutable globals,
+  and do not coordinate at install time. Each `template.install`
+  runs in isolation and writes only into its own
+  `personalities/<name>/`. If two templates need the same data,
+  they each compute it from `InstallContext`; cross-template state
+  flows through the file system, never through process memory.
+- **Composition is build-time.** The registry walks each instance's
+  `skills/`, `commands/`, `plugins/` after `install` and creates
+  relative symlinks at `.opencode/<kind>/<basename>`. Once written,
+  OpenCode resolves them on file open — no in-process registry
+  mediates command dispatch at runtime.
 
 ## Architecture Layers
 
@@ -117,6 +162,15 @@ workspaces.
 
 **Sidecar files** (`.sidecar.yaml`) live beside the source code they describe
 (at `$DDI_ROOT_PATH/...`), NOT inside the All-Might project.
+
+`allmight init` is **idempotent and safe in pre-populated
+directories.** Files that carry an All-Might marker
+(`ALLMIGHT_MARKER_MD`, `_TS`, `_YAML`) are auto-replaced; files you
+authored at e.g. `.opencode/commands/search.md` are preserved
+untouched and surfaced via `.allmight/templates/conflicts.yaml` for
+`/sync` to resolve. `$schema` in `opencode.json` and pinned versions
+in `package.json` are never overwritten — both writers use
+`setdefault` semantics.
 
 ### 2. SRP: Three Layers of Agent Documentation
 
@@ -194,6 +248,55 @@ Each template extracts what it needs from `Personality.options` inside
 its `install` callable — `cli.py` never reads them. To add a flag:
 append a `CliOption(...)` to the right template's `__init__.py` and it
 shows up in `allmight init --help` automatically.
+
+---
+
+## Interface Isolation & Clean-Code Rules
+
+Each rule below is enforceable by reading a diff. Violating a rule is
+a regression even if tests pass.
+
+- **`cli.py` is closed.** Touching `src/allmight/cli.py` to
+  special-case a template is a regression. New flags belong in
+  `template.cli_options`; new install behaviour belongs in
+  `template.install`; new runtime state belongs inside the
+  template, not in `cli.py`. The only universal concerns that live
+  there are `--force`, scaffold writing
+  (`write_init_scaffold`), and registry persistence
+  (`write_registry`).
+- **`core/` is closed against templates.** Files under
+  `src/allmight/core/` must not import from
+  `src/allmight/personalities/*`. The dependency arrow points one
+  way: templates depend on core, never the other direction. If a
+  utility is general enough to be shared, lift it into core; do not
+  reach back into a template.
+- **A template owns its directory, nothing else.** Writes outside
+  `personalities/<name>/` are limited to four root targets:
+  `AGENTS.md`, `MEMORY.md`, `.allmight/personalities.yaml`, and the
+  staging directory `.allmight/templates/...`. Composition symlinks
+  under `.opencode/` are placed by `core.personalities.compose`,
+  not by the template itself. Any new write target must be an
+  explicit, documented exception in this section.
+- **Conflict resolution lives in `core/personalities.compose`.**
+  Templates do not detect or stage their own conflicts; they just
+  declare what they want to write inside their instance dir.
+  Centralising this keeps `/sync`'s mental model uniform — one
+  manifest at `.allmight/templates/conflicts.yaml`, one set of
+  resolution rules.
+- **Markers are the contract for "this file is mine".** Every
+  generated file *must* carry an `ALLMIGHT_MARKER_*` token (see
+  `core/markers.py`). Files without a marker are treated as
+  user-authored on re-init and preserved. **Skipping the marker is
+  a silent data-loss bug** — the file gets clobbered or, worse,
+  silently divorced from re-init flow.
+- **When in doubt: add a flag, not a template.** A new template is
+  justified only when the capability has its own data dir, its own
+  skills/commands, and a meaningful uninstall semantics.
+  Otherwise, extend an existing template's `cli_options` or its
+  `install` logic. The bar for new templates is high because each
+  one introduces new symlinks, new entries in
+  `personalities.yaml`, and a new directory under
+  `personalities/`.
 
 ---
 
