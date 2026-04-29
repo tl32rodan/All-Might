@@ -12,8 +12,8 @@ import stat
 
 import pytest
 
-from allmight.detroit_smak.scanner import ProjectScanner
-from allmight.detroit_smak.initializer import ProjectInitializer
+from allmight.personalities.corpus_keeper.scanner import ProjectScanner
+from allmight.personalities.corpus_keeper.initializer import ProjectInitializer
 from allmight.memory.initializer import MemoryInitializer
 
 
@@ -292,7 +292,7 @@ class TestSyncSkillContent:
 
     def test_sync_skill_references_opencode_paths(self, sample_project):
         """Sync skill only references .opencode paths, not .claude paths."""
-        from allmight.detroit_smak.sync_skill_content import SYNC_SKILL_BODY
+        from allmight.personalities.corpus_keeper.sync_skill_content import SYNC_SKILL_BODY
         assert ".opencode/commands" in SYNC_SKILL_BODY
         assert ".claude/commands" not in SYNC_SKILL_BODY
         assert ".claude/hooks" not in SYNC_SKILL_BODY

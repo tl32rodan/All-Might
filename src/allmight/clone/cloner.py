@@ -83,8 +83,8 @@ class ProjectCloner:
 
     def _initialize_target(self, source: Path, target: Path) -> None:
         """Run ProjectInitializer + MemoryInitializer on the target (read-only)."""
-        from ..detroit_smak.initializer import ProjectInitializer
-        from ..detroit_smak.scanner import ProjectScanner
+        from ..personalities.corpus_keeper.initializer import ProjectInitializer
+        from ..personalities.corpus_keeper.scanner import ProjectScanner
         from ..memory.initializer import MemoryInitializer
 
         # Scan the source to get manifest info, then retarget to clone

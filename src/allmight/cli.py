@@ -51,8 +51,8 @@ def init(path: str, sos: bool, force: bool, writable: bool):
     """
     from pathlib import Path as P
 
-    from .detroit_smak.initializer import ProjectInitializer
-    from .detroit_smak.scanner import ProjectScanner
+    from .personalities.corpus_keeper.initializer import ProjectInitializer
+    from .personalities.corpus_keeper.scanner import ProjectScanner
     from .memory.initializer import MemoryInitializer
 
     root = P(path).resolve()

@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..core.domain import ProjectManifest
-from ..core.markers import ALLMIGHT_MARKER_MD
-from ..core.safe_write import write_guarded
+from ...core.domain import ProjectManifest
+from ...core.markers import ALLMIGHT_MARKER_MD
+from ...core.safe_write import write_guarded
 
 
 class ProjectInitializer:
@@ -23,6 +23,7 @@ class ProjectInitializer:
         manifest: ProjectManifest,
         force: bool = False,
         writable: bool = False,
+        instance_root: Path | None = None,
     ) -> None:
         """Execute Detroit SMAK — bootstrap the entire workspace.
 
@@ -31,8 +32,19 @@ class ProjectInitializer:
             force: If True, overwrite everything even on re-init.
             writable: If True, generate ingest/enrich commands (full access).
                       Default is read-only (search only).
+            instance_root: Personality instance directory. When ``None``
+                (transitional default) all per-instance content is
+                written under ``manifest.root_path``, matching the
+                pre-personalities layout. Once the registry wires
+                composition (commit 5), the corpus_keeper template
+                passes its own ``personalities/<name>/`` here and the
+                content lives there instead.
         """
         root = manifest.root_path
+        # ``instance_root`` is plumbed but unused in this transitional
+        # commit; commit 4 swaps the per-instance writes (knowledge_graph,
+        # skills, commands) over to it.
+        del instance_root
         allmight_dir = root / ".allmight"
         is_reinit = allmight_dir.is_dir() and not force
 

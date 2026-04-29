@@ -206,5 +206,5 @@ class ProjectMerger:
 
     def _install_sync(self, target: Path) -> None:
         """Install /sync skill and command for conflict resolution."""
-        from ..detroit_smak.initializer import ProjectInitializer
+        from ..personalities.corpus_keeper.initializer import ProjectInitializer
         ProjectInitializer()._install_sync_skill(target)
