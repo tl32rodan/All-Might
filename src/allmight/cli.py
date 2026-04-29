@@ -352,47 +352,59 @@ def clone(source: str, path: str):
 # ------------------------------------------------------------------
 
 @main.command()
-@click.argument("source", type=click.Path(exists=True))
-@click.option("--workspace", "-w", multiple=True, help="Only merge specific workspaces")
-@click.option("--dry-run", is_flag=True, help="Show what would be merged without copying")
-@click.option("--no-memory", is_flag=True, help="Skip memory merge")
-def merge(source: str, workspace: tuple[str, ...], dry_run: bool, no_memory: bool):
-    """Merge knowledge bases from another All-Might project.
+@click.option("--from", "source", required=True, type=click.Path(exists=True),
+              help="Source All-Might project to merge from.")
+@click.option("--instance", "instance_name", required=True,
+              help="Name of the personality instance in the source project.")
+@click.option("--as", "as_name", default=None,
+              help="Install the source instance side-by-side under this new "
+                   "name (instead of combining into a same-named target instance).")
+@click.option("--dry-run", is_flag=True,
+              help="Show what would change without touching disk.")
+def merge(source: str, instance_name: str, as_name: str | None, dry_run: bool):
+    """Merge a personality instance from another All-Might project.
 
-    Copies workspaces and memory from SOURCE into the current project.
-    Conflicts are staged for agent-driven resolution via /sync.
+    Default mode (no ``--as``): combine the source instance's content
+    into a same-named target instance. Conflicts (different content
+    at the same path) land beside the originals with a ``.incoming``
+    suffix; ``/sync`` resolves them.
+
+    With ``--as <new-name>``: install the source instance side-by-side
+    under the given name. The target gains a new instance row in
+    ``.allmight/personalities.yaml``.
     """
     from pathlib import Path as P
 
-    from .merge.merger import ProjectMerger
+    from .merge.merger import InstanceMerger
 
     source_path = P(source).resolve()
     target_path = P(".").resolve()
 
-    merger = ProjectMerger()
-    ws_filter = list(workspace) if workspace else None
-
-    report = merger.merge(
+    report = InstanceMerger().merge(
         source=source_path,
         target=target_path,
-        workspaces=ws_filter,
+        instance_name=instance_name,
+        as_name=as_name,
         dry_run=dry_run,
-        no_memory=no_memory,
     )
 
     prefix = "[DRY RUN] " if dry_run else ""
-    click.echo(f"{prefix}All-Might merge complete.")
+    if as_name:
+        click.echo(f"{prefix}Installed source instance '{instance_name}' "
+                   f"as '{as_name}'.")
+    else:
+        click.echo(f"{prefix}Combined source instance '{instance_name}' into "
+                   "the target.")
 
     if report.workspaces_added:
-        click.echo(f"  Workspaces added:      {', '.join(report.workspaces_added)}")
-    if report.workspaces_conflicting:
-        click.echo(f"  Workspaces conflicting: {', '.join(report.workspaces_conflicting)}")
+        click.echo(f"  Added:        {', '.join(report.workspaces_added)}")
     if report.memory_files_added:
-        click.echo(f"  Memory files added:    {len(report.memory_files_added)}")
+        click.echo(f"  Files copied: {len(report.memory_files_added)}")
     if report.memory_conflicts:
-        click.echo(f"  Memory conflicts:      {len(report.memory_conflicts)}")
+        click.echo(f"  Conflicts:    {len(report.memory_conflicts)} "
+                   "(staged with .incoming suffix)")
     if report.warnings:
-        click.echo(f"  Path warnings:         {len(report.warnings)}")
+        click.echo(f"  Path warnings: {len(report.warnings)}")
 
     if report.action_needed:
         click.echo("")
