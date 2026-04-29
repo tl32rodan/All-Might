@@ -1150,7 +1150,15 @@ Append to `memory/usage.log`:
     # ------------------------------------------------------------------
 
     def _generate_opencode_json(self, root: Path) -> None:
-        """Generate opencode.json for OpenCode compatibility."""
+        """Generate opencode.json for OpenCode compatibility.
+
+        Idempotent and non-destructive: ``$schema`` is only set when
+        absent, so a project pointed at a corporate mirror keeps its
+        own schema URL. The registry-driven init also calls
+        ``write_init_scaffold`` which does the same thing — both
+        callers must use ``setdefault`` semantics, otherwise a
+        re-init overwrites the user's choice.
+        """
         import json
 
         opencode_dir = root / ".opencode"
@@ -1165,7 +1173,7 @@ Append to `memory/usage.log`:
         else:
             config = {}
 
-        config["$schema"] = "https://opencode.ai/config.json"
+        config.setdefault("$schema", "https://opencode.ai/config.json")
 
         opencode_json.write_text(json.dumps(config, indent=2) + "\n")
 

@@ -178,19 +178,90 @@ def discover(package: str = "allmight.personalities") -> list[PersonalityTemplat
 _COMPOSED_KINDS = ("skills", "commands", "plugins")
 
 
-def compose(project_root: Path, instance: Personality, *, force: bool = False) -> None:
+@dataclass
+class ComposeConflict:
+    """A composition target we refused to overwrite.
+
+    Raised by ``compose()`` when ``.opencode/<kind>/<name>`` is occupied
+    by content that doesn't carry an All-Might marker — i.e. the user
+    (or some other tool) authored the file. The agent resolves the
+    conflict during ``/sync``.
+
+    Attributes:
+        instance_name: Name of the personality instance that wanted to
+            contribute this entry.
+        kind: One of ``skills``, ``commands``, ``plugins``.
+        basename: Final path component (e.g. ``search.md``).
+        dst: Absolute path of the conflicted destination
+            (``.opencode/<kind>/<basename>``).
+        source: Absolute path of the entry we would have linked to
+            (``personalities/<instance>/<kind>/<basename>``).
+        existing: ``"file"``, ``"directory"``, or
+            ``"symlink-to-elsewhere"`` — what currently occupies dst.
+    """
+
+    instance_name: str
+    kind: str
+    basename: str
+    dst: Path
+    source: Path
+    existing: str
+
+
+def compose(
+    project_root: Path,
+    instance: Personality,
+    *,
+    force: bool = False,
+) -> list[ComposeConflict]:
     """Symlink an instance's skills/commands/plugins into ``.opencode/``.
 
     For each kind, every entry under ``personalities/<instance>/<kind>/``
     is mirrored at ``.opencode/<kind>/<basename>`` as a relative
     symlink pointing back to the instance.
 
-    Naming collisions across instances (two instances both contributing
-    e.g. ``commands/sync.md``) raise :class:`FileExistsError` unless
-    ``force`` is set. ``force`` only overwrites existing **symlinks**;
-    a non-symlink file at the destination always raises so we never
-    silently clobber user work.
+    Conflict handling — never raises, returns conflicts instead:
+
+    * **Already correct** (symlink to our entry): idempotent, do nothing.
+    * **Symlink to elsewhere**: returned as a conflict; ``dst`` is left
+      untouched. ``force=True`` overrides and replaces it.
+    * **Regular file with an All-Might marker**: it's our own old
+      generated file — auto-resolve by deleting and re-symlinking.
+    * **Regular file without a marker**: user authored, returned as a
+      conflict; ``dst`` is preserved. ``force=True`` overrides.
+    * **Directory**: returned as a conflict (we never recursively
+      delete user content). ``force=True`` overrides only when the dir
+      is itself a stale All-Might-owned dir (any file with a marker).
+
+    The CLI passes the returned list to
+    :func:`stage_compose_conflicts` so ``/sync`` can resolve them.
     """
+    from .markers import ALLMIGHT_MARKER_MD, ALLMIGHT_MARKER_TS, ALLMIGHT_MARKER_YAML
+
+    markers = (ALLMIGHT_MARKER_MD, ALLMIGHT_MARKER_TS, ALLMIGHT_MARKER_YAML)
+
+    def _looks_owned(path: Path) -> bool:
+        """True when ``path`` contains any All-Might marker token.
+
+        Used to distinguish *our* old generated content (safe to
+        overwrite) from *user* content (must be staged for ``/sync``).
+        Reads at most a few KB so we don't slurp huge files.
+        """
+        try:
+            head = path.read_bytes()[:4096].decode("utf-8", errors="replace")
+        except OSError:
+            return False
+        return any(m in head for m in markers)
+
+    def _dir_looks_owned(path: Path) -> bool:
+        """True when any file inside ``path`` carries our marker."""
+        for child in path.rglob("*"):
+            if child.is_file() and _looks_owned(child):
+                return True
+        return False
+
+    conflicts: list[ComposeConflict] = []
+
     for kind in _COMPOSED_KINDS:
         src_dir = instance.root / kind
         if not src_dir.is_dir():
@@ -199,17 +270,89 @@ def compose(project_root: Path, instance: Personality, *, force: bool = False) -
         dst_dir.mkdir(parents=True, exist_ok=True)
         for entry in sorted(src_dir.iterdir()):
             dst = dst_dir / entry.name
+
             if dst.is_symlink():
-                if not force and dst.resolve() != entry.resolve():
-                    raise FileExistsError(
-                        f"{dst} symlinked elsewhere; refuse to overwrite without force"
-                    )
-                dst.unlink()
+                if force or dst.resolve() == entry.resolve():
+                    dst.unlink()
+                else:
+                    conflicts.append(ComposeConflict(
+                        instance_name=instance.name,
+                        kind=kind,
+                        basename=entry.name,
+                        dst=dst,
+                        source=entry,
+                        existing="symlink-to-elsewhere",
+                    ))
+                    continue
             elif dst.exists():
-                raise FileExistsError(
-                    f"{dst} exists and is not a symlink; refuse to clobber"
-                )
+                if dst.is_dir():
+                    if force or _dir_looks_owned(dst):
+                        import shutil
+
+                        shutil.rmtree(dst)
+                    else:
+                        conflicts.append(ComposeConflict(
+                            instance_name=instance.name,
+                            kind=kind,
+                            basename=entry.name,
+                            dst=dst,
+                            source=entry,
+                            existing="directory",
+                        ))
+                        continue
+                else:
+                    if force or _looks_owned(dst):
+                        dst.unlink()
+                    else:
+                        conflicts.append(ComposeConflict(
+                            instance_name=instance.name,
+                            kind=kind,
+                            basename=entry.name,
+                            dst=dst,
+                            source=entry,
+                            existing="file",
+                        ))
+                        continue
+
             dst.symlink_to(os.path.relpath(entry, dst_dir))
+
+    return conflicts
+
+
+def stage_compose_conflicts(
+    project_root: Path,
+    conflicts: list[ComposeConflict],
+) -> Path | None:
+    """Persist a conflict manifest at ``.allmight/templates/conflicts.yaml``.
+
+    ``/sync`` reads this file to learn which composition targets need
+    user-driven resolution. Returns the manifest path, or ``None`` if
+    there were no conflicts (and nothing was written / any prior
+    manifest is removed).
+    """
+    import yaml
+
+    path = project_root / ".allmight" / "templates" / "conflicts.yaml"
+    if not conflicts:
+        if path.exists():
+            path.unlink()
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "compose_conflicts": [
+            {
+                "instance": c.instance_name,
+                "kind": c.kind,
+                "basename": c.basename,
+                "dst": str(c.dst.relative_to(project_root)),
+                "source": str(c.source.relative_to(project_root)),
+                "existing": c.existing,
+            }
+            for c in conflicts
+        ],
+    }
+    path.write_text(yaml.safe_dump(payload, sort_keys=False))
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +398,10 @@ def write_init_scaffold(project_root: Path) -> None:
             cfg = {}
     else:
         cfg = {}
-    cfg["$schema"] = "https://opencode.ai/config.json"
+    # Only set $schema if absent — never overwrite a user-chosen value,
+    # otherwise a project that uses an internal mirror gets clobbered
+    # on every re-init.
+    cfg.setdefault("$schema", "https://opencode.ai/config.json")
     opencode_json.write_text(json.dumps(cfg, indent=2) + "\n")
 
     pkg_json = opencode_dir / "package.json"

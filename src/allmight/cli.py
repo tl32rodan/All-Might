@@ -92,6 +92,7 @@ def _init_callback(path: str, force: bool, **template_options: object) -> None:
         RegistryEntry,
         compose,
         discover,
+        stage_compose_conflicts,
         write_init_scaffold,
         write_registry,
     )
@@ -127,8 +128,13 @@ def _init_callback(path: str, force: bool, **template_options: object) -> None:
         instances.append(instance)
 
     # Compose .opencode/ symlinks from each instance's surface.
+    # Conflicts (user-authored files at our target paths) are NOT
+    # silently overwritten — they're collected and staged so /sync can
+    # walk the user through resolution.
+    all_conflicts = []
     for instance in instances:
-        compose(root, instance, force=force)
+        all_conflicts.extend(compose(root, instance, force=force))
+    stage_compose_conflicts(root, all_conflicts)
 
     # Persist the registry so allmight list/status can find them again.
     write_registry(root, [
@@ -144,6 +150,8 @@ def _init_callback(path: str, force: bool, **template_options: object) -> None:
         file_count = sum(1 for _ in tpl_dir.rglob("*") if _.is_file()) if tpl_dir.exists() else 0
         click.echo(f"All-Might! Project '{manifest.name}' — new templates staged.")
         click.echo(f"  Templates:  .allmight/templates/ ({file_count} files)")
+        if all_conflicts:
+            click.echo(f"  Conflicts:  {len(all_conflicts)} (.opencode/ entries you authored)")
         click.echo("")
         click.echo("  Run /sync in your agent to merge with your customizations.")
         click.echo("  Or run 'allmight init --force' to overwrite everything.")
@@ -152,6 +160,18 @@ def _init_callback(path: str, force: bool, **template_options: object) -> None:
         click.echo(f"  Languages:    {', '.join(manifest.languages) or 'none detected'}")
         click.echo(f"  Corpora:      {len(manifest.indices)}")
         click.echo(f"  Personalities: {', '.join(i.name for i in instances)}")
+        if all_conflicts:
+            click.echo("")
+            click.echo(
+                f"  Heads up: {len(all_conflicts)} .opencode/ entries already exist "
+                "and were not touched."
+            )
+            for c in all_conflicts:
+                click.echo(f"    - {c.dst.relative_to(root)} ({c.existing})")
+            click.echo(
+                "  Manifest staged at .allmight/templates/conflicts.yaml — "
+                "run /sync to resolve."
+            )
         click.echo("")
         click.echo("What's next:")
         click.echo("  1. Open this folder in Claude Code or OpenCode")
