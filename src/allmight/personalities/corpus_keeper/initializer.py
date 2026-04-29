@@ -90,6 +90,7 @@ class ProjectInitializer:
             # First init (or --force): write everything directly
             self._generate_commands(root, manifest, writable=writable, force=force)
             self._write_role_md(root, manifest, writable=writable, force=force)
+            self._install_onboard_skill(root, force=force)
 
             # Create .allmight/ marker (clean up any stale templates)
             allmight_dir.mkdir(exist_ok=True)
@@ -209,6 +210,35 @@ class ProjectInitializer:
         )
         commands_dir.mkdir(parents=True, exist_ok=True)
         write_guarded(commands_dir / "sync.md", SYNC_COMMAND_BODY, ALLMIGHT_MARKER_MD)
+
+    def _install_onboard_skill(self, root: Path, *, force: bool = False) -> None:
+        """Install /onboard skill + command on every fresh init.
+
+        Unlike /sync (only useful on re-init), /onboard is the
+        agent-side stage 2 of bootstrap and must exist immediately
+        after the first ``allmight init`` so the user has somewhere to
+        run it.
+        """
+        from .onboard_skill_content import ONBOARD_SKILL_BODY, ONBOARD_COMMAND_BODY
+
+        skill_dir, commands_dir = self._agent_surface_dirs(root)
+        self._write_skill(
+            skill_dir / "onboard" / "SKILL.md",
+            name="onboard",
+            description=(
+                "Finish All-Might setup: capture user intent in each "
+                "personality's ROLE.md and classify the folders listed "
+                "during init."
+            ),
+            body=ONBOARD_SKILL_BODY,
+        )
+        commands_dir.mkdir(parents=True, exist_ok=True)
+        write_guarded(
+            commands_dir / "onboard.md",
+            ONBOARD_COMMAND_BODY,
+            ALLMIGHT_MARKER_MD,
+            force=force,
+        )
 
     def _agent_surface_dirs(self, root: Path) -> tuple[Path, Path]:
         """Return (skills_dir, commands_dir) for the instance.
