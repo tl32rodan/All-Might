@@ -58,6 +58,10 @@ def _build_init_command() -> click.Command:
         ["--force"], is_flag=True,
         help="Overwrite all files (ignore user customizations).",
     ))
+    cmd.params.append(click.Option(
+        ["--yes", "-y"], is_flag=True,
+        help="Skip interactive prompts; accept template defaults.",
+    ))
     seen: set[str] = set()
     for template in discover():
         for opt in template.cli_options:
@@ -77,12 +81,23 @@ def _build_init_command() -> click.Command:
     return cmd
 
 
-def _init_callback(path: str, force: bool, **template_options: object) -> None:
+def _init_callback(
+    path: str,
+    force: bool,
+    yes: bool = False,
+    **template_options: object,
+) -> None:
     """Run the registry-driven init flow.
 
     ``template_options`` is the raw dict of every CliOption value. Each
     template's ``install`` reads what it cares about; the CLI never
     interprets the contents.
+
+    When ``yes`` is False (default) and stdin is a TTY, the CLI prompts
+    for the instance name of each personality and an optional list of
+    project folders to register. The captured answers land in
+    ``.allmight/onboard.yaml`` so the agent's ``/onboard`` skill can
+    finish the qualitative setup later.
     """
     from pathlib import Path as P
 
@@ -93,6 +108,7 @@ def _init_callback(path: str, force: bool, **template_options: object) -> None:
         compose,
         compose_agents_md,
         discover,
+        slugify_instance_name,
         stage_compose_conflicts,
         write_init_scaffold,
         write_registry,
@@ -106,8 +122,18 @@ def _init_callback(path: str, force: bool, **template_options: object) -> None:
     allmight_dir = root / ".allmight"
     is_reinit = allmight_dir.is_dir() and not force
 
-    write_init_scaffold(root)
     templates = discover()
+
+    # Decide instance names + folders. If onboard.yaml exists, reuse
+    # what was captured before so re-init never asks the user the same
+    # questions. Otherwise prompt (or use defaults under --yes).
+    onboard_path = allmight_dir / "onboard.yaml"
+    captured = _read_onboard_yaml(onboard_path)
+    if captured is None:
+        captured = _collect_onboard_answers(templates, manifest, interactive=not yes)
+    instance_names = {row["template"]: row["instance"] for row in captured["personalities"]}
+
+    write_init_scaffold(root)
 
     ctx = InstallContext(
         project_root=root,
@@ -118,16 +144,14 @@ def _init_callback(path: str, force: bool, **template_options: object) -> None:
     instances: list[Personality] = []
     notes: list[str] = []
     for template in templates:
-        # Default instance name comes from the template (e.g.
-        # "knowledge" for corpus_keeper, "memory" for memory_keeper).
-        # Older templates that didn't set one fall back to the legacy
-        # "<project>-<short_name>" form so we don't break unknown
-        # third-party kinds.
-        default_name = template.default_instance_name or f"{manifest.name}-{template.short_name}"
+        instance_name = instance_names.get(
+            template.name,
+            template.default_instance_name or f"{manifest.name}-{template.short_name}",
+        )
         instance = Personality(
             template=template,
             project_root=root,
-            name=default_name,
+            name=instance_name,
             options=dict(template_options),
         )
         result = template.install(ctx, instance)
@@ -151,6 +175,14 @@ def _init_callback(path: str, force: bool, **template_options: object) -> None:
         RegistryEntry(template=i.template.name, instance=i.name, version=i.template.version)
         for i in instances
     ])
+
+    # Persist onboarding answers for the agent-side /onboard skill.
+    captured["personalities"] = [
+        {"template": i.template.name, "instance": i.name}
+        for i in instances
+    ]
+    captured.setdefault("onboarded", False)
+    _write_onboard_yaml(onboard_path, captured)
 
     writable = bool(template_options.get("writable"))
     mode_label = "writable" if writable else "read-only"
@@ -185,14 +217,93 @@ def _init_callback(path: str, force: bool, **template_options: object) -> None:
         click.echo("")
         click.echo("What's next:")
         click.echo("  1. Open this folder in Claude Code or OpenCode")
+        click.echo("  2. Run /onboard to finish setup (role descriptions, folder classification)")
         if writable:
-            click.echo("  2. Run /ingest to build the search index")
-            click.echo("  3. Run /search \"<query>\" to explore your codebase")
-            click.echo("  4. Run /enrich to annotate symbols as you learn")
+            click.echo("  3. Run /ingest to build the search index")
+            click.echo("  4. Run /search \"<query>\" to explore your codebase")
+            click.echo("  5. Run /enrich to annotate symbols as you learn")
         else:
-            click.echo("  2. Run /search \"<query>\" to explore the codebase")
+            click.echo("  3. Run /search \"<query>\" to explore the codebase")
         click.echo("")
         click.echo("All-Might skills auto-load — just start asking questions.")
+
+
+def _collect_onboard_answers(
+    templates,
+    manifest,
+    *,
+    interactive: bool,
+) -> dict:
+    """Gather instance names + folders.
+
+    Always returns the same dict shape — uses defaults under
+    ``--yes`` / non-TTY, prompts otherwise.
+    """
+    import sys
+
+    from .core.personalities import slugify_instance_name
+
+    is_tty = sys.stdin.isatty() and sys.stdout.isatty()
+    do_prompt = interactive and is_tty
+
+    personalities = []
+    for template in templates:
+        default_name = template.default_instance_name or f"{manifest.name}-{template.short_name}"
+        if do_prompt:
+            raw = click.prompt(
+                f"  Name for the {template.short_name} personality",
+                default=default_name,
+                show_default=True,
+            )
+            slug = slugify_instance_name(raw) or default_name
+            if slug != raw:
+                click.echo(f"    → using slug: {slug}")
+        else:
+            slug = default_name
+        personalities.append({"template": template.name, "instance": slug})
+
+    folders: list[dict] = []
+    if do_prompt:
+        raw_folders = click.prompt(
+            "  Folders to register (comma-separated; empty to skip)",
+            default="",
+            show_default=False,
+        ).strip()
+        if raw_folders:
+            for chunk in raw_folders.split(","):
+                p = chunk.strip()
+                if p:
+                    folders.append({"path": p})
+
+    return {
+        "onboarded": False,
+        "personalities": personalities,
+        "folders": folders,
+    }
+
+
+def _read_onboard_yaml(path) -> dict | None:
+    """Return the captured onboarding state, or ``None`` if absent."""
+    import yaml
+
+    if not path.exists():
+        return None
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except (yaml.YAMLError, OSError):
+        return None
+    data.setdefault("onboarded", False)
+    data.setdefault("personalities", [])
+    data.setdefault("folders", [])
+    return data
+
+
+def _write_onboard_yaml(path, data: dict) -> None:
+    """Persist onboarding state for the agent-side /onboard skill."""
+    import yaml
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(data, sort_keys=False))
 
 
 main.add_command(_build_init_command())
