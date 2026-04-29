@@ -32,48 +32,114 @@ def main():
 # Bootstrapping
 # ------------------------------------------------------------------
 
-@main.command()
-@click.argument("path", default=".", type=click.Path(exists=True))
-@click.option("--sos", is_flag=True, help="Enable SOS/EDA environment support")
-@click.option("--force", is_flag=True, help="Overwrite all files (ignore user customizations)")
-@click.option("--writable", is_flag=True, help="Full access mode: enable ingest, enrich, annotation")
-def init(path: str, sos: bool, force: bool, writable: bool):
-    """Bootstrap a workspace with commands and agent memory.
+def _build_init_command() -> click.Command:
+    """Build the ``init`` Click command with personality-contributed flags.
 
-    Scans the project, creates knowledge_graph/, injects
-    .claude/commands, and initializes the L1/L2/L3 memory system.
+    The only universal option is ``--force``; everything else is
+    declared by a personality template's ``cli_options`` and registered
+    here at startup. This is the *core decoupling* from the old
+    hardcoded ``--sos`` / ``--writable`` knobs — ``cli.py`` does not
+    interpret them, it just forwards them as a raw dict to every
+    ``Personality.options``.
+    """
+    from .core.personalities import discover
 
-    Default mode is read-only (search only). Use --writable for full
-    access (ingest, enrich, annotate).
+    cmd = click.Command("init", callback=_init_callback)
+    cmd.help = (
+        "Bootstrap a workspace with commands and agent memory.\n\n"
+        "Scans the project, installs every discovered personality "
+        "template, and composes their agent surface under .opencode/.\n\n"
+        "On re-run (when .allmight/ exists), templates are staged to "
+        ".allmight/templates/ instead of overwriting. Use --force to "
+        "overwrite."
+    )
+    cmd.params.append(click.Argument(["path"], default=".", type=click.Path(exists=True)))
+    cmd.params.append(click.Option(
+        ["--force"], is_flag=True,
+        help="Overwrite all files (ignore user customizations).",
+    ))
+    seen: set[str] = set()
+    for template in discover():
+        for opt in template.cli_options:
+            if opt.flag in seen:
+                # Two templates contributed the same flag — surfaced
+                # at startup so it can never silently shadow.
+                raise RuntimeError(
+                    f"flag collision on {opt.flag!r} between templates"
+                )
+            seen.add(opt.flag)
+            cmd.params.append(click.Option(
+                [opt.flag],
+                is_flag=opt.is_flag,
+                default=opt.default,
+                help=opt.help,
+            ))
+    return cmd
 
-    On re-run (when .allmight/ exists), templates are staged to
-    .allmight/templates/ instead of overwriting. Use --force to overwrite.
+
+def _init_callback(path: str, force: bool, **template_options: object) -> None:
+    """Run the registry-driven init flow.
+
+    ``template_options`` is the raw dict of every CliOption value. Each
+    template's ``install`` reads what it cares about; the CLI never
+    interprets the contents.
     """
     from pathlib import Path as P
 
-    from .personalities.corpus_keeper.initializer import ProjectInitializer
+    from .core.personalities import (
+        InstallContext,
+        Personality,
+        RegistryEntry,
+        compose,
+        discover,
+        write_init_scaffold,
+        write_registry,
+    )
     from .personalities.corpus_keeper.scanner import ProjectScanner
-    from .personalities.memory_keeper.initializer import MemoryInitializer
 
     root = P(path).resolve()
     scanner = ProjectScanner()
     manifest = scanner.scan(root)
 
-    if sos:
-        manifest.has_path_env = True
-
     allmight_dir = root / ".allmight"
     is_reinit = allmight_dir.is_dir() and not force
 
-    initializer = ProjectInitializer()
-    initializer.initialize(manifest, force=force, writable=writable)
+    write_init_scaffold(root)
+    templates = discover()
 
-    MemoryInitializer().initialize(root, staging=is_reinit)
+    ctx = InstallContext(
+        project_root=root,
+        manifest=manifest,
+        staging=is_reinit,
+        force=force,
+    )
+    instances: list[Personality] = []
+    notes: list[str] = []
+    for template in templates:
+        instance = Personality(
+            template=template,
+            project_root=root,
+            name=f"{manifest.name}-{template.short_name}",
+            options=dict(template_options),
+        )
+        result = template.install(ctx, instance)
+        notes.extend(result.notes)
+        instances.append(instance)
 
+    # Compose .opencode/ symlinks from each instance's surface.
+    for instance in instances:
+        compose(root, instance, force=force)
+
+    # Persist the registry so allmight list/status can find them again.
+    write_registry(root, [
+        RegistryEntry(template=i.template.name, instance=i.name, version=i.template.version)
+        for i in instances
+    ])
+
+    writable = bool(template_options.get("writable"))
     mode_label = "writable" if writable else "read-only"
 
     if is_reinit:
-        # Count staged files
         tpl_dir = root / ".allmight" / "templates"
         file_count = sum(1 for _ in tpl_dir.rglob("*") if _.is_file()) if tpl_dir.exists() else 0
         click.echo(f"All-Might! Project '{manifest.name}' — new templates staged.")
@@ -83,9 +149,9 @@ def init(path: str, sos: bool, force: bool, writable: bool):
         click.echo("  Or run 'allmight init --force' to overwrite everything.")
     else:
         click.echo(f"All-Might! Project '{manifest.name}' initialized ({mode_label}).")
-        click.echo(f"  Languages: {', '.join(manifest.languages) or 'none detected'}")
-        click.echo(f"  Corpora:   {len(manifest.indices)}")
-        click.echo(f"  Memory:    L1 (MEMORY.md) + L2 (understanding/) + L3 (journal/)")
+        click.echo(f"  Languages:    {', '.join(manifest.languages) or 'none detected'}")
+        click.echo(f"  Corpora:      {len(manifest.indices)}")
+        click.echo(f"  Personalities: {', '.join(i.name for i in instances)}")
         click.echo("")
         click.echo("What's next:")
         click.echo("  1. Open this folder in Claude Code or OpenCode")
@@ -97,6 +163,9 @@ def init(path: str, sos: bool, force: bool, writable: bool):
             click.echo("  2. Run /search \"<query>\" to explore the codebase")
         click.echo("")
         click.echo("All-Might skills auto-load — just start asking questions.")
+
+
+main.add_command(_build_init_command())
 
 
 # ------------------------------------------------------------------

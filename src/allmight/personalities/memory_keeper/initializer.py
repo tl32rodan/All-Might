@@ -43,6 +43,12 @@ def _reminder_nudge_text() -> str:
 class MemoryInitializer:
     """Creates the agent memory system."""
 
+    def __init__(self) -> None:
+        # Defaults so legacy callers (anything bypassing initialize)
+        # still resolve to the old root-level layout.
+        self._instance_root: Path | None = None
+        self._instance_rel: str = ""
+
     def initialize(
         self,
         root: Path,
@@ -52,47 +58,47 @@ class MemoryInitializer:
         """Bootstrap the memory subsystem at *root*.
 
         Args:
-            root: Project root path.
+            root: Project root path. Always holds ``MEMORY.md`` and
+                ``AGENTS.md`` regardless of layout.
             staging: If True, stage templates to .allmight/templates/
                      instead of writing to working locations.
-            instance_root: Personality instance directory. When ``None``
-                (transitional default) the memory data dir, commands,
-                and plugins live under ``root`` to match the
-                pre-personalities layout. Once the registry wires
-                composition (commit 5), memory_keeper passes its own
-                ``personalities/<name>/`` here and the per-instance
-                content lives there instead.
+            instance_root: Personality instance directory under
+                ``personalities/<name>/``. The memory data dir,
+                commands, and plugins live here. When ``None`` (legacy
+                callers) writes go under ``root`` to preserve the
+                pre-personalities layout.
         """
-        # Plumbed but unused in this transitional commit; commit 4 swaps
-        # the per-instance writes over to ``instance_root``.
-        del instance_root
+        self._instance_root = instance_root
+        self._instance_rel = self._compute_instance_rel(root, instance_root)
         if staging:
             self._stage_memory_templates(root)
             return
 
         # --- Direct init (first time or force) ---
 
+        memory_dir = self._memory_dir(root)
+
         # 1. Create memory config (defines journal store + SMAK config)
-        cfg_mgr = MemoryConfigManager(root)
+        cfg_mgr = MemoryConfigManager(root, memory_root=memory_dir)
         cfg_mgr.initialize()
 
         # 2. Create L1: MEMORY.md at project root
         self._create_memory_md(root)
 
         # 3. Create L2: understanding/ directory
-        (root / "memory" / "understanding").mkdir(parents=True, exist_ok=True)
+        (memory_dir / "understanding").mkdir(parents=True, exist_ok=True)
 
         # 4. Create L3: journal/ directory + store/
-        (root / "memory" / "journal").mkdir(parents=True, exist_ok=True)
-        (root / "memory" / "store").mkdir(parents=True, exist_ok=True)
+        (memory_dir / "journal").mkdir(parents=True, exist_ok=True)
+        (memory_dir / "store").mkdir(parents=True, exist_ok=True)
 
         # 4b. Create usage.log for feedback loop
-        usage_log = root / "memory" / "usage.log"
+        usage_log = memory_dir / "usage.log"
         if not usage_log.exists():
             usage_log.write_text("")
 
         # 4c. Skills log — trace of self-authored skills/plugins
-        skills_log = root / "memory" / "skills-log.md"
+        skills_log = memory_dir / "skills-log.md"
         if not skills_log.exists():
             skills_log.write_text(self._skills_log_template())
 
@@ -104,6 +110,42 @@ class MemoryInitializer:
 
         # 8. Generate opencode.json with hooks for OpenCode
         self._generate_opencode_json(root)
+
+    # ------------------------------------------------------------------
+    # Instance-root helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_instance_rel(root: Path, instance_root: Path | None) -> str:
+        """Return the instance dir as a forward-slash relative segment.
+
+        Empty string when there's no instance dir (legacy layout) so
+        path-string substitutions collapse cleanly to bare ``memory/``.
+        """
+        if instance_root is None or instance_root == root:
+            return ""
+        return instance_root.relative_to(root).as_posix() + "/"
+
+    def _memory_dir(self, root: Path) -> Path:
+        """The on-disk directory holding journal/store/understanding."""
+        if self._instance_root is None or self._instance_root == root:
+            return root / "memory"
+        return self._instance_root / "memory"
+
+    def _agent_surface_dirs(self, root: Path) -> tuple[Path, Path]:
+        """Return (commands_dir, plugins_dir) for the instance.
+
+        Falls back to the legacy ``.opencode/`` paths when there is no
+        instance root, so direct callers (clone, merge) keep working.
+        """
+        if self._instance_root is None or self._instance_root == root:
+            return root / ".opencode" / "commands", root / ".opencode" / "plugins"
+        return self._instance_root / "commands", self._instance_root / "plugins"
+
+    @property
+    def _mem_root_rel(self) -> str:
+        """Path to the memory dir relative to project root, ``memory`` style."""
+        return self._instance_rel + "memory"
 
     # ------------------------------------------------------------------
     # Staging (re-init)
@@ -682,7 +724,7 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
 
     def _generate_memory_commands(self, root: Path) -> None:
         """Generate /remember, /recall, and /reflect commands."""
-        commands_dir = root / ".opencode" / "commands"
+        commands_dir, _ = self._agent_surface_dirs(root)
         commands_dir.mkdir(parents=True, exist_ok=True)
         self._write_memory_command_content(commands_dir)
 
@@ -1176,7 +1218,11 @@ Append to `memory/usage.log`:
             pkg_path.write_text(self._opencode_package_json_content())
 
     def _generate_opencode_plugins(self, root: Path) -> None:
-        """Generate all OpenCode plugins under .opencode/plugins/.
+        """Generate all OpenCode plugins inside the instance plugins/ dir.
+
+        Composition (registry-driven) symlinks each plugin under root
+        ``.opencode/plugins/``; the legacy direct path is used when no
+        instance_root is supplied.
 
         Writes five plugin files:
         - memory-load.ts   — primes MEMORY.md + scope-first principle per session
@@ -1185,7 +1231,7 @@ Append to `memory/usage.log`:
         - trajectory-writer.ts — F5: captures structured session trajectory
         - usage-logger.ts  — real-time appends to memory/usage.log
         """
-        plugins_dir = root / ".opencode" / "plugins"
+        _, plugins_dir = self._agent_surface_dirs(root)
         plugins_dir.mkdir(parents=True, exist_ok=True)
 
         for filename, content in self._opencode_plugin_map().items():
