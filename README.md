@@ -43,7 +43,16 @@ cd /path/to/your/project
 allmight init .                # search + annotation + agent memory
 ```
 
-Then open the folder in **Claude Code** or **OpenCode**.
+`allmight init` is interactive: it asks for a name for each
+personality (default: `knowledge` for the corpus keeper, `memory` for
+the memory keeper) and an optional list of folders to register. Pass
+`--yes` (or `-y`) to skip the prompts and accept all defaults.
+
+Then open the folder in **Claude Code** or **OpenCode** and run
+`/onboard` once — the agent asks two short questions ("what knowledge
+do you want to manage?" / "what kind of assistant do you want to
+build?"), classifies each folder you listed, and customises the role
+descriptions for each personality.
 
 ## Project layout after `allmight init`
 
@@ -110,12 +119,12 @@ natural language — it knows what to do).
 
 | Command | Plain English |
 |---------|--------------|
+| `/onboard` | "Finish setup — capture role + classify folders" (run once after init) |
 | `/search` | "Search for ..." |
 | `/enrich` | "Annotate this symbol" |
 | `/ingest` | "Build the search index" |
-| `/remember` | "Remember that ..." |
+| `/remember` | "Remember that ..." (records *or* reviews — the agent picks based on trigger) |
 | `/recall` | "What do you know about ...?" |
-| `/reflect` | "Review and tidy up what you've learned" |
 
 ## Glossary
 
@@ -159,20 +168,41 @@ update only touches skills, commands, and hooks.
 
 ## Combining Projects
 
-Merge knowledge from another All-Might project into yours:
+Merge a personality instance from another All-Might project into yours:
 
 ```bash
-allmight merge /path/to/other-project
+# Combine the source's "knowledge" instance into this project's "knowledge".
+allmight merge --from /path/to/other-project --instance knowledge
+
+# Install the source instance side-by-side under a new name.
+allmight merge --from /path/to/other-project --instance knowledge --as alt_corpus
 ```
 
-New workspaces are copied directly. If both projects have a workspace
-with the same name, it's saved as `<name>.incoming/` for the agent to
-resolve via `/sync`.
+The default mode (no `--as`) folds the source instance's content into
+your same-named instance. Conflicting files land beside the originals
+with a `.incoming` suffix; tell the agent "run /sync" to resolve.
 
-Options:
-- `--workspace pll` — only merge specific workspaces
-- `--no-memory` — skip merging memory files
-- `--dry-run` — preview what would happen
+`--as <new-name>` installs the source instance as a brand-new
+side-by-side instance (handy for keeping two unrelated knowledge
+graphs in one project).
+
+`--dry-run` previews what would change without touching disk.
+
+## Migrating from older All-Might
+
+Projects bootstrapped before personalities were introduced have a
+different layout. Run the one-shot migrator to upgrade in place:
+
+```bash
+allmight migrate .            # see what would change
+allmight migrate . --dry-run  # also previews; --dry-run is explicit
+```
+
+The migrator renames legacy `<project>-corpus/` and `<project>-memory/`
+instance dirs to the new defaults, splits the old root `AGENTS.md`
+into per-personality `ROLE.md` files, drops the old `/reflect` command
+(folded into `/remember`), and refreshes `.opencode/` symlinks. It's
+idempotent — running on an already-migrated project is a no-op.
 
 ## Compatibility
 

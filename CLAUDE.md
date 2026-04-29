@@ -36,15 +36,17 @@ When the task requires designing before coding:
 All-Might/                          ← This repo (the framework)
 ├── src/allmight/                    ← Framework source code
 │   ├── personalities/               ← Built-in personality templates
-│   │   ├── corpus_keeper/          ← Scanner + KG initializer + /search /enrich /ingest /sync
-│   │   └── memory_keeper/          ← Agent memory L1/L2/L3 + /remember /recall /reflect
+│   │   ├── corpus_keeper/          ← Scanner + KG initializer + /search /enrich /ingest /sync /onboard
+│   │   └── memory_keeper/          ← Agent memory L1/L2/L3 + /remember (Record + Reflect) + /recall
 │   ├── bridge/                     ← SMAK CLI subprocess wrapper (internal)
 │   ├── config/                     ← config.yaml manager
 │   ├── core/                       ← Domain models + personalities framework
 │   ├── enrichment/                 ← Enrichment policy (advisory)
+│   ├── merge/                      ← Instance-level merge (allmight merge --from --instance)
+│   ├── migrate/                    ← One-shot upgrader for pre-Part-C projects
 │   ├── one_for_all/                ← Skill template generator
 │   ├── hub/                        ← Multi-workspace hub templates
-│   └── cli.py                      ← CLI entry point (init only)
+│   └── cli.py                      ← CLI entry: init, merge, migrate, memory init/export
 ├── tests/                          ← Test suite
 └── docs/
 ```
@@ -53,12 +55,15 @@ All-Might/                          ← This repo (the framework)
 
 | File | What it generates |
 |------|-------------------|
-| `core/personalities.py` | Personality framework: Template, Personality, registry, compose |
-| `personalities/corpus_keeper/__init__.py` | TEMPLATE (cli_options for --sos, --writable) |
-| `personalities/corpus_keeper/initializer.py` | AGENTS.md, knowledge_graph/, instance commands/skills |
-| `personalities/memory_keeper/__init__.py` | TEMPLATE (no cli_options) |
-| `personalities/memory_keeper/initializer.py` | MEMORY.md (L1), understanding/ (L2), journal/ (L3), /remember /recall |
+| `core/personalities.py` | Personality framework: Template, Personality, registry, `compose`, `compose_agents_md`, `slugify_instance_name`, `role-load.ts` scaffold |
+| `personalities/corpus_keeper/__init__.py` | TEMPLATE (cli_options for --sos/--writable; default_instance_name = `knowledge`) |
+| `personalities/corpus_keeper/initializer.py` | knowledge_graph/, instance commands/skills, `ROLE.md`, `/onboard` skill |
+| `personalities/corpus_keeper/onboard_skill_content.py` | The `/onboard` skill body + command body |
+| `personalities/memory_keeper/__init__.py` | TEMPLATE (no cli_options; default_instance_name = `memory`) |
+| `personalities/memory_keeper/initializer.py` | MEMORY.md (L1), understanding/ (L2), journal/ (L3), `/remember` (Record + Reflect modes), `/recall` |
 | `personalities/corpus_keeper/scanner.py` | Detects languages, frameworks, proposes indices |
+| `merge/merger.py` | `InstanceMerger` — instance-level `allmight merge --from --instance --as` |
+| `migrate/migrator.py` | One-shot upgrader for pre-Part-C projects |
 | `one_for_all/templates/skill-base.md.j2` | The one-for-all SKILL.md |
 
 ## Personality Platform Conventions
@@ -73,8 +78,9 @@ rejected before and will be rejected again.
 - **Two-tier model.** Every capability is a `PersonalityTemplate`
   (the *kind* — registered as a module-level `TEMPLATE` constant
   inside `src/allmight/personalities/<name>/__init__.py`) plus
-  zero-or-more `Personality` instances (one per project, default
-  name `f"{manifest.name}-{template.short_name}"`). The framework
+  zero-or-more `Personality` instances (default instance name comes
+  from `template.default_instance_name`, e.g. `knowledge` for
+  corpus_keeper, `memory` for memory_keeper). The framework
   instantiates the instance; the template never instantiates itself.
 - **No Composer pattern.** Templates do not mix runtime state
   across personalities, do not share helpers via mutable globals,
@@ -88,6 +94,30 @@ rejected before and will be rejected again.
   relative symlinks at `.opencode/<kind>/<basename>`. Once written,
   OpenCode resolves them on file open — no in-process registry
   mediates command dispatch at runtime.
+- **One root `AGENTS.md`, composed from per-personality `ROLE.md`.**
+  Each template writes `personalities/<n>/ROLE.md`; the registry
+  calls `compose_agents_md` to stitch them into the single root
+  `AGENTS.md` with a one-line "edit ROLE.md, not this file" header.
+  A scaffold-owned `role-load.ts` plugin re-injects each ROLE.md at
+  every `chat.message` for an un-primed session — same pattern as
+  `memory-load.ts` keeping `MEMORY.md` warm after compaction.
+- **Two-stage bootstrap.** `allmight init` is a CLI prompt-driven
+  scaffold that captures names + folders into
+  `.allmight/onboard.yaml`. The agent-side `/onboard` skill (owned
+  by corpus_keeper) does the qualitative half: rewrites each
+  ROLE.md from the user's answers, classifies folders into
+  `MEMORY.md`'s project map, re-runs `compose_agents_md`. Don't
+  duplicate `/onboard`'s prose into init prompts — keep the CLI
+  short.
+- **`/reflect` is folded into `/remember`.** The `/remember.md` body
+  has two top-level sections (`# Record` and `# Reflect`); the
+  agent picks based on trigger context. Do not re-introduce a
+  separate `/reflect` command.
+- **Merge is per-instance.** `allmight merge --from <path>
+  --instance <name> [--as <new-name>]`. The legacy project-level
+  merge surface is removed. Combining = staged `.incoming` files
+  resolved by `/sync`; `--as` = side-by-side install with a new
+  registry row.
 
 ## Architecture Layers
 
