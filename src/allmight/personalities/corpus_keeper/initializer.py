@@ -18,6 +18,14 @@ from ...core.safe_write import write_guarded
 class ProjectInitializer:
     """Creates the All-Might workspace and Claude Code integration files."""
 
+    def __init__(self) -> None:
+        # Defaults so legacy direct calls (e.g. merge's
+        # ``_install_sync_skill``) work without going through
+        # ``initialize()``. ``initialize()`` overwrites them when
+        # called.
+        self._instance_root: Path | None = None
+        self._instance_rel: str = ""
+
     def initialize(
         self,
         manifest: ProjectManifest,
@@ -32,19 +40,17 @@ class ProjectInitializer:
             force: If True, overwrite everything even on re-init.
             writable: If True, generate ingest/enrich commands (full access).
                       Default is read-only (search only).
-            instance_root: Personality instance directory. When ``None``
-                (transitional default) all per-instance content is
-                written under ``manifest.root_path``, matching the
-                pre-personalities layout. Once the registry wires
-                composition (commit 5), the corpus_keeper template
-                passes its own ``personalities/<name>/`` here and the
-                content lives there instead.
+            instance_root: Personality instance directory under
+                ``personalities/<name>/``. The per-instance content
+                (knowledge_graph/, skills/, commands/) lives here.
+                If ``None``, defaults to ``manifest.root_path`` for
+                callers (clone, merge) that haven't migrated yet.
         """
         root = manifest.root_path
-        # ``instance_root`` is plumbed but unused in this transitional
-        # commit; commit 4 swaps the per-instance writes (knowledge_graph,
-        # skills, commands) over to it.
-        del instance_root
+        if instance_root is None:
+            instance_root = root
+        self._instance_root = instance_root
+        self._instance_rel = self._compute_instance_rel(root, instance_root)
         allmight_dir = root / ".allmight"
         is_reinit = allmight_dir.is_dir() and not force
 
@@ -97,14 +103,27 @@ class ProjectInitializer:
                 "writable" if writable else "read-only"
             )
 
+    @staticmethod
+    def _compute_instance_rel(root: Path, instance_root: Path) -> str:
+        """Return the instance dir as a forward-slash relative path.
+
+        Used to splice ``personalities/<instance>/knowledge_graph`` into
+        agent-facing strings (commands, AGENTS.md). When ``instance_root
+        == root`` (legacy callers) returns ``""`` so paths collapse back
+        to bare ``knowledge_graph/``.
+        """
+        if instance_root == root:
+            return ""
+        rel = instance_root.relative_to(root)
+        return rel.as_posix() + "/"
+
     def _create_metadata(self, root: Path, manifest: ProjectManifest) -> None:
-        """Create knowledge_graph/ at the project root.
+        """Create knowledge_graph/ inside the instance dir.
 
         Note: config.yaml is NOT created here — it belongs to SMAK workspaces
-        under knowledge_graph/*/config.yaml, not the All-Might project root.
+        under <kg_root>/<workspace>/config.yaml, not the All-Might project root.
         """
-        # knowledge_graph/ — workspace container (SMAK workspaces live here)
-        (root / "knowledge_graph").mkdir(exist_ok=True)
+        (self._instance_root / "knowledge_graph").mkdir(parents=True, exist_ok=True)
 
     def _stage_templates(
         self,
@@ -155,11 +174,18 @@ class ProjectInitializer:
             )
 
     def _install_sync_skill(self, root: Path) -> None:
-        """Install /sync skill and command directly (not staged)."""
+        """Install /sync skill and command directly (not staged).
+
+        Writes inside the instance dir (``skills/`` and ``commands/``);
+        composition then symlinks them under root ``.opencode/``. When
+        the legacy fallback is active (``instance_root == root``), the
+        old ``.opencode/`` paths are used directly.
+        """
         from .sync_skill_content import SYNC_SKILL_BODY, SYNC_COMMAND_BODY
 
+        skill_dir, commands_dir = self._agent_surface_dirs(root)
         self._write_skill(
-            root / ".opencode" / "skills" / "sync" / "SKILL.md",
+            skill_dir / "sync" / "SKILL.md",
             name="sync",
             description=(
                 "Reconcile staged All-Might templates or merge conflicts. "
@@ -167,9 +193,19 @@ class ProjectInitializer:
             ),
             body=SYNC_SKILL_BODY,
         )
-        commands_dir = root / ".opencode" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
         write_guarded(commands_dir / "sync.md", SYNC_COMMAND_BODY, ALLMIGHT_MARKER_MD)
+
+    def _agent_surface_dirs(self, root: Path) -> tuple[Path, Path]:
+        """Return (skills_dir, commands_dir) for the instance.
+
+        Inside the instance dir for the new layout; falls back to the
+        legacy ``.opencode/`` locations when ``instance_root`` is unset
+        (legacy callers like ``merge``) or equal to ``root``.
+        """
+        if self._instance_root is None or self._instance_root == root:
+            return root / ".opencode" / "skills", root / ".opencode" / "commands"
+        return self._instance_root / "skills", self._instance_root / "commands"
 
     def _claude_md_section(
         self, manifest: ProjectManifest, writable: bool = False,
@@ -185,6 +221,7 @@ class ProjectInitializer:
         self, marker: str, manifest: ProjectManifest,
     ) -> str:
         """AGENTS.md section for read-only mode — search only."""
+        kg_root = self._instance_rel + "knowledge_graph"
         sos_prereq = ""
         if manifest.has_path_env:
             sos_prereq = """
@@ -212,7 +249,7 @@ modify corpora (no ingesting, no enriching, no sidecar edits).
 ### Concepts
 
 - **Corpus** (= **workspace**) — one independently-indexed source domain.
-  Each corpus maps to `knowledge_graph/<workspace>/` and has its own SMAK
+  Each corpus maps to `{kg_root}/<workspace>/` and has its own SMAK
   vector store. A project may have multiple corpora (e.g. `stdcell`, `pll`).
   Source files are indexed **in-place** — only the index is stored locally.
   The corpus name and workspace name are the same string throughout All-Might.
@@ -230,6 +267,7 @@ The `/search` command has a detailed operational guide in `.opencode/commands/`.
         self, marker: str, manifest: ProjectManifest,
     ) -> str:
         """AGENTS.md section for writable mode — full access."""
+        kg_root = self._instance_rel + "knowledge_graph"
         sos_prereq = ""
         if manifest.has_path_env:
             sos_prereq = """
@@ -256,7 +294,7 @@ code by meaning, annotate what it learns, and remember across sessions.
 ### Concepts
 
 - **Corpus** (= **workspace**) — one independently-indexed source domain.
-  Each corpus maps to `knowledge_graph/<workspace>/` and has its own SMAK
+  Each corpus maps to `{kg_root}/<workspace>/` and has its own SMAK
   vector store. A project may have multiple corpora (e.g. `stdcell`, `pll`).
   Source files are indexed **in-place** — only the index is stored locally.
   The corpus name and workspace name are the same string throughout All-Might.
@@ -276,8 +314,11 @@ guide in `.opencode/commands/`.
 """
 
     def _search_command_body(self) -> str:
-        """Return search.md command content."""
-        return """\
+        """Return search.md command content with instance-aware kg path."""
+        kg_root = self._instance_rel + "knowledge_graph"
+        return self._SEARCH_BODY.replace("{kg_root}", kg_root)
+
+    _SEARCH_BODY = """\
 Search the codebase by semantic meaning.
 
 SMAK searches the vector index — source files are never copied.
@@ -286,17 +327,17 @@ Results point back to files at their original paths.
 ## How to execute
 
 ```bash
-smak search "<query>" --config knowledge_graph/<workspace>/config.yaml --index source_code --top-k 5 --json
+smak search "<query>" --config {kg_root}/<workspace>/config.yaml --index source_code --top-k 5 --json
 ```
 
 To search across all corpora at once:
 ```bash
-smak search-all "<query>" --config knowledge_graph/<workspace>/config.yaml --top-k 3 --json
+smak search-all "<query>" --config {kg_root}/<workspace>/config.yaml --top-k 3 --json
 ```
 
 To look up a specific symbol by UID:
 ```bash
-smak lookup "<file_path>::<symbol_name>" --config knowledge_graph/<workspace>/config.yaml --index source_code --json
+smak lookup "<file_path>::<symbol_name>" --config {kg_root}/<workspace>/config.yaml --index source_code --json
 ```
 
 ## What to expect
@@ -316,8 +357,11 @@ JSON output with a `results` array. Each result contains:
 """
 
     def _ingest_command_body(self) -> str:
-        """Return ingest.md command content."""
-        return """\
+        """Return ingest.md command content with instance-aware kg path."""
+        kg_root = self._instance_rel + "knowledge_graph"
+        return self._INGEST_BODY.replace("{kg_root}", kg_root)
+
+    _INGEST_BODY = """\
 Build the SMAK vector index from source files.
 
 SMAK indexes source files **in-place** at their original paths.
@@ -337,12 +381,12 @@ from the search index.
 
 Rebuild all corpora in a workspace:
 ```bash
-smak ingest --config knowledge_graph/<workspace>/config.yaml --json
+smak ingest --config {kg_root}/<workspace>/config.yaml --json
 ```
 
 Rebuild a specific corpus:
 ```bash
-smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code --json
+smak ingest --config {kg_root}/<workspace>/config.yaml --index source_code --json
 ```
 
 ## What to expect
@@ -354,8 +398,8 @@ smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code
 ## Troubleshooting
 
 - If `smak` is not found, ensure SMAK is installed and on PATH
-- Check `smak health --config knowledge_graph/<workspace>/config.yaml --json` for diagnostics
-- List available corpora: `smak describe --config knowledge_graph/<workspace>/config.yaml --json`
+- Check `smak health --config {kg_root}/<workspace>/config.yaml --json` for diagnostics
+- List available corpora: `smak describe --config {kg_root}/<workspace>/config.yaml --json`
 """
 
     def _generate_commands(
@@ -365,8 +409,8 @@ smak ingest --config knowledge_graph/<workspace>/config.yaml --index source_code
         writable: bool = False,
         force: bool = False,
     ) -> None:
-        """Generate .opencode/commands/ — thick operational guides."""
-        commands_dir = root / ".opencode" / "commands"
+        """Generate corpus_keeper command guides inside the instance dir."""
+        _, commands_dir = self._agent_surface_dirs(root)
         commands_dir.mkdir(parents=True, exist_ok=True)
 
         write_guarded(
