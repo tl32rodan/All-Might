@@ -267,13 +267,6 @@ class TestSyncSkillContent:
         content = (sample_project / ".opencode" / "skills" / "sync" / "SKILL.md").read_text()
         assert ".allmight/templates/" in content
 
-    def test_sync_skill_references_merge_report(self, sample_project):
-        _full_init(sample_project)
-        _full_init(sample_project)
-
-        content = (sample_project / ".opencode" / "skills" / "sync" / "SKILL.md").read_text()
-        assert "merge-report" in content
-
     def test_sync_command_references_skill(self, sample_project):
         _full_init(sample_project)
         _full_init(sample_project)

@@ -187,8 +187,8 @@ class ProjectInitializer:
             skill_dir / "sync" / "SKILL.md",
             name="sync",
             description=(
-                "Reconcile staged All-Might templates or merge conflicts. "
-                "Run after allmight init (re-init) or allmight merge."
+                "Reconcile staged All-Might templates with user-customized "
+                "files. Run after allmight init on a re-initialized project."
             ),
             body=SYNC_SKILL_BODY,
         )

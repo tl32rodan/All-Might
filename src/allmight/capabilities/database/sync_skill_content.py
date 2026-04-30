@@ -1,15 +1,16 @@
 """Bundled /sync skill and command content.
 
-Installed when ``allmight init`` detects a re-init or after
-``allmight merge``.  Teaches the agent how to reconcile staged
-templates or incoming workspaces with existing files.
+Installed when ``allmight init`` detects a re-init (existing
+``.allmight/`` dir).  Teaches the agent how to reconcile staged
+templates with existing files, and how to resolve compose conflicts
+where the user authored a file All-Might also wanted to write.
 """
 
 SYNC_SKILL_BODY = """\
 # Sync — Reconcile Staged Changes
 
-> Run this skill after `allmight init` (re-init) or `allmight merge`
-> to merge new templates or incoming workspaces with your current files.
+> Run this skill after `allmight init` (re-init) to merge new
+> templates with your current files.
 
 ## When to use
 
@@ -18,8 +19,6 @@ SYNC_SKILL_BODY = """\
 - After `allmight init` reports `.opencode/` **compose conflicts**
   (manifest at `.allmight/templates/conflicts.yaml`) — you authored a
   file All-Might also wanted to write
-- After `allmight merge <source>` when conflicts exist
-  (merge report at `.allmight/merge-report.yaml`)
 
 ## How it works
 
@@ -113,20 +112,6 @@ link to your own command file. Treat it the same as `existing: file`.
 target. Inspect its contents before deleting; only the user can
 decide whether the directory is still wanted.
 
-### Merge conflict resolution (after `allmight merge`)
-
-1. Read `.allmight/merge-report.yaml` for the merge summary
-2. For each conflicting workspace (`database/<name>.incoming/`):
-   - Compare configs: `<name>/config.yaml` vs `<name>.incoming/config.yaml`
-   - Ask the user which indices to keep, merge, or discard
-   - Apply the decision and remove the `.incoming` directory
-3. For each conflicting memory file (`memory/understanding/<name>.incoming.md`):
-   - Compare with existing `<name>.md`
-   - Merge knowledge or ask the user to choose
-   - Remove the `.incoming.md` file
-4. If the report mentions path warnings, review and fix paths in config.yaml
-5. After all conflicts resolved, delete `.allmight/merge-report.yaml`
-
 ## File mapping reference
 
 | Staged location | Working location |
@@ -143,22 +128,20 @@ decide whether the directory is still wanted.
 
 - **MEMORY.md** is never staged or overwritten — it is agent-writable
 - After syncing, run `/ingest` if workspace configs changed
-- This skill handles both init-update and merge conflicts — same workflow
 - Any legacy `.claude/` directory can be deleted manually once sync is complete
 """
 
 SYNC_COMMAND_BODY = """\
-Merge staged All-Might templates or resolve merge conflicts.
+Merge staged All-Might templates with your customized files.
 
-Run after `allmight init` (re-init) or `allmight merge` to reconcile
-new templates with your customized files.
+Run after `allmight init` on an already-initialized project to
+reconcile new templates.
 
 ## What happens
 
 1. Reads `.allmight/templates/` for staged template updates
-2. Reads `.allmight/merge-report.yaml` for merge conflicts
-3. For each file: compares staged vs. working, merges intelligently
-4. Cleans up staging directory when done
+2. For each file: compares staged vs. working, merges intelligently
+3. Cleans up staging directory when done
 
 ## How to execute
 
@@ -168,7 +151,4 @@ Load the `sync` skill for the full operational guide, then:
 2. For each file, compare with your working copy
 3. Merge user customizations with new template content
 4. Delete `.allmight/templates/` when done
-
-If `.allmight/merge-report.yaml` exists, also resolve workspace and
-memory conflicts listed in the report.
 """
