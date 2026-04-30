@@ -448,7 +448,7 @@ smak ingest --config {kg_root}/<workspace>/config.yaml --index source_code --jso
         writable: bool = False,
         force: bool = False,
     ) -> None:
-        """Generate corpus_keeper command guides inside the instance dir."""
+        """Generate database capability command guides inside the instance dir."""
         _, commands_dir = self._agent_surface_dirs(root)
         commands_dir.mkdir(parents=True, exist_ok=True)
 

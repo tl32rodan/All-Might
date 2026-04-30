@@ -261,7 +261,7 @@ class InstanceMerger:
 
     def _install_sync(self, target: Path) -> None:
         """Install /sync skill so the agent can resolve any conflicts."""
-        from ..capabilities.corpus_keeper.initializer import ProjectInitializer
+        from ..capabilities.database.initializer import ProjectInitializer
 
         ProjectInitializer()._install_sync_skill(target)
 

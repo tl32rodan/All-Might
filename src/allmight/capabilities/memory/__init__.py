@@ -1,4 +1,4 @@
-"""memory_keeper personality template.
+"""memory capability template.
 
 Generates the L1/L2/L3 agent memory system: ``MEMORY.md`` at the
 project root, ``memory/`` inside the instance dir (config + journal +
@@ -7,7 +7,7 @@ commands, the AGENTS.md memory section, and the OpenCode plugins
 (``memory-load``, ``remember-trigger``, ``todo-curator``,
 ``trajectory-writer``, ``usage-logger``).
 
-memory_keeper exposes no CLI flags; ``allmight init`` always installs it.
+The memory capability exposes no CLI flags; ``allmight init`` always installs it.
 
 L1/L2/L3 recap (matches the original system):
 - L1 — ``MEMORY.md`` at project root, always in context via hook.
@@ -30,7 +30,7 @@ from .initializer import MemoryInitializer
 
 
 def _install(ctx: InstallContext, instance: Personality) -> InstallResult:
-    """Bootstrap one memory_keeper instance.
+    """Bootstrap one memory capability instance.
 
     Honours ``ctx.staging``: when re-initialising an existing project
     the templates land in ``.allmight/templates/`` for ``/sync`` to
@@ -41,7 +41,7 @@ def _install(ctx: InstallContext, instance: Personality) -> InstallResult:
         staging=ctx.staging,
         instance_root=instance.root,
     )
-    return InstallResult(notes=[f"memory_keeper: staging={ctx.staging}"])
+    return InstallResult(notes=[f"memory: staging={ctx.staging}"])
 
 
 def _status(root: Path, instance: Personality) -> PersonalityStatus:
@@ -61,7 +61,7 @@ def _status(root: Path, instance: Personality) -> PersonalityStatus:
 
 
 TEMPLATE = PersonalityTemplate(
-    name="memory_keeper",
+    name="memory",
     short_name="memory",
     version="1.0.0",
     default_instance_name="memory",

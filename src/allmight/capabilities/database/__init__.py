@@ -1,4 +1,4 @@
-"""corpus_keeper personality template.
+"""database capability template.
 
 Generates ``knowledge_graph/`` workspaces, the ``/search``,
 ``/enrich``, ``/ingest``, ``/sync`` commands, the AGENTS.md section,
@@ -26,7 +26,7 @@ from .initializer import ProjectInitializer
 
 
 def _install(ctx: InstallContext, instance: Personality) -> InstallResult:
-    """Bootstrap one corpus_keeper instance.
+    """Bootstrap one database capability instance.
 
     Reads ``--sos`` / ``--writable`` from ``instance.options``. The
     SOS toggle flips ``manifest.has_path_env`` so the AGENTS.md
@@ -41,7 +41,7 @@ def _install(ctx: InstallContext, instance: Personality) -> InstallResult:
         writable=writable,
         instance_root=instance.root,
     )
-    return InstallResult(notes=[f"corpus_keeper: writable={writable}"])
+    return InstallResult(notes=[f"database: writable={writable}"])
 
 
 def _status(root: Path, instance: Personality) -> PersonalityStatus:
@@ -60,8 +60,8 @@ def _status(root: Path, instance: Personality) -> PersonalityStatus:
 
 
 TEMPLATE = PersonalityTemplate(
-    name="corpus_keeper",
-    short_name="corpus",
+    name="database",
+    short_name="database",
     version="1.0.0",
     default_instance_name="knowledge",
     description=(

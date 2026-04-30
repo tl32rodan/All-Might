@@ -1,15 +1,15 @@
 """Bundled /onboard skill and command content.
 
-Installed by ``corpus_keeper`` on every init (legacy and registry-driven).
-The skill walks the agent through the second stage of bootstrap that
-``allmight init`` deferred: capturing the user's intent in each
-personality's ``ROLE.md`` and classifying any folders the user
-listed during init.
+Installed by the ``database`` capability on every init (legacy and
+registry-driven). The skill walks the agent through the second stage
+of bootstrap that ``allmight init`` deferred: capturing the user's
+intent in each personality's ``ROLE.md`` and classifying any folders
+the user listed during init.
 
-Why corpus_keeper owns it: ``/onboard`` is a cross-personality skill,
-but it has to live in *one* template. Corpus is the lead personality
-during bootstrap (the user's first question is "what knowledge should
-I manage?") so it's the natural home.
+Why ``database`` owns it: ``/onboard`` is a cross-capability skill,
+but it has to live in *one* template. ``database`` is the lead
+capability during bootstrap (the user's first question is "what
+knowledge should I manage?") so it's the natural home.
 """
 
 ONBOARD_SKILL_BODY = """\
@@ -41,9 +41,9 @@ You'll see something like:
 ```yaml
 onboarded: false
 personalities:
-  - template: corpus_keeper
+  - template: database
     instance: knowledge
-  - template: memory_keeper
+  - template: memory
     instance: memory
 folders:
   - path: src/

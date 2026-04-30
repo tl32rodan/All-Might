@@ -8,8 +8,8 @@ L3: memory/journal/ + store/ (text files + SMAK vector index)
 import pytest
 import yaml
 
-from allmight.capabilities.memory_keeper.config import MemoryConfigManager
-from allmight.capabilities.memory_keeper.initializer import MemoryInitializer
+from allmight.capabilities.memory.config import MemoryConfigManager
+from allmight.capabilities.memory.initializer import MemoryInitializer
 
 
 def _slice_hook(content: str, hook_key: str) -> str:

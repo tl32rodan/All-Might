@@ -1,7 +1,8 @@
 """Personality framework — pluggable capabilities for an All-Might project.
 
-A *personality* is a reusable capability bundle (e.g. corpus_keeper for
-knowledge-graph workspaces, memory_keeper for L1/L2/L3 agent memory).
+A *personality* is a user-defined role that bundles one or more
+capabilities (e.g. ``database`` for knowledge-graph workspaces,
+``memory`` for L1/L2/L3 agent memory).
 Each capability is split in two:
 
 * ``PersonalityTemplate`` — the *kind*. A static description plus the
@@ -90,7 +91,7 @@ class PersonalityStatus:
 
 @dataclass
 class PersonalityTemplate:
-    """The KIND of a personality (e.g. corpus_keeper, memory_keeper).
+    """The KIND of a capability (e.g. ``database``, ``memory``).
 
     Plain dataclass holding metadata plus the two operation callables.
     Built-in templates live as module-level ``TEMPLATE`` constants
@@ -99,7 +100,7 @@ class PersonalityTemplate:
     ``default_instance_name`` is the slug used when ``allmight init``
     runs non-interactively (or the user accepts the default). Should be
     a filesystem-safe slug (slugify_instance_name-friendly) — e.g.
-    ``"knowledge"`` for corpus_keeper, ``"memory"`` for memory_keeper.
+    ``"knowledge"`` for ``database``, ``"memory"`` for ``memory``.
     """
 
     name: str
@@ -160,12 +161,12 @@ def discover(package: str = "allmight.capabilities") -> list[PersonalityTemplate
     """Scan ``package`` for subpackages exposing a ``TEMPLATE`` attribute.
 
     Discovery order is the iteration order of ``pkgutil.iter_modules``,
-    which is alphabetical on POSIX. Order matters because
-    ``corpus_keeper`` writes ``AGENTS.md`` before ``memory_keeper``
-    appends its memory section. The two built-in templates already
-    sort that way (``corpus_keeper`` < ``memory_keeper``); if a third
-    template is added that needs a specific slot, give it a name that
-    sorts correctly or extend this function with explicit ordering.
+    which is alphabetical on POSIX. Order matters because ``database``
+    writes ``AGENTS.md`` before ``memory`` appends its memory section.
+    The two built-in templates already sort that way (``database`` <
+    ``memory``); if a third template is added that needs a specific
+    slot, give it a name that sorts correctly or extend this function
+    with explicit ordering.
 
     Duplicate template ``name`` values raise ``ValueError``.
     """

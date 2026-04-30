@@ -83,9 +83,9 @@ class ProjectCloner:
 
     def _initialize_target(self, source: Path, target: Path) -> None:
         """Run ProjectInitializer + MemoryInitializer on the target (read-only)."""
-        from ..capabilities.corpus_keeper.initializer import ProjectInitializer
-        from ..capabilities.corpus_keeper.scanner import ProjectScanner
-        from ..capabilities.memory_keeper.initializer import MemoryInitializer
+        from ..capabilities.database.initializer import ProjectInitializer
+        from ..capabilities.database.scanner import ProjectScanner
+        from ..capabilities.memory.initializer import MemoryInitializer
 
         # Scan the source to get manifest info, then retarget to clone
         scanner = ProjectScanner()

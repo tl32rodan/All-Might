@@ -2,8 +2,8 @@
 
 import pytest
 
-from allmight.capabilities.corpus_keeper.scanner import ProjectScanner
-from allmight.capabilities.corpus_keeper.initializer import ProjectInitializer
+from allmight.capabilities.database.scanner import ProjectScanner
+from allmight.capabilities.database.initializer import ProjectInitializer
 
 
 @pytest.fixture

@@ -11,8 +11,8 @@ import pytest
 @pytest.fixture
 def project_root(tmp_path):
     """An initialized All-Might project (post-init)."""
-    from allmight.capabilities.corpus_keeper.scanner import ProjectScanner
-    from allmight.capabilities.corpus_keeper.initializer import ProjectInitializer
+    from allmight.capabilities.database.scanner import ProjectScanner
+    from allmight.capabilities.database.initializer import ProjectInitializer
 
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "main.py").write_text("def hello(): pass\n")
