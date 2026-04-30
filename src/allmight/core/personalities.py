@@ -115,17 +115,40 @@ class PersonalityTemplate:
 
 @dataclass
 class Personality:
-    """An INSTANCE of a template attached to one project."""
+    """An INSTANCE of a template attached to one project.
+
+    Part-D extension: a personality bundles one role (``ROLE.md``)
+    plus zero-or-more *capability subdirs* (``database/``, ``memory/``).
+    The legacy ``template`` field still names the **primary** template
+    for Part-C-shaped callers; ``capabilities`` is the Part-D source
+    of truth for "what data dirs does this personality own?".
+
+    For pure single-capability Part-C personalities, ``capabilities``
+    is left empty and ``template.short_name`` is treated as the only
+    one. Part-D personalities populate ``capabilities`` explicitly.
+    """
 
     template: PersonalityTemplate
     project_root: Path
     name: str
     options: dict[str, Any] = field(default_factory=dict)
 
+    # Part-D additions (default-empty so all existing call sites work):
+    capabilities: list[str] = field(default_factory=list)
+    role_summary: str = ""
+
     @property
     def root(self) -> Path:
-        """Directory the instance owns: ``personalities/<name>/``."""
+        """Directory the personality owns: ``personalities/<name>/``."""
         return self.project_root / "personalities" / self.name
+
+    def capability_root(self, capability: str) -> Path:
+        """Where a given capability's data dir lives, e.g. ``…/<name>/database/``.
+
+        Used by capability templates in Part D to address their data
+        without hard-coding paths.
+        """
+        return self.root / capability
 
 
 # ---------------------------------------------------------------------------
@@ -630,13 +653,68 @@ _REGISTRY_FILE = ".allmight/personalities.yaml"
 
 @dataclass
 class RegistryEntry:
-    template: str
-    instance: str
-    version: str
+    """A row in ``.allmight/personalities.yaml``.
+
+    Two on-disk shapes are accepted by the reader:
+
+    * **Part-C** (legacy, single capability per row)::
+
+        - template: corpus_keeper
+          instance: knowledge
+          version: 1.0.0
+
+    * **Part-D** (new, role bundle with capability list)::
+
+        - name: stdcell_owner
+          capabilities: [database, memory]
+          versions: {database: 1.0.0, memory: 1.0.0}
+          role_summary: Standard-cell library characterisation.
+
+    The dataclass exposes both vintages' fields. Part-C callers
+    continue using ``template`` / ``instance`` / ``version``; Part-D
+    callers use ``name`` / ``capabilities`` / ``versions``. The
+    ``__post_init__`` synthesises whichever side wasn't supplied so
+    every consumer sees a complete record regardless of vintage.
+    """
+
+    # Part-C primary fields (kept first for positional-construction
+    # backward compatibility with existing call sites).
+    template: str = ""
+    instance: str = ""
+    version: str = ""
+
+    # Part-D additions.
+    capabilities: list[str] = field(default_factory=list)
+    versions: dict[str, str] = field(default_factory=dict)
+    role_summary: str = ""
+
+    def __post_init__(self) -> None:
+        # Synthesise Part-D fields from Part-C inputs. Lets old call
+        # sites construct rows without knowing about the new shape.
+        if not self.capabilities and self.template:
+            self.capabilities = [self.template]
+        if not self.versions and self.template and self.version:
+            self.versions = {self.template: self.version}
+        # And the reverse: keep Part-C accessors meaningful when only
+        # Part-D fields were provided.
+        if not self.template and self.capabilities:
+            self.template = self.capabilities[0]
+        if not self.instance and self.name:
+            self.instance = self.name
+        if not self.version and self.versions and self.template in self.versions:
+            self.version = self.versions[self.template]
+
+    @property
+    def name(self) -> str:
+        """Personality name (== ``instance`` for Part-C rows)."""
+        return self.instance
 
 
 def read_registry(project_root: Path) -> list[RegistryEntry]:
-    """Read installed-personality records from ``.allmight/personalities.yaml``."""
+    """Read installed-personality records from ``.allmight/personalities.yaml``.
+
+    Accepts both Part-C and Part-D row shapes — see :class:`RegistryEntry`.
+    """
     import yaml
 
     path = project_root / _REGISTRY_FILE
@@ -646,33 +724,55 @@ def read_registry(project_root: Path) -> list[RegistryEntry]:
     rows = data.get("personalities", []) or []
     out: list[RegistryEntry] = []
     for row in rows:
-        out.append(
-            RegistryEntry(
+        if "name" in row and "capabilities" in row:
+            # Part-D row.
+            out.append(RegistryEntry(
+                instance=row["name"],
+                capabilities=list(row.get("capabilities") or []),
+                versions=dict(row.get("versions") or {}),
+                role_summary=row.get("role_summary", ""),
+            ))
+        else:
+            # Part-C row (or hand-edited mix). Required keys: template,
+            # instance. Optional: version.
+            out.append(RegistryEntry(
                 template=row["template"],
                 instance=row["instance"],
                 version=row.get("version", ""),
-            )
-        )
+            ))
     return out
 
 
 def write_registry(project_root: Path, entries: list[RegistryEntry]) -> None:
-    """Persist the registry, replacing any prior content."""
+    """Persist the registry in the Part-D shape, replacing prior content.
+
+    Each entry is written as a Part-D row (``name`` + ``capabilities``
+    + ``versions``); Part-C-shaped entries get up-converted via the
+    synthesis in :class:`RegistryEntry.__post_init__`. The on-disk
+    file is therefore always Part-D after a write.
+    """
     import yaml
 
     path = project_root / _REGISTRY_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "personalities": [
-            {
-                "template": e.template,
-                "instance": e.instance,
-                "version": e.version,
-            }
-            for e in entries
+            _entry_to_row(e) for e in entries
         ],
     }
     path.write_text(yaml.safe_dump(payload, sort_keys=False))
+
+
+def _entry_to_row(entry: RegistryEntry) -> dict[str, Any]:
+    """Render a registry entry as a Part-D YAML row."""
+    row: dict[str, Any] = {
+        "name": entry.instance,
+        "capabilities": list(entry.capabilities),
+        "versions": dict(entry.versions),
+    }
+    if entry.role_summary:
+        row["role_summary"] = entry.role_summary
+    return row
 
 
 # ---------------------------------------------------------------------------

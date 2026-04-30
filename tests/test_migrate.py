@@ -131,8 +131,10 @@ class TestApply:
         rows = yaml.safe_load(
             (root / ".allmight" / "personalities.yaml").read_text()
         )["personalities"]
-        instances = {row["instance"] for row in rows}
-        assert instances == {"knowledge", "memory"}
+        # Part-D rows use `name` instead of `instance`; reader still
+        # accepts the legacy shape (test_personalities_shim covers that).
+        names = {row["name"] for row in rows}
+        assert names == {"knowledge", "memory"}
 
     def test_recomposes_root_agents_md(self, tmp_path: Path) -> None:
         root = tmp_path / "demo"

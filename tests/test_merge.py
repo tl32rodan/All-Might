@@ -77,8 +77,10 @@ class TestSideBySide:
         rows = yaml.safe_load(
             (dst / ".allmight" / "personalities.yaml").read_text()
         )["personalities"]
-        instances = {row["instance"] for row in rows}
-        assert "alt" in instances
+        # Writer emits Part-D rows (`name` + `capabilities`); the
+        # legacy `instance` key is gone.
+        names = {row["name"] for row in rows}
+        assert "alt" in names
 
     def test_collision_with_existing_name_raises(
         self, two_projects: tuple[Path, Path],
