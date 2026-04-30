@@ -12,9 +12,9 @@ import stat
 
 import pytest
 
-from allmight.detroit_smak.scanner import ProjectScanner
-from allmight.detroit_smak.initializer import ProjectInitializer
-from allmight.memory.initializer import MemoryInitializer
+from allmight.capabilities.corpus_keeper.scanner import ProjectScanner
+from allmight.capabilities.corpus_keeper.initializer import ProjectInitializer
+from allmight.capabilities.memory_keeper.initializer import MemoryInitializer
 
 
 @pytest.fixture
@@ -84,7 +84,7 @@ class TestFirstInit:
         commands = sample_project / ".opencode" / "commands"
         assert (commands / "remember.md").exists()
         assert (commands / "recall.md").exists()
-        assert (commands / "reflect.md").exists()
+        assert not (commands / "reflect.md").exists(), "/reflect folded into /remember"
 
     def test_first_init_no_sync_command(self, sample_project):
         """First init does NOT create /sync — it's only needed on re-init."""
@@ -292,7 +292,7 @@ class TestSyncSkillContent:
 
     def test_sync_skill_references_opencode_paths(self, sample_project):
         """Sync skill only references .opencode paths, not .claude paths."""
-        from allmight.detroit_smak.sync_skill_content import SYNC_SKILL_BODY
+        from allmight.capabilities.corpus_keeper.sync_skill_content import SYNC_SKILL_BODY
         assert ".opencode/commands" in SYNC_SKILL_BODY
         assert ".claude/commands" not in SYNC_SKILL_BODY
         assert ".claude/hooks" not in SYNC_SKILL_BODY

@@ -32,71 +32,281 @@ def main():
 # Bootstrapping
 # ------------------------------------------------------------------
 
-@main.command()
-@click.argument("path", default=".", type=click.Path(exists=True))
-@click.option("--sos", is_flag=True, help="Enable SOS/EDA environment support")
-@click.option("--force", is_flag=True, help="Overwrite all files (ignore user customizations)")
-@click.option("--writable", is_flag=True, help="Full access mode: enable ingest, enrich, annotation")
-def init(path: str, sos: bool, force: bool, writable: bool):
-    """Bootstrap a workspace with commands and agent memory.
+def _build_init_command() -> click.Command:
+    """Build the ``init`` Click command with personality-contributed flags.
 
-    Scans the project, creates knowledge_graph/, injects
-    .claude/commands, and initializes the L1/L2/L3 memory system.
+    The only universal option is ``--force``; everything else is
+    declared by a personality template's ``cli_options`` and registered
+    here at startup. This is the *core decoupling* from the old
+    hardcoded ``--sos`` / ``--writable`` knobs — ``cli.py`` does not
+    interpret them, it just forwards them as a raw dict to every
+    ``Personality.options``.
+    """
+    from .core.personalities import discover
 
-    Default mode is read-only (search only). Use --writable for full
-    access (ingest, enrich, annotate).
+    cmd = click.Command("init", callback=_init_callback)
+    cmd.help = (
+        "Bootstrap a workspace with commands and agent memory.\n\n"
+        "Scans the project, installs every discovered personality "
+        "template, and composes their agent surface under .opencode/.\n\n"
+        "On re-run (when .allmight/ exists), templates are staged to "
+        ".allmight/templates/ instead of overwriting. Use --force to "
+        "overwrite."
+    )
+    cmd.params.append(click.Argument(["path"], default=".", type=click.Path(exists=True)))
+    cmd.params.append(click.Option(
+        ["--force"], is_flag=True,
+        help="Overwrite all files (ignore user customizations).",
+    ))
+    cmd.params.append(click.Option(
+        ["--yes", "-y"], is_flag=True,
+        help="Skip interactive prompts; accept template defaults.",
+    ))
+    seen: set[str] = set()
+    for template in discover():
+        for opt in template.cli_options:
+            if opt.flag in seen:
+                # Two templates contributed the same flag — surfaced
+                # at startup so it can never silently shadow.
+                raise RuntimeError(
+                    f"flag collision on {opt.flag!r} between templates"
+                )
+            seen.add(opt.flag)
+            cmd.params.append(click.Option(
+                [opt.flag],
+                is_flag=opt.is_flag,
+                default=opt.default,
+                help=opt.help,
+            ))
+    return cmd
 
-    On re-run (when .allmight/ exists), templates are staged to
-    .allmight/templates/ instead of overwriting. Use --force to overwrite.
+
+def _init_callback(
+    path: str,
+    force: bool,
+    yes: bool = False,
+    **template_options: object,
+) -> None:
+    """Run the registry-driven init flow.
+
+    ``template_options`` is the raw dict of every CliOption value. Each
+    template's ``install`` reads what it cares about; the CLI never
+    interprets the contents.
+
+    When ``yes`` is False (default) and stdin is a TTY, the CLI prompts
+    for the instance name of each personality and an optional list of
+    project folders to register. The captured answers land in
+    ``.allmight/onboard.yaml`` so the agent's ``/onboard`` skill can
+    finish the qualitative setup later.
     """
     from pathlib import Path as P
 
-    from .detroit_smak.initializer import ProjectInitializer
-    from .detroit_smak.scanner import ProjectScanner
-    from .memory.initializer import MemoryInitializer
+    from .core.personalities import (
+        InstallContext,
+        Personality,
+        RegistryEntry,
+        compose,
+        compose_agents_md,
+        discover,
+        slugify_instance_name,
+        stage_compose_conflicts,
+        write_init_scaffold,
+        write_registry,
+    )
+    from .capabilities.corpus_keeper.scanner import ProjectScanner
 
     root = P(path).resolve()
     scanner = ProjectScanner()
     manifest = scanner.scan(root)
 
-    if sos:
-        manifest.has_path_env = True
-
     allmight_dir = root / ".allmight"
     is_reinit = allmight_dir.is_dir() and not force
 
-    initializer = ProjectInitializer()
-    initializer.initialize(manifest, force=force, writable=writable)
+    templates = discover()
 
-    MemoryInitializer().initialize(root, staging=is_reinit)
+    # Decide instance names + folders. If onboard.yaml exists, reuse
+    # what was captured before so re-init never asks the user the same
+    # questions. Otherwise prompt (or use defaults under --yes).
+    onboard_path = allmight_dir / "onboard.yaml"
+    captured = _read_onboard_yaml(onboard_path)
+    if captured is None:
+        captured = _collect_onboard_answers(templates, manifest, interactive=not yes)
+    instance_names = {row["template"]: row["instance"] for row in captured["personalities"]}
 
+    write_init_scaffold(root)
+
+    ctx = InstallContext(
+        project_root=root,
+        manifest=manifest,
+        staging=is_reinit,
+        force=force,
+    )
+    instances: list[Personality] = []
+    notes: list[str] = []
+    for template in templates:
+        instance_name = instance_names.get(
+            template.name,
+            template.default_instance_name or f"{manifest.name}-{template.short_name}",
+        )
+        instance = Personality(
+            template=template,
+            project_root=root,
+            name=instance_name,
+            options=dict(template_options),
+        )
+        result = template.install(ctx, instance)
+        notes.extend(result.notes)
+        instances.append(instance)
+
+    # Compose .opencode/ symlinks from each instance's surface.
+    # Conflicts (user-authored files at our target paths) are NOT
+    # silently overwritten — they're collected and staged so /sync can
+    # walk the user through resolution.
+    all_conflicts = []
+    for instance in instances:
+        all_conflicts.extend(compose(root, instance, force=force))
+    stage_compose_conflicts(root, all_conflicts)
+
+    # Stitch every instance's ROLE.md into the single root AGENTS.md.
+    compose_agents_md(root, instances, project_name=manifest.name)
+
+    # Persist the registry so allmight list/status can find them again.
+    write_registry(root, [
+        RegistryEntry(template=i.template.name, instance=i.name, version=i.template.version)
+        for i in instances
+    ])
+
+    # Persist onboarding answers for the agent-side /onboard skill.
+    captured["personalities"] = [
+        {"template": i.template.name, "instance": i.name}
+        for i in instances
+    ]
+    captured.setdefault("onboarded", False)
+    _write_onboard_yaml(onboard_path, captured)
+
+    writable = bool(template_options.get("writable"))
     mode_label = "writable" if writable else "read-only"
 
     if is_reinit:
-        # Count staged files
         tpl_dir = root / ".allmight" / "templates"
         file_count = sum(1 for _ in tpl_dir.rglob("*") if _.is_file()) if tpl_dir.exists() else 0
         click.echo(f"All-Might! Project '{manifest.name}' — new templates staged.")
         click.echo(f"  Templates:  .allmight/templates/ ({file_count} files)")
+        if all_conflicts:
+            click.echo(f"  Conflicts:  {len(all_conflicts)} (.opencode/ entries you authored)")
         click.echo("")
         click.echo("  Run /sync in your agent to merge with your customizations.")
         click.echo("  Or run 'allmight init --force' to overwrite everything.")
     else:
         click.echo(f"All-Might! Project '{manifest.name}' initialized ({mode_label}).")
-        click.echo(f"  Languages: {', '.join(manifest.languages) or 'none detected'}")
-        click.echo(f"  Corpora:   {len(manifest.indices)}")
-        click.echo(f"  Memory:    L1 (MEMORY.md) + L2 (understanding/) + L3 (journal/)")
+        click.echo(f"  Languages:    {', '.join(manifest.languages) or 'none detected'}")
+        click.echo(f"  Corpora:      {len(manifest.indices)}")
+        click.echo(f"  Personalities: {', '.join(i.name for i in instances)}")
+        if all_conflicts:
+            click.echo("")
+            click.echo(
+                f"  Heads up: {len(all_conflicts)} .opencode/ entries already exist "
+                "and were not touched."
+            )
+            for c in all_conflicts:
+                click.echo(f"    - {c.dst.relative_to(root)} ({c.existing})")
+            click.echo(
+                "  Manifest staged at .allmight/templates/conflicts.yaml — "
+                "run /sync to resolve."
+            )
         click.echo("")
         click.echo("What's next:")
         click.echo("  1. Open this folder in Claude Code or OpenCode")
+        click.echo("  2. Run /onboard to finish setup (role descriptions, folder classification)")
         if writable:
-            click.echo("  2. Run /ingest to build the search index")
-            click.echo("  3. Run /search \"<query>\" to explore your codebase")
-            click.echo("  4. Run /enrich to annotate symbols as you learn")
+            click.echo("  3. Run /ingest to build the search index")
+            click.echo("  4. Run /search \"<query>\" to explore your codebase")
+            click.echo("  5. Run /enrich to annotate symbols as you learn")
         else:
-            click.echo("  2. Run /search \"<query>\" to explore the codebase")
+            click.echo("  3. Run /search \"<query>\" to explore the codebase")
         click.echo("")
         click.echo("All-Might skills auto-load — just start asking questions.")
+
+
+def _collect_onboard_answers(
+    templates,
+    manifest,
+    *,
+    interactive: bool,
+) -> dict:
+    """Gather instance names + folders.
+
+    Always returns the same dict shape — uses defaults under
+    ``--yes`` / non-TTY, prompts otherwise.
+    """
+    import sys
+
+    from .core.personalities import slugify_instance_name
+
+    is_tty = sys.stdin.isatty() and sys.stdout.isatty()
+    do_prompt = interactive and is_tty
+
+    personalities = []
+    for template in templates:
+        default_name = template.default_instance_name or f"{manifest.name}-{template.short_name}"
+        if do_prompt:
+            raw = click.prompt(
+                f"  Name for the {template.short_name} personality",
+                default=default_name,
+                show_default=True,
+            )
+            slug = slugify_instance_name(raw) or default_name
+            if slug != raw:
+                click.echo(f"    → using slug: {slug}")
+        else:
+            slug = default_name
+        personalities.append({"template": template.name, "instance": slug})
+
+    folders: list[dict] = []
+    if do_prompt:
+        raw_folders = click.prompt(
+            "  Folders to register (comma-separated; empty to skip)",
+            default="",
+            show_default=False,
+        ).strip()
+        if raw_folders:
+            for chunk in raw_folders.split(","):
+                p = chunk.strip()
+                if p:
+                    folders.append({"path": p})
+
+    return {
+        "onboarded": False,
+        "personalities": personalities,
+        "folders": folders,
+    }
+
+
+def _read_onboard_yaml(path) -> dict | None:
+    """Return the captured onboarding state, or ``None`` if absent."""
+    import yaml
+
+    if not path.exists():
+        return None
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except (yaml.YAMLError, OSError):
+        return None
+    data.setdefault("onboarded", False)
+    data.setdefault("personalities", [])
+    data.setdefault("folders", [])
+    return data
+
+
+def _write_onboard_yaml(path, data: dict) -> None:
+    """Persist onboarding state for the agent-side /onboard skill."""
+    import yaml
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(data, sort_keys=False))
+
+
+main.add_command(_build_init_command())
 
 
 # ------------------------------------------------------------------
@@ -142,52 +352,115 @@ def clone(source: str, path: str):
 # ------------------------------------------------------------------
 
 @main.command()
-@click.argument("source", type=click.Path(exists=True))
-@click.option("--workspace", "-w", multiple=True, help="Only merge specific workspaces")
-@click.option("--dry-run", is_flag=True, help="Show what would be merged without copying")
-@click.option("--no-memory", is_flag=True, help="Skip memory merge")
-def merge(source: str, workspace: tuple[str, ...], dry_run: bool, no_memory: bool):
-    """Merge knowledge bases from another All-Might project.
+@click.option("--from", "source", required=True, type=click.Path(exists=True),
+              help="Source All-Might project to merge from.")
+@click.option("--instance", "instance_name", required=True,
+              help="Name of the personality instance in the source project.")
+@click.option("--as", "as_name", default=None,
+              help="Install the source instance side-by-side under this new "
+                   "name (instead of combining into a same-named target instance).")
+@click.option("--dry-run", is_flag=True,
+              help="Show what would change without touching disk.")
+def merge(source: str, instance_name: str, as_name: str | None, dry_run: bool):
+    """Merge a personality instance from another All-Might project.
 
-    Copies workspaces and memory from SOURCE into the current project.
-    Conflicts are staged for agent-driven resolution via /sync.
+    Default mode (no ``--as``): combine the source instance's content
+    into a same-named target instance. Conflicts (different content
+    at the same path) land beside the originals with a ``.incoming``
+    suffix; ``/sync`` resolves them.
+
+    With ``--as <new-name>``: install the source instance side-by-side
+    under the given name. The target gains a new instance row in
+    ``.allmight/personalities.yaml``.
     """
     from pathlib import Path as P
 
-    from .merge.merger import ProjectMerger
+    from .merge.merger import InstanceMerger
 
     source_path = P(source).resolve()
     target_path = P(".").resolve()
 
-    merger = ProjectMerger()
-    ws_filter = list(workspace) if workspace else None
-
-    report = merger.merge(
+    report = InstanceMerger().merge(
         source=source_path,
         target=target_path,
-        workspaces=ws_filter,
+        instance_name=instance_name,
+        as_name=as_name,
         dry_run=dry_run,
-        no_memory=no_memory,
     )
 
     prefix = "[DRY RUN] " if dry_run else ""
-    click.echo(f"{prefix}All-Might merge complete.")
+    if as_name:
+        click.echo(f"{prefix}Installed source instance '{instance_name}' "
+                   f"as '{as_name}'.")
+    else:
+        click.echo(f"{prefix}Combined source instance '{instance_name}' into "
+                   "the target.")
 
     if report.workspaces_added:
-        click.echo(f"  Workspaces added:      {', '.join(report.workspaces_added)}")
-    if report.workspaces_conflicting:
-        click.echo(f"  Workspaces conflicting: {', '.join(report.workspaces_conflicting)}")
+        click.echo(f"  Added:        {', '.join(report.workspaces_added)}")
     if report.memory_files_added:
-        click.echo(f"  Memory files added:    {len(report.memory_files_added)}")
+        click.echo(f"  Files copied: {len(report.memory_files_added)}")
     if report.memory_conflicts:
-        click.echo(f"  Memory conflicts:      {len(report.memory_conflicts)}")
+        click.echo(f"  Conflicts:    {len(report.memory_conflicts)} "
+                   "(staged with .incoming suffix)")
     if report.warnings:
-        click.echo(f"  Path warnings:         {len(report.warnings)}")
+        click.echo(f"  Path warnings: {len(report.warnings)}")
 
     if report.action_needed:
         click.echo("")
         for action in report.action_needed:
             click.echo(f"  → {action}")
+
+
+# ------------------------------------------------------------------
+# Migrate (one-shot upgrade for old-layout projects)
+# ------------------------------------------------------------------
+
+@main.command()
+@click.argument("path", default=".", type=click.Path(exists=True))
+@click.option("--dry-run", is_flag=True,
+              help="Print the migration plan without modifying disk.")
+def migrate(path: str, dry_run: bool):
+    """Migrate an All-Might project to the post-Part-C layout.
+
+    Detects the legacy shape (``<project>-corpus``/``-memory`` instance
+    dirs, ``/reflect`` command, single-file AGENTS.md with marker
+    fences) and rewrites it in place. Idempotent on already-migrated
+    projects.
+    """
+    from pathlib import Path as P
+
+    from .migrate.migrator import migrate as run_migrate
+
+    root = P(path).resolve()
+    plan = run_migrate(root, dry_run=dry_run)
+
+    prefix = "[DRY RUN] " if dry_run else ""
+    if not plan.needs_migration:
+        click.echo(f"{prefix}Nothing to migrate — '{root.name}' already on the new layout.")
+        return
+
+    click.echo(f"{prefix}Migration plan for '{root.name}':")
+    if plan.rename:
+        click.echo("  Rename instance dirs:")
+        for old, new in plan.rename.items():
+            click.echo(f"    personalities/{old}/ -> personalities/{new}/")
+    if plan.dropped_files:
+        click.echo("  Drop legacy files:")
+        for entry in plan.dropped_files:
+            click.echo(f"    {entry}")
+    if plan.written_role_files:
+        click.echo("  Wrote ROLE.md:")
+        for entry in plan.written_role_files:
+            click.echo(f"    {entry}")
+    if plan.notes:
+        click.echo("  Notes:")
+        for note in plan.notes:
+            click.echo(f"    - {note}")
+
+    if dry_run:
+        click.echo("")
+        click.echo("Re-run without --dry-run to apply.")
 
 
 # ------------------------------------------------------------------
@@ -209,7 +482,7 @@ def memory_init(path: str):
     """
     from pathlib import Path as P
 
-    from .memory.initializer import MemoryInitializer
+    from .capabilities.memory_keeper.initializer import MemoryInitializer
 
     root = P(path).resolve()
 
@@ -238,7 +511,7 @@ def memory_export(fmt: str, root: str, out: str):
     """
     from pathlib import Path as P
 
-    from .memory.trajectory_export import export_to_jsonl
+    from .capabilities.memory_keeper.trajectory_export import export_to_jsonl
 
     root_path = P(root).resolve()
     out_path = P(out).resolve()

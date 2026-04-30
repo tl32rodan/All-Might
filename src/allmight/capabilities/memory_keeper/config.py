@@ -8,17 +8,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..core.domain import MemoryConfig, MemoryStoreSpec, _default_stores
-from ..utils.yaml_io import load_config, write_yaml
+from ...core.domain import MemoryConfig, MemoryStoreSpec, _default_stores
+from ...utils.yaml_io import load_config, write_yaml
 
 
 class MemoryConfigManager:
     """Manages ``memory/config.yaml`` and derived ``memory/smak_config.yaml``."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, memory_root: Path | None = None) -> None:
         self.root = root
-        self.config_path = root / "memory" / "config.yaml"
-        self.smak_config_path = root / "memory" / "smak_config.yaml"
+        # ``memory_root`` is where ``config.yaml``/``smak_config.yaml``
+        # plus the journal/store directories actually live. Defaults
+        # to ``root / "memory"`` for legacy callers.
+        self.memory_root = memory_root if memory_root is not None else root / "memory"
+        self.config_path = self.memory_root / "config.yaml"
+        self.smak_config_path = self.memory_root / "smak_config.yaml"
 
     def load(self) -> MemoryConfig:
         """Load the memory config, falling back to defaults."""
@@ -62,16 +66,16 @@ class MemoryConfigManager:
         self._write_smak_config(cfg)
 
     def initialize(self) -> MemoryConfig:
-        """Create ``memory/config.yaml`` with defaults and generate smak_config.
+        """Create the memory config with defaults and generate smak_config.
 
         Stores resolve to absolute paths so SMAK and the agent never
         depend on the caller's cwd to find the journal.
         """
-        abs_root = self.root.resolve()
+        abs_mem = self.memory_root.resolve()
         journal = MemoryStoreSpec(
             name="journal",
-            path=str(abs_root / "memory" / "journal"),
-            store_uri=str(abs_root / "memory" / "store" / "journal"),
+            path=str(abs_mem / "journal"),
+            store_uri=str(abs_mem / "store" / "journal"),
         )
         cfg = MemoryConfig(stores={"journal": journal})
         self.save(cfg)

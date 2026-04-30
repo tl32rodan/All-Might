@@ -15,6 +15,9 @@ SYNC_SKILL_BODY = """\
 
 - After `allmight init` on an already-initialized project
   (templates are staged in `.allmight/templates/`)
+- After `allmight init` reports `.opencode/` **compose conflicts**
+  (manifest at `.allmight/templates/conflicts.yaml`) — you authored a
+  file All-Might also wanted to write
 - After `allmight merge <source>` when conflicts exist
   (merge report at `.allmight/merge-report.yaml`)
 
@@ -61,6 +64,55 @@ If `.allmight/mode` exists, check whether the project's access mode has changed:
    - **writable**: `search.md`, `enrich.md`, `ingest.md`
 4. Update the AGENTS.md ALL-MIGHT section to match the staged `claude-md-section.md`
 
+### Compose conflicts (`.opencode/` entries you authored)
+
+`allmight init` never overwrites a `.opencode/<kind>/<name>` you wrote
+yourself. When it detects one, it leaves your file alone and stages a
+manifest at `.allmight/templates/conflicts.yaml` listing every
+skipped composition target.
+
+Each entry has:
+
+```yaml
+compose_conflicts:
+  - instance: <project>-corpus       # who wanted to install this
+    kind: commands                   # skills | commands | plugins
+    basename: search.md
+    dst: .opencode/commands/search.md       # what currently exists
+    source: personalities/<project>-corpus/commands/search.md
+    existing: file                   # file | directory | symlink-to-elsewhere
+```
+
+To resolve each entry:
+
+1. Read both files: `cat <dst>` and `cat <source>`.
+2. Decide:
+   - **Keep yours, drop ours** — leave `dst` as-is and remove the
+     entry from `compose_conflicts`. Optionally delete the unused
+     `<source>` if you're sure you don't want it.
+   - **Replace yours with ours** — delete `dst`, then create a
+     relative symlink:
+     ```bash
+     ln -sfn ../../<source> <dst>
+     ```
+     (`<source>` and `<dst>` come from the manifest; the symlink
+     target is `<source>` relative to `<dst>`'s parent dir.)
+   - **Merge** — splice your customizations into the All-Might
+     version, write the merged content back to the **source** file
+     (`personalities/<instance>/<kind>/<basename>`), then replace
+     `dst` with a symlink as in the previous bullet. Future re-inits
+     will then pick up your merged content via the symlink.
+3. After resolving every entry, delete
+   `.allmight/templates/conflicts.yaml`.
+
+`existing: symlink-to-elsewhere` means `dst` is a symlink that points
+somewhere other than the All-Might instance — likely a hand-rolled
+link to your own command file. Treat it the same as `existing: file`.
+
+`existing: directory` means `dst` is a non-All-Might directory at our
+target. Inspect its contents before deleting; only the user can
+decide whether the directory is still wanted.
+
 ### Merge conflict resolution (after `allmight merge`)
 
 1. Read `.allmight/merge-report.yaml` for the merge summary
@@ -85,6 +137,7 @@ If `.allmight/mode` exists, check whether the project's access mode has changed:
 | `.allmight/templates/memory-md-section.md` | `AGENTS.md` (ALL-MIGHT-MEMORY marker) |
 | `.allmight/templates/opencode.json` | `.opencode/opencode.json` |
 | `.allmight/templates/memory-load.ts` | `.opencode/plugins/memory-load.ts` |
+| `.allmight/templates/conflicts.yaml` | manifest of skipped compose targets |
 
 ## Important
 

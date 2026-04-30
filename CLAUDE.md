@@ -6,26 +6,47 @@ After modifying initializer, skill templates, commands, or memory init:
 
 1. Run tests: `PYTHONPATH=src python -m pytest tests/`
 2. If the change touches code that generates TypeScript (e.g. OpenCode
-   plugins under `memory/initializer.py::_opencode_plugin_map`), also
-   type-check the generated output:
+   plugins under
+   `personalities/memory_keeper/initializer.py::_opencode_plugin_map`),
+   also type-check the generated output:
    `cd /tmp/demo && allmight init . && tsc --noEmit .opencode/plugins/*.ts`
    Python tests only verify strings written — they cannot catch
    wrong-shape API calls in the generated `.ts`.
+
+## Planning Workflow
+
+When the task requires designing before coding:
+
+- **Write plan files incrementally to disk via the Edit tool.** Do
+  not stream a long single-shot response. Stream-idle timeouts have
+  lost whole plans before; write each section, save, then continue.
+- **Confirm core premises before drafting.** Naming choices,
+  deprecated concepts (`detroit_smak` is deprecated), and
+  non-negotiable rules (no Composer pattern; one `Personality`
+  instance per template by default) — surface assumptions and ask
+  for confirmation in 30 seconds, instead of redrafting after
+  rejection.
+- **Close every design session with a written artifact.** Plan
+  files and CLAUDE.md additions both count; chat memory does not.
+  Context bled across sessions when this was skipped.
 
 ## Project Structure
 
 ```
 All-Might/                          ← This repo (the framework)
 ├── src/allmight/                    ← Framework source code
-│   ├── detroit_smak/               ← Scanner + Initializer (generates workspace)
-│   ├── memory/                     ← Agent memory system (L1/L2/L3)
+│   ├── personalities/               ← Built-in personality templates
+│   │   ├── corpus_keeper/          ← Scanner + KG initializer + /search /enrich /ingest /sync /onboard
+│   │   └── memory_keeper/          ← Agent memory L1/L2/L3 + /remember (Record + Reflect) + /recall
 │   ├── bridge/                     ← SMAK CLI subprocess wrapper (internal)
 │   ├── config/                     ← config.yaml manager
-│   ├── core/                       ← Domain models + protocols
+│   ├── core/                       ← Domain models + personalities framework
 │   ├── enrichment/                 ← Enrichment policy (advisory)
+│   ├── merge/                      ← Instance-level merge (allmight merge --from --instance)
+│   ├── migrate/                    ← One-shot upgrader for pre-Part-C projects
 │   ├── one_for_all/                ← Skill template generator
 │   ├── hub/                        ← Multi-workspace hub templates
-│   └── cli.py                      ← CLI entry point (init only)
+│   └── cli.py                      ← CLI entry: init, merge, migrate, memory init/export
 ├── tests/                          ← Test suite
 └── docs/
 ```
@@ -34,10 +55,69 @@ All-Might/                          ← This repo (the framework)
 
 | File | What it generates |
 |------|-------------------|
-| `detroit_smak/initializer.py` | AGENTS.md, knowledge_graph/, .opencode/skills, .opencode/commands |
+| `core/personalities.py` | Personality framework: Template, Personality, registry, `compose`, `compose_agents_md`, `slugify_instance_name`, `role-load.ts` scaffold |
+| `personalities/corpus_keeper/__init__.py` | TEMPLATE (cli_options for --sos/--writable; default_instance_name = `knowledge`) |
+| `personalities/corpus_keeper/initializer.py` | knowledge_graph/, instance commands/skills, `ROLE.md`, `/onboard` skill |
+| `personalities/corpus_keeper/onboard_skill_content.py` | The `/onboard` skill body + command body |
+| `personalities/memory_keeper/__init__.py` | TEMPLATE (no cli_options; default_instance_name = `memory`) |
+| `personalities/memory_keeper/initializer.py` | MEMORY.md (L1), understanding/ (L2), journal/ (L3), `/remember` (Record + Reflect modes), `/recall` |
+| `personalities/corpus_keeper/scanner.py` | Detects languages, frameworks, proposes indices |
+| `merge/merger.py` | `InstanceMerger` — instance-level `allmight merge --from --instance --as` |
+| `migrate/migrator.py` | One-shot upgrader for pre-Part-C projects |
 | `one_for_all/templates/skill-base.md.j2` | The one-for-all SKILL.md |
-| `memory/initializer.py` | MEMORY.md (L1), understanding/ (L2), journal/ (L3), /remember /recall |
-| `detroit_smak/scanner.py` | Detects languages, frameworks, proposes indices |
+
+## Personality Platform Conventions
+
+These rules are non-negotiable; proposals that violate them have been
+rejected before and will be rejected again.
+
+- **`corpus_keeper` is the canonical name** for the corpus-side
+  personality. The legacy name `detroit_smak` is **deprecated** —
+  do not re-introduce it in proposals, skill bodies, plugin code,
+  or test names.
+- **Two-tier model.** Every capability is a `PersonalityTemplate`
+  (the *kind* — registered as a module-level `TEMPLATE` constant
+  inside `src/allmight/personalities/<name>/__init__.py`) plus
+  zero-or-more `Personality` instances (default instance name comes
+  from `template.default_instance_name`, e.g. `knowledge` for
+  corpus_keeper, `memory` for memory_keeper). The framework
+  instantiates the instance; the template never instantiates itself.
+- **No Composer pattern.** Templates do not mix runtime state
+  across personalities, do not share helpers via mutable globals,
+  and do not coordinate at install time. Each `template.install`
+  runs in isolation and writes only into its own
+  `personalities/<name>/`. If two templates need the same data,
+  they each compute it from `InstallContext`; cross-template state
+  flows through the file system, never through process memory.
+- **Composition is build-time.** The registry walks each instance's
+  `skills/`, `commands/`, `plugins/` after `install` and creates
+  relative symlinks at `.opencode/<kind>/<basename>`. Once written,
+  OpenCode resolves them on file open — no in-process registry
+  mediates command dispatch at runtime.
+- **One root `AGENTS.md`, composed from per-personality `ROLE.md`.**
+  Each template writes `personalities/<n>/ROLE.md`; the registry
+  calls `compose_agents_md` to stitch them into the single root
+  `AGENTS.md` with a one-line "edit ROLE.md, not this file" header.
+  A scaffold-owned `role-load.ts` plugin re-injects each ROLE.md at
+  every `chat.message` for an un-primed session — same pattern as
+  `memory-load.ts` keeping `MEMORY.md` warm after compaction.
+- **Two-stage bootstrap.** `allmight init` is a CLI prompt-driven
+  scaffold that captures names + folders into
+  `.allmight/onboard.yaml`. The agent-side `/onboard` skill (owned
+  by corpus_keeper) does the qualitative half: rewrites each
+  ROLE.md from the user's answers, classifies folders into
+  `MEMORY.md`'s project map, re-runs `compose_agents_md`. Don't
+  duplicate `/onboard`'s prose into init prompts — keep the CLI
+  short.
+- **`/reflect` is folded into `/remember`.** The `/remember.md` body
+  has two top-level sections (`# Record` and `# Reflect`); the
+  agent picks based on trigger context. Do not re-introduce a
+  separate `/reflect` command.
+- **Merge is per-instance.** `allmight merge --from <path>
+  --instance <name> [--as <new-name>]`. The legacy project-level
+  merge surface is removed. Combining = staged `.incoming` files
+  resolved by `/sync`; `--as` = side-by-side install with a new
+  registry row.
 
 ## Architecture Layers
 
@@ -54,56 +134,73 @@ All-Might/                          ← This repo (the framework)
 
 ### 1. What All-Might Generates (Target Workspace Structure)
 
-An All-Might project manages **one knowledge graph** across **multiple
-SMAK workspaces** (corpora). Example with 3 EDA flows:
+An All-Might project is composed of **personality instances**. Each
+instance owns a directory under `personalities/<name>/` containing
+both its agent surface (skills/commands/plugins) and its data dir
+(`knowledge_graph/` for corpus, `memory/` for memory). The top-level
+`.opencode/` is **composed** from each instance via symlinks.
+
+Example with 3 EDA flows:
 
 ```
 my-chip-project/                          ← One All-Might project
-├── AGENTS.md                             ← Agent: WHAT can I do (high-level)
-│
-├── .opencode/
-│   ├── skills/
-│   │   └── one-for-all/SKILL.md          ← Agent: HOW to operate (low-level)
-│   ├── commands/
-│   │   ├── search.md                     ← /search operational guide
-│   │   ├── enrich.md                     ← /enrich operational guide
-│   │   ├── ingest.md                     ← /ingest operational guide
-│   │   ├── remember.md                   ← /remember (memory)
-│   │   └── recall.md                     ← /recall (memory)
-│   ├── plugins/                          ← TypeScript plugins (L1 loader, nudge)
-│   └── opencode.json                     ← OpenCode config ($schema + plugins)
-│
+├── AGENTS.md                             ← root entry point (corpus-flavoured)
 ├── MEMORY.md                             ← L1: project map + user prefs (plugin-loaded)
 │
+├── .opencode/                            ← COMPOSED by registry (symlinks)
+│   ├── opencode.json                     ← $schema only (init scaffold)
+│   ├── package.json                      ← @opencode-ai/plugin (init scaffold)
+│   ├── skills/sync → ../personalities/<corpus>/skills/sync
+│   ├── commands/
+│   │   ├── search.md  → ../personalities/<corpus>/commands/search.md
+│   │   ├── enrich.md  → …
+│   │   ├── ingest.md  → …
+│   │   ├── sync.md    → …
+│   │   ├── remember.md→ ../personalities/<memory>/commands/remember.md
+│   │   ├── recall.md  → …
+│   │   └── reflect.md → …
+│   └── plugins/{memory-load.ts, …}       ← symlinks into <memory> instance
 │
-├── memory/                               ← Shared: agent memory across ALL workspaces
-│   ├── config.yaml                       ← Memory settings
-│   ├── understanding/                    ← L2: per-corpus knowledge
-│   │   ├── stdcell.md
-│   │   └── pll.md
-│   ├── journal/                          ← L3: append-only text files
-│   │   ├── stdcell/
-│   │   └── general/
-│   └── store/                            ← L3: SMAK vector index of journal/
+├── personalities/                        ← Each subdir is one instance
+│   ├── my-chip-project-corpus/           ← default name = f"{manifest.name}-corpus"
+│   │   ├── skills/sync/SKILL.md
+│   │   ├── commands/{search,enrich,ingest,sync}.md
+│   │   └── knowledge_graph/              ← SMAK workspaces (each independent)
+│   │       ├── stdcell/{config.yaml, store/}
+│   │       ├── io_phy/{config.yaml, store/}
+│   │       └── pll/{config.yaml, store/}
+│   └── my-chip-project-memory/           ← default name = f"{manifest.name}-memory"
+│       ├── commands/{remember,recall,reflect}.md
+│       ├── plugins/{memory-load,remember-trigger,todo-curator,trajectory-writer,usage-logger}.ts
+│       └── memory/
+│           ├── config.yaml
+│           ├── smak_config.yaml
+│           ├── understanding/{stdcell.md, pll.md}    ← L2
+│           ├── journal/{stdcell/, general/}          ← L3
+│           └── store/                                 ← L3 SMAK vector index
 │
-└── knowledge_graph/                      ← SMAK workspaces (each independent)
-    ├── stdcell/
-    │   ├── config.yaml                   ← SMAK config (indices: rtl, verif, constraints)
-    │   └── store/                        ← SMAK search data
-    ├── io_phy/
-    │   ├── config.yaml                   ← SMAK config (indices: rtl, verif)
-    │   └── store/
-    └── pll/
-        ├── config.yaml                   ← SMAK config (indices: source_code, tests)
-        └── store/
+└── .allmight/
+    ├── personalities.yaml                ← Records installed instances
+    ├── mode                              ← read-only | writable
+    └── templates/                        ← Re-init staging (when applicable)
 ```
 
 **SMAK indexes source files in-place** — no files are ever copied into
 the All-Might project. Only the vector index (`store/`) and SMAK config
-(`config.yaml`) live inside `knowledge_graph/` workspaces.
+(`config.yaml`) live inside each instance's `knowledge_graph/`
+workspaces.
 
 **Sidecar files** (`.sidecar.yaml`) live beside the source code they describe
 (at `$DDI_ROOT_PATH/...`), NOT inside the All-Might project.
+
+`allmight init` is **idempotent and safe in pre-populated
+directories.** Files that carry an All-Might marker
+(`ALLMIGHT_MARKER_MD`, `_TS`, `_YAML`) are auto-replaced; files you
+authored at e.g. `.opencode/commands/search.md` are preserved
+untouched and surfaced via `.allmight/templates/conflicts.yaml` for
+`/sync` to resolve. `$schema` in `opencode.json` and pinned versions
+in `package.json` are never overwritten — both writers use
+`setdefault` semantics.
 
 ### 2. SRP: Three Layers of Agent Documentation
 
@@ -120,9 +217,14 @@ the All-Might project. Only the vector index (`store/`) and SMAK config
 ### 3. config.yaml: Only SMAK Owns It
 
 There is **no All-Might-level config.yaml**.  Workspaces are discovered
-by scanning `knowledge_graph/*/config.yaml` — no registry needed.
+by scanning `personalities/<corpus>/knowledge_graph/*/config.yaml` —
+no registry needed for workspaces. (Personality *instances* are
+recorded in `.allmight/personalities.yaml` so `allmight status`
+knows what's installed; that file is the registry of *kinds*, not
+of SMAK workspaces.)
 
-**SMAK config.yaml** (per workspace at `knowledge_graph/<name>/config.yaml`):
+**SMAK config.yaml** (per workspace at
+`personalities/<corpus>/knowledge_graph/<name>/config.yaml`):
 ```yaml
 indices:
   - name: rtl
@@ -141,17 +243,20 @@ indices:
 **Rule**: config.yaml is SMAK's concern.  All-Might discovers workspaces
 by their directory structure, not by a registry file.
 
-### 4. Shared vs Per-Workspace
+### 4. Shared vs Per-Workspace vs Per-Instance
 
 | Component | Scope | Why |
 |-----------|-------|-----|
-| `MEMORY.md` | Project-wide | L1 cache: project map, user prefs (hook-loaded) |
-| `memory/understanding/` | Project-wide | L2: per-corpus knowledge (agent reads/writes) |
-| `memory/journal/` | Project-wide | L3: searchable log (SMAK indexed) |
-| `.opencode/skills/` | Project-wide | One skill teaches agent about all workspaces |
-| `.opencode/commands/` | Project-wide | One set of commands for the whole project |
-| `knowledge_graph/<name>/config.yaml` | Per-workspace | Each SMAK DB has its own index config |
-| `knowledge_graph/<name>/store/` | Per-workspace | Each SMAK DB has its own search data |
+| `MEMORY.md` | Project-wide root | L1 cache: project map, user prefs (plugin-loaded) |
+| `AGENTS.md` | Project-wide root | High-level WHAT the agent can do |
+| `personalities/<m>/memory/understanding/` | Per memory instance | L2: per-corpus knowledge |
+| `personalities/<m>/memory/journal/` | Per memory instance | L3: searchable log (SMAK indexed) |
+| `.opencode/skills/` | Composed (symlinks) | Each instance contributes its skills |
+| `.opencode/commands/` | Composed (symlinks) | Each instance contributes its commands |
+| `.opencode/plugins/` | Composed (symlinks) | Each instance contributes its plugins |
+| `personalities/<c>/knowledge_graph/<name>/config.yaml` | Per-workspace | Each SMAK DB has its own index config |
+| `personalities/<c>/knowledge_graph/<name>/store/` | Per-workspace | Each SMAK DB has its own search data |
+| `.allmight/personalities.yaml` | Project-wide | Lists installed personality instances |
 | Sidecar files | Per-source-file | Live beside source code (external) |
 
 ### 5. CLI: Bootstrap Only
@@ -160,11 +265,68 @@ The `allmight` CLI does ONE thing: `allmight init`.
 Everything else is agent-driven through skills and commands.
 
 ```
-allmight init .                  → creates the project structure (includes memory)
+allmight init .                  → discovers personalities, installs each, composes .opencode/
 allmight memory init             → re-initialize memory on existing project
 ```
 
 The agent calls `smak` CLI directly (taught by skills), NOT `allmight` wrappers.
+
+**`cli.py` knows nothing template-specific.** Per-template flags
+(`--sos`, `--writable`) are contributed by their template's
+`cli_options` and registered on the `init` Click command at startup.
+Each template extracts what it needs from `Personality.options` inside
+its `install` callable — `cli.py` never reads them. To add a flag:
+append a `CliOption(...)` to the right template's `__init__.py` and it
+shows up in `allmight init --help` automatically.
+
+---
+
+## Interface Isolation & Clean-Code Rules
+
+Each rule below is enforceable by reading a diff. Violating a rule is
+a regression even if tests pass.
+
+- **`cli.py` is closed.** Touching `src/allmight/cli.py` to
+  special-case a template is a regression. New flags belong in
+  `template.cli_options`; new install behaviour belongs in
+  `template.install`; new runtime state belongs inside the
+  template, not in `cli.py`. The only universal concerns that live
+  there are `--force`, scaffold writing
+  (`write_init_scaffold`), and registry persistence
+  (`write_registry`).
+- **`core/` is closed against templates.** Files under
+  `src/allmight/core/` must not import from
+  `src/allmight/personalities/*`. The dependency arrow points one
+  way: templates depend on core, never the other direction. If a
+  utility is general enough to be shared, lift it into core; do not
+  reach back into a template.
+- **A template owns its directory, nothing else.** Writes outside
+  `personalities/<name>/` are limited to four root targets:
+  `AGENTS.md`, `MEMORY.md`, `.allmight/personalities.yaml`, and the
+  staging directory `.allmight/templates/...`. Composition symlinks
+  under `.opencode/` are placed by `core.personalities.compose`,
+  not by the template itself. Any new write target must be an
+  explicit, documented exception in this section.
+- **Conflict resolution lives in `core/personalities.compose`.**
+  Templates do not detect or stage their own conflicts; they just
+  declare what they want to write inside their instance dir.
+  Centralising this keeps `/sync`'s mental model uniform — one
+  manifest at `.allmight/templates/conflicts.yaml`, one set of
+  resolution rules.
+- **Markers are the contract for "this file is mine".** Every
+  generated file *must* carry an `ALLMIGHT_MARKER_*` token (see
+  `core/markers.py`). Files without a marker are treated as
+  user-authored on re-init and preserved. **Skipping the marker is
+  a silent data-loss bug** — the file gets clobbered or, worse,
+  silently divorced from re-init flow.
+- **When in doubt: add a flag, not a template.** A new template is
+  justified only when the capability has its own data dir, its own
+  skills/commands, and a meaningful uninstall semantics.
+  Otherwise, extend an existing template's `cli_options` or its
+  `install` logic. The bar for new templates is high because each
+  one introduces new symlinks, new entries in
+  `personalities.yaml`, and a new directory under
+  `personalities/`.
 
 ---
 

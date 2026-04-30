@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..core.domain import IndexSpec, ProjectManifest
-from ..utils.git import get_repo_name
-from ..utils.languages import detect_directories, detect_frameworks, detect_languages
+from ...core.domain import IndexSpec, ProjectManifest
+from ...utils.git import get_repo_name
+from ...utils.languages import detect_directories, detect_frameworks, detect_languages
 
 
 class ProjectScanner:

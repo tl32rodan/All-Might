@@ -9,9 +9,9 @@ import os
 import pytest
 
 from allmight.clone.cloner import ProjectCloner
-from allmight.detroit_smak.initializer import ProjectInitializer
-from allmight.detroit_smak.scanner import ProjectScanner
-from allmight.memory.initializer import MemoryInitializer
+from allmight.capabilities.corpus_keeper.initializer import ProjectInitializer
+from allmight.capabilities.corpus_keeper.scanner import ProjectScanner
+from allmight.capabilities.memory_keeper.initializer import MemoryInitializer
 
 
 @pytest.fixture

@@ -7,8 +7,8 @@ and multiple SMAK workspaces under knowledge_graph/.
 
 import pytest
 
-from allmight.detroit_smak.initializer import ProjectInitializer
-from allmight.detroit_smak.scanner import ProjectScanner
+from allmight.capabilities.corpus_keeper.initializer import ProjectInitializer
+from allmight.capabilities.corpus_keeper.scanner import ProjectScanner
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def _init(root, writable=False):
 
 def _init_with_memory(root, writable=False):
     """Mirrors what `allmight init` does: project init + memory init."""
-    from allmight.memory.initializer import MemoryInitializer
+    from allmight.capabilities.memory_keeper.initializer import MemoryInitializer
 
     _init(root, writable=writable)
     MemoryInitializer().initialize(root)

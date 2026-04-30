@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..core.markers import ALLMIGHT_MARKER_MD, ALLMIGHT_MARKER_TS
-from ..core.safe_write import write_guarded
+from ...core.markers import ALLMIGHT_MARKER_MD, ALLMIGHT_MARKER_TS
+from ...core.safe_write import write_guarded
 from .config import MemoryConfigManager
 
 
@@ -43,52 +43,109 @@ def _reminder_nudge_text() -> str:
 class MemoryInitializer:
     """Creates the agent memory system."""
 
-    def initialize(self, root: Path, staging: bool = False) -> None:
+    def __init__(self) -> None:
+        # Defaults so legacy callers (anything bypassing initialize)
+        # still resolve to the old root-level layout.
+        self._instance_root: Path | None = None
+        self._instance_rel: str = ""
+
+    def initialize(
+        self,
+        root: Path,
+        staging: bool = False,
+        instance_root: Path | None = None,
+    ) -> None:
         """Bootstrap the memory subsystem at *root*.
 
         Args:
-            root: Project root path.
+            root: Project root path. Always holds ``MEMORY.md`` and
+                ``AGENTS.md`` regardless of layout.
             staging: If True, stage templates to .allmight/templates/
                      instead of writing to working locations.
+            instance_root: Personality instance directory under
+                ``personalities/<name>/``. The memory data dir,
+                commands, and plugins live here. When ``None`` (legacy
+                callers) writes go under ``root`` to preserve the
+                pre-personalities layout.
         """
+        self._instance_root = instance_root
+        self._instance_rel = self._compute_instance_rel(root, instance_root)
         if staging:
             self._stage_memory_templates(root)
             return
 
         # --- Direct init (first time or force) ---
 
+        memory_dir = self._memory_dir(root)
+
         # 1. Create memory config (defines journal store + SMAK config)
-        cfg_mgr = MemoryConfigManager(root)
+        cfg_mgr = MemoryConfigManager(root, memory_root=memory_dir)
         cfg_mgr.initialize()
 
         # 2. Create L1: MEMORY.md at project root
         self._create_memory_md(root)
 
         # 3. Create L2: understanding/ directory
-        (root / "memory" / "understanding").mkdir(parents=True, exist_ok=True)
+        (memory_dir / "understanding").mkdir(parents=True, exist_ok=True)
 
         # 4. Create L3: journal/ directory + store/
-        (root / "memory" / "journal").mkdir(parents=True, exist_ok=True)
-        (root / "memory" / "store").mkdir(parents=True, exist_ok=True)
+        (memory_dir / "journal").mkdir(parents=True, exist_ok=True)
+        (memory_dir / "store").mkdir(parents=True, exist_ok=True)
 
         # 4b. Create usage.log for feedback loop
-        usage_log = root / "memory" / "usage.log"
+        usage_log = memory_dir / "usage.log"
         if not usage_log.exists():
             usage_log.write_text("")
 
         # 4c. Skills log — trace of self-authored skills/plugins
-        skills_log = root / "memory" / "skills-log.md"
+        skills_log = memory_dir / "skills-log.md"
         if not skills_log.exists():
             skills_log.write_text(self._skills_log_template())
 
         # 5. Generate memory commands (remember, recall, reflect)
         self._generate_memory_commands(root)
 
-        # 7. Update AGENTS.md
-        self._update_agents_md(root)
+        # 7. Write ROLE.md (root AGENTS.md is composed by the registry)
+        self._write_role_md(root)
 
         # 8. Generate opencode.json with hooks for OpenCode
         self._generate_opencode_json(root)
+
+    # ------------------------------------------------------------------
+    # Instance-root helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_instance_rel(root: Path, instance_root: Path | None) -> str:
+        """Return the instance dir as a forward-slash relative segment.
+
+        Empty string when there's no instance dir (legacy layout) so
+        path-string substitutions collapse cleanly to bare ``memory/``.
+        """
+        if instance_root is None or instance_root == root:
+            return ""
+        return instance_root.relative_to(root).as_posix() + "/"
+
+    def _memory_dir(self, root: Path) -> Path:
+        """The on-disk directory holding journal/store/understanding."""
+        if self._instance_root is None or self._instance_root == root:
+            return root / "memory"
+        return self._instance_root / "memory"
+
+    def _agent_surface_dirs(self, root: Path) -> tuple[Path, Path]:
+        """Return (commands_dir, plugins_dir) for the instance.
+
+        Falls back to the legacy ``.opencode/`` paths when there is no
+        instance root, so direct callers (clone, merge) keep working.
+        """
+        if self._instance_root is None or self._instance_root == root:
+            return root / ".opencode" / "commands", root / ".opencode" / "plugins"
+        return self._instance_root / "commands", self._instance_root / "plugins"
+
+    @property
+    def _mem_root_rel(self) -> str:
+        """Path to the memory dir relative to project root, ``memory`` style."""
+        return self._instance_rel + "memory"
 
     # ------------------------------------------------------------------
     # Staging (re-init)
@@ -104,10 +161,21 @@ class MemoryInitializer:
         cmds_tpl.mkdir(parents=True, exist_ok=True)
         self._write_memory_command_content(cmds_tpl)
 
-        # Stage AGENTS.md memory section
-        (tpl / "memory-md-section.md").write_text(self._memory_claude_md_section())
+        # Stage ROLE / AGENTS section.
+        if self._instance_root is not None and self._instance_root != root:
+            inst_rel = self._instance_root.relative_to(root)
+            staged_role = tpl / inst_rel / "ROLE.md"
+            staged_role.parent.mkdir(parents=True, exist_ok=True)
+            write_guarded(staged_role, self._role_md_body(), ALLMIGHT_MARKER_MD)
+        else:
+            # Legacy: stage marker-fenced section file like before.
+            marker = "<!-- ALL-MIGHT-MEMORY -->"
+            body = self._role_md_body()
+            if body.startswith(ALLMIGHT_MARKER_MD):
+                body = body[len(ALLMIGHT_MARKER_MD):].lstrip("\n")
+            (tpl / "memory-md-section.md").write_text(f"{marker}\n{body}")
 
-        # Stage opencode.json and memory-load.ts
+        # Stage opencode.json and plugins
         import json
         opencode_config = {}
         (tpl / "opencode.json").write_text(json.dumps(opencode_config, indent=2) + "\n")
@@ -116,7 +184,13 @@ class MemoryInitializer:
             write_guarded(tpl / filename, content, ALLMIGHT_MARKER_TS)
 
     def _write_memory_command_content(self, commands_dir: Path) -> None:
-        """Write memory command content to a directory."""
+        """Write memory command content (just /remember and /recall).
+
+        ``/reflect`` is no longer a separate command — its end-of-session
+        review work folds into ``/remember`` under a ``## Reflect``
+        section, since both flows touch the same memory layers and the
+        agent picks the mode based on trigger context.
+        """
         write_guarded(
             commands_dir / "remember.md",
             self._remember_command_body(),
@@ -127,28 +201,24 @@ class MemoryInitializer:
             self._recall_command_body(),
             ALLMIGHT_MARKER_MD,
         )
-        write_guarded(
-            commands_dir / "reflect.md",
-            self._reflect_command_body(),
-            ALLMIGHT_MARKER_MD,
-        )
 
-    def _memory_claude_md_section(self) -> str:
-        """Return the ALL-MIGHT-MEMORY section content for CLAUDE.md."""
-        marker = "<!-- ALL-MIGHT-MEMORY -->"
-        return f"""{marker}
-## Agent Memory
+    def _role_md_body(self) -> str:
+        """Return the memory keeper's ROLE.md body."""
+        return f"""{ALLMIGHT_MARKER_MD}
+# Memory Keeper
 
-The agent can **remember things across sessions**: preferences,
+You remember things across sessions for this project: preferences,
 decisions, corrections, learned patterns, and per-corpus personal
 state (TODOs, shortcuts, ad-hoc notes).
-(*corpus = workspace; see the All-Might section above for definition*)
+(*corpus = workspace; see the corpus keeper's role for the
+definition*)
+
+### Capabilities
 
 | Command | What it does |
 |---------|-------------|
-| `/remember` | Save knowledge under the right scope |
+| `/remember` | Save knowledge under the right scope; also runs end-of-session reflection (cap audit, scoping audit, insights) |
 | `/recall` | Search past journal entries via SMAK |
-| `/reflect` | End-of-session review to keep memory tidy |
 
 ### Scope-first principle
 
@@ -167,7 +237,7 @@ per-corpus, or a historical log before choosing where to write it.
 When unsure, prefer **narrower scope**: a workspace file beats a
 project-wide file beats `journal/general/`.
 
-See `/remember`, `/recall`, and `/reflect` commands for detailed guides.
+See `/remember` and `/recall` commands for detailed guides.
 """
 
     def _opencode_plugin_content(self) -> str:
@@ -666,13 +736,27 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
     # ------------------------------------------------------------------
 
     def _generate_memory_commands(self, root: Path) -> None:
-        """Generate /remember, /recall, and /reflect commands."""
-        commands_dir = root / ".opencode" / "commands"
+        """Generate /remember and /recall commands."""
+        commands_dir, _ = self._agent_surface_dirs(root)
         commands_dir.mkdir(parents=True, exist_ok=True)
         self._write_memory_command_content(commands_dir)
 
     def _remember_command_body(self) -> str:
         return """\
+Persist memory and maintain its quality. Two modes — pick the one that
+matches the trigger context:
+
+- **Record** — default for explicit "remember X" requests and the
+  per-turn nudges. Capture a single observation now.
+- **Reflect** — default for end-of-session, pre-compaction, and the
+  L1 cap-audit nudge (`memory/.l1-over-cap`). Audit the whole memory
+  surface for staleness, scope drift, and missing insights.
+
+If unsure which mode applies, run **Record**; if `memory/.l1-over-cap`
+exists or the trigger is a session-boundary event, run **Reflect**.
+
+# Record
+
 Record something worth persisting beyond this session.
 
 ## Reflect first, then record
@@ -814,13 +898,13 @@ narrower per-corpus location.
 
 `MEMORY.md` is loaded every turn by a hook, so unbounded growth costs
 every agent turn. A Stop hook audits the byte cap and — if exceeded —
-writes `memory/.l1-over-cap` to nudge the next turn to triage via
-`/reflect`.
+writes `memory/.l1-over-cap` to nudge the next turn into the
+**Reflect** mode below for triage.
 
 ## After remembering
 
 1. Log what you remembered to `memory/usage.log` (scope tag enables
-   `/reflect` to audit drift):
+   the Reflect mode to audit drift):
 ```
 <ISO-8601> remember scope=<project|workspace> workspace=<name|-> kind=<understanding|todos|journal|…> "<brief>"
 ```
@@ -833,6 +917,131 @@ writes `memory/.l1-over-cap` to nudge the next turn to triage via
 - Trivial observations re-derivable from code
 - Information already captured in sidecar enrichment
 - Temporary debug notes
+
+# Reflect
+
+Structured self-reflection to maintain memory quality.
+
+Run periodically (end of session, after major work, when the cap-audit
+sentinel appears) to keep memory accurate and tidy.
+
+## Steps
+
+### 1. Review L1 — MEMORY.md
+
+Read `MEMORY.md` at project root. Ask yourself:
+- Is the Project Map still accurate? Any new workspaces to add?
+- Are Active Goals still current? Remove completed ones.
+- Any Key Facts that are stale or wrong?
+
+Update directly if anything changed.
+
+### 2. Review L2 — Understanding
+
+For each workspace you worked on this session, read
+`memory/understanding/<workspace>.md`. Ask:
+- Did I learn new architecture details? Add them.
+- Did I discover a debug SOP or gotcha? Document it.
+- Is the Key Files section still accurate?
+
+Create the file if it doesn't exist yet.
+
+### 2b. Audit per-corpus scoping
+
+List the files under `memory/` and check that each is scoped correctly
+under the **scope-first** principle (see the **Record** section above):
+
+- Anything in `MEMORY.md` that is really about *one* workspace?
+  → Move it to the per-corpus file and leave at most a one-line
+  pointer in `MEMORY.md` if the user truly needs it up front.
+- Any `memory/journal/general/` entry that is really workspace-specific?
+  → Move it under `memory/journal/<workspace>/`.
+- Any ad-hoc per-corpus files you (or a past session) created —
+  `memory/todos/<workspace>.md`, `memory/shortcuts/<workspace>.md`,
+  etc.? → Confirm the name follows `<kind>/<workspace>.md` and the
+  content is genuinely workspace-specific.
+
+The goal: no matter what `<kind>` of personalized memory exists, it
+lives under a consistent `memory/<kind>/<workspace>.md` path.
+
+### 2c. L1 cap triage
+
+Check for the cap-audit nudge sentinel:
+
+```bash
+cat memory/.l1-over-cap 2>/dev/null
+```
+
+If the file exists, MEMORY.md has grown past its byte cap. Triage
+without waiting:
+
+1. Read `MEMORY.md` line by line. For each line, classify it:
+   - **Portable** (still useful in *any* corpus) → keep in L1.
+   - **Corpus-specific** → move to
+     `memory/understanding/<workspace>.md`.
+   - **Open TODO / WIP** → move to `memory/todos/<workspace>.md` (or
+     the matching `<kind>/<workspace>.md`).
+2. Distill duplicates and stale bullets; keep the essence only.
+3. Save `MEMORY.md`. The next Stop hook re-audits and removes
+   `memory/.l1-over-cap` automatically when the body is back under
+   cap.
+
+**The cap never silently evicts anything** — this step is the only
+place non-portable content leaves L1.
+
+### 3. Log to L3 — Journal
+
+Summarize what you learned this session as a journal entry in
+`memory/journal/<workspace>/` or `memory/journal/general/`. Wrap it
+with **v1 frontmatter** (see the **Record** section for the full
+field list) so future offline analysis can query it; set
+`type: reflection` and `trigger: slash_remember_reflect`.
+
+### 4. Usage Review — Feedback Loop
+
+Read `memory/usage.log` and analyze this session's activity:
+
+- **Recalls**: How many `/recall` searches? Were results useful (`used` > 0)?
+  - If a topic was recalled often → consider promoting it to L2 understanding
+  - If recalls returned 0 results → knowledge gap, write it to journal
+- **Remembers**: What categories? Are you remembering broadly or narrowly?
+  - All in one workspace → good depth
+  - Scattered across many → check if L1 project map needs updating
+- **Enrichments**: Did you `/enrich` any symbols this session?
+  - If you read code but didn't enrich → were there opportunities missed?
+- **Stale L2**: List `memory/understanding/*.md` files. Any not loaded this
+  session that haven't been updated in a while? Flag them.
+- **Scope drift**: Count `remember` entries grouped by `scope=` and
+  `kind=`. If per-corpus personal state is piling up under
+  `scope=project` or `workspace=-`, the agent is being too generic —
+  re-scope those entries to their workspace.
+
+### 5. Generate Insights
+
+Based on your usage review, write 2-3 actionable insights to
+`memory/journal/general/` as a reflection entry.
+
+### 6. Re-index (if needed)
+
+If you added journal entries, re-index for `/recall`:
+```bash
+smak ingest --config memory/smak_config.yaml
+```
+
+### 7. Log the reflection
+
+Append to `memory/usage.log`:
+```
+<ISO-8601> reflect insights=<N>
+```
+
+## When to reflect
+
+- End of a productive session
+- After completing a major task
+- When the Memory Nudge reminds you
+- When `memory/.l1-over-cap` appears
+- When the user asks you to consolidate what you learned
 """
 
     def _recall_command_body(self) -> str:
@@ -903,197 +1112,70 @@ Log the recall to `memory/usage.log`:
 ```
 """
 
-    def _reflect_command_body(self) -> str:
-        return """\
-Structured self-reflection to maintain memory quality.
-
-Run periodically (end of session, after major work) to keep memory
-accurate and tidy.
-
-## Steps
-
-### 1. Review L1 — MEMORY.md
-
-Read `MEMORY.md` at project root. Ask yourself:
-- Is the Project Map still accurate? Any new workspaces to add?
-- Are Active Goals still current? Remove completed ones.
-- Any Key Facts that are stale or wrong?
-
-Update directly if anything changed.
-
-### 2. Review L2 — Understanding
-
-For each workspace you worked on this session, read
-`memory/understanding/<workspace>.md`. Ask:
-- Did I learn new architecture details? Add them.
-- Did I discover a debug SOP or gotcha? Document it.
-- Is the Key Files section still accurate?
-
-Create the file if it doesn't exist yet.
-
-### 2b. Audit per-corpus scoping
-
-List the files under `memory/` and check that each is scoped correctly
-under the **scope-first** principle (see `/remember`):
-
-- Anything in `MEMORY.md` that is really about *one* workspace?
-  → Move it to the per-corpus file and leave at most a one-line
-  pointer in `MEMORY.md` if the user truly needs it up front.
-- Any `memory/journal/general/` entry that is really workspace-specific?
-  → Move it under `memory/journal/<workspace>/`.
-- Any ad-hoc per-corpus files you (or a past session) created —
-  `memory/todos/<workspace>.md`, `memory/shortcuts/<workspace>.md`,
-  etc.? → Confirm the name follows `<kind>/<workspace>.md` and the
-  content is genuinely workspace-specific.
-
-The goal: no matter what `<kind>` of personalized memory exists, it
-lives under a consistent `memory/<kind>/<workspace>.md` path.
-
-### 2c. L1 cap triage
-
-Check for the cap-audit nudge sentinel:
-
-```bash
-cat memory/.l1-over-cap 2>/dev/null
-```
-
-If the file exists, MEMORY.md has grown past its byte cap. Triage
-without waiting:
-
-1. Read `MEMORY.md` line by line. For each line, classify it:
-   - **Portable** (still useful in *any* corpus) → keep in L1.
-   - **Corpus-specific** → move to
-     `memory/understanding/<workspace>.md`.
-   - **Open TODO / WIP** → move to `memory/todos/<workspace>.md` (or
-     the matching `<kind>/<workspace>.md`).
-2. Distill duplicates and stale bullets; keep the essence only.
-3. Save `MEMORY.md`. The next Stop hook re-audits and removes
-   `memory/.l1-over-cap` automatically when the body is back under
-   cap.
-
-**The cap never silently evicts anything** — this step is the only
-place non-portable content leaves L1.
-
-### 3. Log to L3 — Journal
-
-Summarize what you learned this session as a journal entry in
-`memory/journal/<workspace>/` or `memory/journal/general/`. Wrap it with
-**v1 frontmatter** (see `/remember` for the full field list) so future
-offline analysis can query it:
-
-```markdown
----
-allmight_journal: v1
-id: <ISO-8601 timestamp + short hash>
-type: reflection
-workspace: <name>      # or: general
-trigger: slash_reflect
-input: |
-  <what prompted this reflection>
-tool_calls: []
-output: |
-  <the reflection in one line>
-outcome_label: success
-tags: [<keywords>]
-supersedes: null
-created_at: <ISO-8601>
----
-# <date> — <brief title>
-
-<Summary of discoveries, decisions, and insights.>
-```
-
-### 4. Usage Review — Feedback Loop
-
-Read `memory/usage.log` and analyze this session's activity:
-
-- **Recalls**: How many `/recall` searches? Were results useful (`used` > 0)?
-  - If a topic was recalled often → consider promoting it to L2 understanding
-  - If recalls returned 0 results → knowledge gap, write it to journal
-- **Remembers**: What categories? Are you remembering broadly or narrowly?
-  - All in one workspace → good depth
-  - Scattered across many → check if L1 project map needs updating
-- **Enrichments**: Did you `/enrich` any symbols this session?
-  - If you read code but didn't enrich → were there opportunities missed?
-- **Stale L2**: List `memory/understanding/*.md` files. Any not loaded this
-  session that haven't been updated in a while? Flag them.
-- **Scope drift**: Count `remember` entries grouped by `scope=` and
-  `kind=`. If per-corpus personal state is piling up under
-  `scope=project` or `workspace=-`, the agent is being too generic —
-  re-scope those entries to their workspace.
-
-### 5. Generate Insights
-
-Based on your usage review, write 2-3 actionable insights to
-`memory/journal/general/` as a reflection entry:
-
-```markdown
-# <date> — Reflection Insights
-
-## Usage Summary
-- Recalls: N (M useful)
-- Remembers: N (topics: ...)
-- Enrichments: N symbols
-
-## Insights
-- <what worked well>
-- <what could improve>
-- <knowledge gaps discovered>
-```
-
-### 6. Re-index (if needed)
-
-If you added journal entries, re-index for `/recall`:
-```bash
-smak ingest --config memory/smak_config.yaml
-```
-
-### 7. Log the reflection
-
-Append to `memory/usage.log`:
-```
-<ISO-8601> reflect insights=<N>
-```
-
-## When to reflect
-
-- End of a productive session
-- After completing a major task
-- When the Memory Nudge reminds you
-- When the user asks you to consolidate what you learned
-"""
-
     # ------------------------------------------------------------------
-    # CLAUDE.md update
+    # ROLE.md (per-personality role description)
     # ------------------------------------------------------------------
 
-    def _update_agents_md(self, root: Path) -> None:
-        """Append memory system section to AGENTS.md."""
+    def _write_role_md(self, root: Path, force: bool = False) -> None:
+        """Write the memory keeper's role description.
+
+        Registry-driven mode (``instance_root`` set and != ``root``):
+        writes ``personalities/<n>/ROLE.md``; the registry's
+        ``compose_agents_md`` stitches into the single root AGENTS.md.
+
+        Legacy direct-call mode: splices a marker-fenced section into
+        root ``AGENTS.md`` for backward compat with tests / clone /
+        merge that bypass the registry. Removed once those callers
+        migrate (§B.6.3).
+        """
+        if self._instance_root is not None and self._instance_root != root:
+            self._instance_root.mkdir(parents=True, exist_ok=True)
+            write_guarded(
+                self._instance_root / "ROLE.md",
+                self._role_md_body(),
+                ALLMIGHT_MARKER_MD,
+                force=force,
+            )
+        else:
+            self._write_legacy_agents_md(root)
+
+    def _write_legacy_agents_md(self, root: Path) -> None:
+        """Splice the memory section into root AGENTS.md (legacy path)."""
         agents_md = root / "AGENTS.md"
-
         if agents_md.is_symlink():
             agents_md.unlink()
 
         marker = "<!-- ALL-MIGHT-MEMORY -->"
-        memory_section = self._memory_claude_md_section()
+        body = self._role_md_body()
+        if body.startswith(ALLMIGHT_MARKER_MD):
+            body = body[len(ALLMIGHT_MARKER_MD):].lstrip("\n")
+        section = f"{marker}\n{body}"
 
         if agents_md.exists():
             content = agents_md.read_text()
             if marker in content:
                 before = content[: content.index(marker)]
-                content = before.rstrip() + "\n\n" + memory_section
+                content = before.rstrip() + "\n\n" + section
             else:
-                content = content.rstrip() + "\n\n" + memory_section
+                content = content.rstrip() + "\n\n" + section
             agents_md.write_text(content)
         else:
-            agents_md.write_text(f"# Project\n\n{memory_section}")
+            agents_md.write_text(f"# Project\n\n{section}")
 
     # ------------------------------------------------------------------
     # OpenCode compatibility
     # ------------------------------------------------------------------
 
     def _generate_opencode_json(self, root: Path) -> None:
-        """Generate opencode.json for OpenCode compatibility."""
+        """Generate opencode.json for OpenCode compatibility.
+
+        Idempotent and non-destructive: ``$schema`` is only set when
+        absent, so a project pointed at a corporate mirror keeps its
+        own schema URL. The registry-driven init also calls
+        ``write_init_scaffold`` which does the same thing — both
+        callers must use ``setdefault`` semantics, otherwise a
+        re-init overwrites the user's choice.
+        """
         import json
 
         opencode_dir = root / ".opencode"
@@ -1108,7 +1190,7 @@ Append to `memory/usage.log`:
         else:
             config = {}
 
-        config["$schema"] = "https://opencode.ai/config.json"
+        config.setdefault("$schema", "https://opencode.ai/config.json")
 
         opencode_json.write_text(json.dumps(config, indent=2) + "\n")
 
@@ -1161,7 +1243,11 @@ Append to `memory/usage.log`:
             pkg_path.write_text(self._opencode_package_json_content())
 
     def _generate_opencode_plugins(self, root: Path) -> None:
-        """Generate all OpenCode plugins under .opencode/plugins/.
+        """Generate all OpenCode plugins inside the instance plugins/ dir.
+
+        Composition (registry-driven) symlinks each plugin under root
+        ``.opencode/plugins/``; the legacy direct path is used when no
+        instance_root is supplied.
 
         Writes five plugin files:
         - memory-load.ts   — primes MEMORY.md + scope-first principle per session
@@ -1170,7 +1256,7 @@ Append to `memory/usage.log`:
         - trajectory-writer.ts — F5: captures structured session trajectory
         - usage-logger.ts  — real-time appends to memory/usage.log
         """
-        plugins_dir = root / ".opencode" / "plugins"
+        _, plugins_dir = self._agent_surface_dirs(root)
         plugins_dir.mkdir(parents=True, exist_ok=True)
 
         for filename, content in self._opencode_plugin_map().items():
@@ -1189,11 +1275,12 @@ Append to `memory/usage.log`:
     def _usage_logger_plugin_content(self) -> str:
         """Return the OpenCode usage-logger.ts plugin content.
 
-        Real-time append to memory/usage.log so /reflect's drift audit
-        never depends on the agent remembering to log. The agent's
-        manual post-action log entries (in /remember, /recall, /reflect)
-        still add richer scope/kind annotations on top — this plugin
-        only guarantees that the file is populated as events happen.
+        Real-time append to memory/usage.log so the Reflect-mode drift
+        audit (inside /remember) never depends on the agent remembering
+        to log. The agent's manual post-action log entries (in
+        /remember and /recall) still add richer scope/kind annotations
+        on top — this plugin only guarantees that the file is populated
+        as events happen.
 
         Writes use appendFileSync (sync I/O) so each entry lands on disk
         before the hook returns; nothing is buffered.
@@ -1203,11 +1290,11 @@ Append to `memory/usage.log`:
  * Usage Logger — OpenCode plugin (All-Might)
  *
  * Real-time appends to memory/usage.log. Independent of the agent
- * remembering to log inside /remember, /recall, /reflect — the
- * file is updated as events happen, not at end-of-action.
+ * remembering to log inside /remember and /recall — the file is
+ * updated as events happen, not at end-of-action.
  *
  * Captured:
- *   - chat.message       — detects /remember, /recall, /reflect in user text
+ *   - chat.message       — detects /remember and /recall in user text
  *   - tool.execute.after — detects writes under memory/ via Write/Edit
  *
  * appendFileSync flushes synchronously, so every entry hits disk
@@ -1217,7 +1304,7 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { appendFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 
-const COMMAND_RE = /(?:^|\\s)\\/(remember|recall|reflect)\\b/;
+const COMMAND_RE = /(?:^|\\s)\\/(remember|recall)\\b/;
 
 function append(cwd: string, line: string): void {
   const p = join(cwd, "memory", "usage.log");

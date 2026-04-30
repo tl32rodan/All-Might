@@ -8,8 +8,8 @@ L3: memory/journal/ + store/ (text files + SMAK vector index)
 import pytest
 import yaml
 
-from allmight.memory.config import MemoryConfigManager
-from allmight.memory.initializer import MemoryInitializer
+from allmight.capabilities.memory_keeper.config import MemoryConfigManager
+from allmight.capabilities.memory_keeper.initializer import MemoryInitializer
 
 
 def _slice_hook(content: str, hook_key: str) -> str:
@@ -169,7 +169,7 @@ class TestMemoryInitializer:
 
     def test_reflect_audits_scoping(self, project_root):
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "scop" in content.lower()  # scope / scoping
 
     def test_agents_md_teaches_scoping(self, project_root):
@@ -611,12 +611,12 @@ class TestReflectCommand:
 
     def test_creates_reflect_command(self, project_root):
         MemoryInitializer().initialize(project_root)
-        assert (project_root / ".opencode" / "commands" / "reflect.md").exists()
+        assert (project_root / ".opencode" / "commands" / "remember.md").exists()
 
     def test_reflect_mentions_all_tiers(self, project_root):
         """reflect.md references L1, L2, and L3."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "MEMORY.md" in content
         assert "understanding" in content
         assert "journal" in content
@@ -624,7 +624,7 @@ class TestReflectCommand:
     def test_reflect_has_checklist(self, project_root):
         """reflect.md has a structured checklist for the agent."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "## How" in content or "## Checklist" in content or "## Steps" in content
 
 
@@ -652,14 +652,14 @@ class TestFeedbackLoop:
     def test_reflect_reads_usage_log(self, project_root):
         """reflect.md includes usage review step."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "usage.log" in content
         assert "Usage Review" in content or "usage review" in content
 
     def test_reflect_generates_insights(self, project_root):
         """reflect.md has an insights generation step."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "Insight" in content or "insight" in content
 
 
@@ -674,7 +674,7 @@ class TestJournalFrontmatterTemplates:
 
     def test_reflect_template_has_v1_sentinel(self, project_root):
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
         assert "allmight_journal: v1" in content
 
 
@@ -742,12 +742,12 @@ class TestUsageLoggerPlugin:
         assert '"memory"' in content
 
     def test_usage_logger_detects_slash_commands(self, project_root):
-        """Plugin must catch /remember, /recall, /reflect in user text."""
+        """Plugin must catch /remember and /recall in user text."""
         MemoryInitializer().initialize(project_root)
         content = (
             project_root / ".opencode" / "plugins" / "usage-logger.ts"
         ).read_text()
-        assert "remember|recall|reflect" in content
+        assert "remember|recall" in content
         assert '"chat.message":' in content
 
     def test_usage_logger_tracks_memory_writes(self, project_root):
@@ -843,7 +843,7 @@ class TestMemoryOverwriteGuard:
     def test_memory_commands_carry_marker(self, project_root):
         MemoryInitializer().initialize(project_root)
         cmds = project_root / ".opencode" / "commands"
-        for name in ("remember.md", "recall.md", "reflect.md"):
+        for name in ("remember.md", "recall.md"):
             assert "<!-- all-might generated -->" in (cmds / name).read_text(), name
 
     def test_plugins_carry_ts_marker(self, project_root):

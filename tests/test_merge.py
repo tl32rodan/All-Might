@@ -1,423 +1,190 @@
-"""Tests for One-for-All Merge — combining knowledge bases.
+"""Tests for the instance-level merge workflow.
 
-Feature 2: ``allmight merge <source>`` copies knowledge graph workspaces
-and memory from another All-Might project into the current one.
-Conflicts produce ``.incoming`` suffixes for agent-driven resolution
-via ``/sync``.
+The previous project-level ``ProjectMerger`` is replaced by
+``InstanceMerger``: the unit of work is now a single personality
+instance, not a whole All-Might project. Tests below cover the two
+operating modes (combine vs side-by-side) and the dry-run path.
 """
 
-import yaml
+from __future__ import annotations
+
+from pathlib import Path
+
 import pytest
+import yaml
 
-from allmight.merge.merger import ProjectMerger
-
-
-def _make_allmight_project(root, workspaces=None, understanding=None, journal=None):
-    """Create a minimal All-Might project structure.
-
-    Args:
-        root: Project root path.
-        workspaces: dict of {name: {index_name: [paths]}} for knowledge_graph.
-        understanding: dict of {name: content} for memory/understanding/.
-        journal: dict of {subdir/filename: content} for memory/journal/.
-    """
-    # Mark as initialized
-    (root / ".allmight").mkdir(parents=True, exist_ok=True)
-    (root / "knowledge_graph").mkdir(exist_ok=True)
-    (root / "memory" / "understanding").mkdir(parents=True, exist_ok=True)
-    (root / "memory" / "journal").mkdir(parents=True, exist_ok=True)
-    (root / "memory" / "store").mkdir(parents=True, exist_ok=True)
-
-    # Create workspaces
-    for ws_name, indices in (workspaces or {}).items():
-        ws_dir = root / "knowledge_graph" / ws_name
-        ws_dir.mkdir(parents=True, exist_ok=True)
-        (ws_dir / "store").mkdir(exist_ok=True)
-        config = {"indices": []}
-        for idx_name, paths in indices.items():
-            config["indices"].append({
-                "name": idx_name,
-                "uri": f"./store/{idx_name}",
-                "paths": paths,
-            })
-        (ws_dir / "config.yaml").write_text(yaml.dump(config))
-
-    # Create understanding files
-    for name, content in (understanding or {}).items():
-        (root / "memory" / "understanding" / name).write_text(content)
-
-    # Create journal entries
-    for filepath, content in (journal or {}).items():
-        journal_file = root / "memory" / "journal" / filepath
-        journal_file.parent.mkdir(parents=True, exist_ok=True)
-        journal_file.write_text(content)
+from allmight.cli import main
+from allmight.merge.merger import InstanceMerger
 
 
 @pytest.fixture
-def source_project(tmp_path):
-    root = tmp_path / "source"
-    root.mkdir()
-    return root
-
-
-@pytest.fixture
-def target_project(tmp_path):
-    root = tmp_path / "target"
-    root.mkdir()
-    return root
-
-
-@pytest.fixture
-def merger():
-    return ProjectMerger()
-
-
-# ======================================================================
-# Validation
-# ======================================================================
-
-
-class TestMergeValidation:
-    """Merge validates source and target are All-Might projects."""
-
-    def test_merge_rejects_non_allmight_source(self, target_project, tmp_path, merger):
-        _make_allmight_project(target_project)
-        empty_dir = tmp_path / "not_allmight"
-        empty_dir.mkdir()
-
-        with pytest.raises(ValueError, match="not.*All-Might"):
-            merger.merge(source=empty_dir, target=target_project)
-
-    def test_merge_rejects_non_allmight_target(self, source_project, tmp_path, merger):
-        _make_allmight_project(source_project)
-        empty_dir = tmp_path / "not_allmight"
-        empty_dir.mkdir()
-
-        with pytest.raises(ValueError, match="not.*All-Might"):
-            merger.merge(source=source_project, target=empty_dir)
-
-    def test_merge_accepts_source_with_knowledge_graph(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, workspaces={"pll": {"rtl": ["./src"]}})
-        _make_allmight_project(target_project)
-
-        # Should not raise
-        merger.merge(source=source_project, target=target_project)
-
-
-# ======================================================================
-# Workspace Merge
-# ======================================================================
-
-
-class TestWorkspaceMerge:
-    """Copying workspaces from source to target."""
-
-    def test_merge_copies_new_workspace(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, workspaces={
-            "pll": {"rtl": ["$DDI_ROOT_PATH/pll/rtl"]}
-        })
-        _make_allmight_project(target_project, workspaces={
-            "stdcell": {"rtl": ["$DDI_ROOT_PATH/stdcell/rtl"]}
-        })
-
-        merger.merge(source=source_project, target=target_project)
-
-        # Target now has both workspaces
-        assert (target_project / "knowledge_graph" / "pll" / "config.yaml").exists()
-        assert (target_project / "knowledge_graph" / "stdcell" / "config.yaml").exists()
-
-    def test_merge_copies_workspace_config(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, workspaces={
-            "pll": {"rtl": ["$DDI_ROOT_PATH/pll/rtl"], "verif": ["$DDI_ROOT_PATH/pll/verif"]}
-        })
-        _make_allmight_project(target_project)
-
-        merger.merge(source=source_project, target=target_project)
-
-        config = yaml.safe_load(
-            (target_project / "knowledge_graph" / "pll" / "config.yaml").read_text()
-        )
-        index_names = [idx["name"] for idx in config["indices"]]
-        assert "rtl" in index_names
-        assert "verif" in index_names
-
-    def test_merge_conflicting_workspace_creates_incoming(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, workspaces={
-            "stdcell": {"rtl": ["$DDI_ROOT_PATH/source_stdcell/rtl"]}
-        })
-        _make_allmight_project(target_project, workspaces={
-            "stdcell": {"rtl": ["$DDI_ROOT_PATH/target_stdcell/rtl"]}
-        })
-
-        merger.merge(source=source_project, target=target_project)
-
-        # Original unchanged
-        config = yaml.safe_load(
-            (target_project / "knowledge_graph" / "stdcell" / "config.yaml").read_text()
-        )
-        assert config["indices"][0]["paths"] == ["$DDI_ROOT_PATH/target_stdcell/rtl"]
-
-        # Incoming created
-        incoming = target_project / "knowledge_graph" / "stdcell.incoming"
-        assert incoming.is_dir()
-        assert (incoming / "config.yaml").exists()
-
-    def test_merge_multiple_workspaces(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, workspaces={
-            "pll": {"rtl": ["./src"]},
-            "sram": {"rtl": ["./src"]},
-            "io": {"rtl": ["./src"]},
-        })
-        _make_allmight_project(target_project, workspaces={
-            "stdcell": {"rtl": ["./src"]}
-        })
-
-        merger.merge(source=source_project, target=target_project)
-
-        kg = target_project / "knowledge_graph"
-        ws_names = sorted(d.name for d in kg.iterdir() if d.is_dir())
-        assert ws_names == ["io", "pll", "sram", "stdcell"]
-
-    def test_merge_workspace_filter(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, workspaces={
-            "pll": {"rtl": ["./src"]},
-            "sram": {"rtl": ["./src"]},
-        })
-        _make_allmight_project(target_project)
-
-        merger.merge(source=source_project, target=target_project, workspaces=["pll"])
-
-        assert (target_project / "knowledge_graph" / "pll").is_dir()
-        assert not (target_project / "knowledge_graph" / "sram").exists()
-
-    def test_merge_dry_run_copies_nothing(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, workspaces={
-            "pll": {"rtl": ["./src"]}
-        })
-        _make_allmight_project(target_project)
-
-        report = merger.merge(source=source_project, target=target_project, dry_run=True)
-
-        assert not (target_project / "knowledge_graph" / "pll").exists()
-        assert report is not None
-        assert "pll" in report.workspaces_added
-
-
-# ======================================================================
-# Memory Merge
-# ======================================================================
-
-
-class TestMemoryMerge:
-    """Merging memory subsystem from source to target."""
-
-    def test_merge_copies_new_understanding_files(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, understanding={
-            "pll.md": "# PLL Architecture\nLock FSM with 3 states."
-        })
-        _make_allmight_project(target_project, understanding={
-            "stdcell.md": "# Stdcell Architecture"
-        })
-
-        merger.merge(source=source_project, target=target_project)
-
-        assert (target_project / "memory" / "understanding" / "pll.md").exists()
-        assert (target_project / "memory" / "understanding" / "stdcell.md").exists()
-
-    def test_merge_conflicting_understanding_creates_incoming(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, understanding={
-            "stdcell.md": "# Source version"
-        })
-        _make_allmight_project(target_project, understanding={
-            "stdcell.md": "# Target version"
-        })
-
-        merger.merge(source=source_project, target=target_project)
-
-        # Original unchanged
-        assert "Target version" in (target_project / "memory" / "understanding" / "stdcell.md").read_text()
-        # Incoming created
-        assert (target_project / "memory" / "understanding" / "stdcell.incoming.md").exists()
-        assert "Source version" in (target_project / "memory" / "understanding" / "stdcell.incoming.md").read_text()
-
-    def test_merge_copies_journal_entries(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, journal={
-            "pll/2026-04-15-lock-fsm.md": "# Lock FSM analysis"
-        })
-        _make_allmight_project(target_project)
-
-        merger.merge(source=source_project, target=target_project)
-
-        assert (target_project / "memory" / "journal" / "pll" / "2026-04-15-lock-fsm.md").exists()
-
-    def test_merge_skips_memory_store(self, source_project, target_project, merger):
-        _make_allmight_project(source_project)
-        # Add binary data to source store
-        (source_project / "memory" / "store" / "index.bin").write_bytes(b"\x00\x01\x02")
-
-        _make_allmight_project(target_project)
-
-        merger.merge(source=source_project, target=target_project)
-
-        assert not (target_project / "memory" / "store" / "index.bin").exists()
-
-    def test_merge_never_touches_memory_md(self, source_project, target_project, merger):
-        _make_allmight_project(source_project)
-        (source_project / "MEMORY.md").write_text("# Source Memory")
-
-        _make_allmight_project(target_project)
-        (target_project / "MEMORY.md").write_text("# Target Memory")
-
-        merger.merge(source=source_project, target=target_project)
-
-        assert "Target Memory" in (target_project / "MEMORY.md").read_text()
-
-    def test_merge_no_memory_flag_skips_all(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, understanding={
-            "pll.md": "# PLL"
-        }, journal={
-            "pll/entry.md": "# Entry"
-        })
-        _make_allmight_project(target_project)
-
-        merger.merge(source=source_project, target=target_project, no_memory=True)
-
-        assert not (target_project / "memory" / "understanding" / "pll.md").exists()
-        assert not (target_project / "memory" / "journal" / "pll").exists()
-
-
-# ======================================================================
-# Merge Report
-# ======================================================================
-
-
-class TestMergeReport:
-    """Merge report generation."""
-
-    def test_report_written_to_allmight_dir(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, workspaces={"pll": {"rtl": ["./src"]}})
-        _make_allmight_project(target_project)
-
-        merger.merge(source=source_project, target=target_project)
-
-        assert (target_project / ".allmight" / "merge-report.yaml").exists()
-
-    def test_report_lists_added_workspaces(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, workspaces={
-            "pll": {"rtl": ["./src"]},
-            "sram": {"rtl": ["./src"]},
-        })
-        _make_allmight_project(target_project)
-
-        report = merger.merge(source=source_project, target=target_project)
-
-        assert "pll" in report.workspaces_added
-        assert "sram" in report.workspaces_added
-
-    def test_report_lists_conflicting_workspaces(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, workspaces={
-            "stdcell": {"rtl": ["./src"]}
-        })
-        _make_allmight_project(target_project, workspaces={
-            "stdcell": {"rtl": ["./src"]}
-        })
-
-        report = merger.merge(source=source_project, target=target_project)
-
-        assert "stdcell" in report.workspaces_conflicting
-
-    def test_report_lists_path_warnings(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, workspaces={
-            "pll": {"rtl": ["../../external/pll/rtl"]}
-        })
-        _make_allmight_project(target_project)
-
-        report = merger.merge(source=source_project, target=target_project)
-
-        assert len(report.warnings) > 0
-        assert any("../../external/pll/rtl" in w for w in report.warnings)
-
-    def test_report_lists_action_needed(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, workspaces={
-            "stdcell": {"rtl": ["./src"]}
-        })
-        _make_allmight_project(target_project, workspaces={
-            "stdcell": {"rtl": ["./src"]}
-        })
-
-        report = merger.merge(source=source_project, target=target_project)
-
-        assert any("/sync" in a for a in report.action_needed)
-
-    def test_report_is_valid_yaml(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, workspaces={"pll": {"rtl": ["./src"]}})
-        _make_allmight_project(target_project)
-
-        merger.merge(source=source_project, target=target_project)
-
-        report_path = target_project / ".allmight" / "merge-report.yaml"
-        data = yaml.safe_load(report_path.read_text())
-        assert "merge" in data
-
-    def test_dry_run_does_not_write_report_file(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, workspaces={"pll": {"rtl": ["./src"]}})
-        _make_allmight_project(target_project)
-
-        merger.merge(source=source_project, target=target_project, dry_run=True)
-
-        assert not (target_project / ".allmight" / "merge-report.yaml").exists()
-
-
-# ======================================================================
-# Sync skill installation after merge
-# ======================================================================
-
-
-class TestMergeInstallsSync:
-    """Merge installs /sync skill and command for conflict resolution."""
-
-    def test_merge_creates_sync_command(self, source_project, target_project, merger):
-        _make_allmight_project(source_project, workspaces={"pll": {"rtl": ["./src"]}})
-        _make_allmight_project(target_project)
-        merger.merge(source=source_project, target=target_project)
-
-        assert (target_project / ".opencode" / "commands" / "sync.md").exists()
-        assert (target_project / ".opencode" / "skills" / "sync" / "SKILL.md").exists()
-
-
-# ======================================================================
-# Merge with Symlinks (from cloned projects)
-# ======================================================================
-
-
-class TestMergeWithSymlinks:
-    """Merging from a clone (source has symlinked workspaces)."""
-
-    def test_merge_from_clone_copies_actual_content(self, tmp_path, target_project, merger):
-        """When merging from a clone, shutil.copytree follows symlinks
-        and copies actual directory contents, not symlinks."""
-        import os
-
-        # Create "original" project with a real workspace
-        original = tmp_path / "original"
-        _make_allmight_project(
-            original, workspaces={"pll": {"rtl": ["./src"]}}
+def two_projects(tmp_path: Path) -> tuple[Path, Path]:
+    """Two real allmight-init'd projects sharing the new layout."""
+    from click.testing import CliRunner
+
+    runner = CliRunner()
+    src = tmp_path / "src_project"
+    dst = tmp_path / "dst_project"
+    src.mkdir()
+    dst.mkdir()
+    for path in (src, dst):
+        result = runner.invoke(main, ["init", "--yes", str(path)])
+        assert result.exit_code == 0, result.output
+    return src, dst
+
+
+class TestInstanceResolution:
+    def test_unknown_instance_raises(self, two_projects: tuple[Path, Path]) -> None:
+        src, dst = two_projects
+        with pytest.raises(ValueError, match="no instance named"):
+            InstanceMerger().merge(src, dst, instance_name="not-there")
+
+    def test_non_allmight_source_raises(self, tmp_path: Path) -> None:
+        src = tmp_path / "src"
+        src.mkdir()
+        dst = tmp_path / "dst"
+        dst.mkdir()
+        (dst / ".allmight").mkdir()
+        (dst / ".allmight" / "personalities.yaml").write_text("personalities: []\n")
+        with pytest.raises(ValueError, match="not an All-Might project"):
+            InstanceMerger().merge(src, dst, instance_name="knowledge")
+
+
+class TestSideBySide:
+    """``--as <new-name>`` installs a second instance whole-cloth."""
+
+    def test_creates_new_instance(self, two_projects: tuple[Path, Path]) -> None:
+        src, dst = two_projects
+        # Add a unique workspace under the source's knowledge instance so
+        # we can detect that side-by-side actually copied content.
+        ws = src / "personalities" / "knowledge" / "knowledge_graph" / "alpha"
+        ws.mkdir(parents=True)
+        (ws / "config.yaml").write_text("indices: []\n")
+
+        InstanceMerger().merge(
+            src, dst, instance_name="knowledge", as_name="alt_knowledge",
         )
 
-        # Create "clone" project with symlinked workspace
-        clone = tmp_path / "clone"
-        _make_allmight_project(clone)
-        os.symlink(
-            str(original / "knowledge_graph" / "pll"),
-            str(clone / "knowledge_graph" / "pll"),
+        new_dir = dst / "personalities" / "alt_knowledge"
+        assert new_dir.is_dir()
+        assert (new_dir / "knowledge_graph" / "alpha" / "config.yaml").is_file()
+
+    def test_registers_in_personalities_yaml(
+        self, two_projects: tuple[Path, Path],
+    ) -> None:
+        src, dst = two_projects
+        InstanceMerger().merge(src, dst, instance_name="knowledge", as_name="alt")
+        rows = yaml.safe_load(
+            (dst / ".allmight" / "personalities.yaml").read_text()
+        )["personalities"]
+        # Writer emits Part-D rows (`name` + `capabilities`); the
+        # legacy `instance` key is gone.
+        names = {row["name"] for row in rows}
+        assert "alt" in names
+
+    def test_collision_with_existing_name_raises(
+        self, two_projects: tuple[Path, Path],
+    ) -> None:
+        src, dst = two_projects
+        with pytest.raises(ValueError, match="already has personalities/knowledge"):
+            InstanceMerger().merge(
+                src, dst, instance_name="knowledge", as_name="knowledge",
+            )
+
+
+class TestCombine:
+    """Default mode folds source content into a same-named target instance."""
+
+    def test_new_files_copy_through(self, two_projects: tuple[Path, Path]) -> None:
+        src, dst = two_projects
+        # Stage a brand-new file under the source instance only; merge
+        # should copy it into the target.
+        kg_dir = src / "personalities" / "knowledge" / "knowledge_graph" / "alpha"
+        kg_dir.mkdir(parents=True, exist_ok=True)
+        (kg_dir / "config.yaml").write_text("indices: []\n")
+
+        InstanceMerger().merge(src, dst, instance_name="knowledge")
+
+        copied = dst / "personalities" / "knowledge" / "knowledge_graph" / "alpha" / "config.yaml"
+        assert copied.is_file()
+
+    def test_conflict_creates_incoming(self, two_projects: tuple[Path, Path]) -> None:
+        src, dst = two_projects
+        # Same workspace dir, different config content -> must produce .incoming.
+        for project in (src, dst):
+            kg_dir = project / "personalities" / "knowledge" / "knowledge_graph" / "alpha"
+            kg_dir.mkdir(parents=True, exist_ok=True)
+            # Real-shape config.yaml so the post-merge path-rewriter pass
+            # has dict-like indices to iterate.
+            (kg_dir / "config.yaml").write_text(
+                "indices:\n"
+                f"  - name: {project.name}\n"
+                "    uri: ./store/x\n"
+                "    description: x\n"
+                "    paths: []\n"
+            )
+
+        report = InstanceMerger().merge(src, dst, instance_name="knowledge")
+
+        incoming = (
+            dst / "personalities" / "knowledge"
+            / "knowledge_graph" / "alpha" / "config.incoming.yaml"
+        )
+        assert incoming.is_file(), report.memory_conflicts
+        original = (
+            dst / "personalities" / "knowledge"
+            / "knowledge_graph" / "alpha" / "config.yaml"
+        )
+        assert "dst_project" in original.read_text()
+        assert any("config.yaml" in entry for entry in report.memory_conflicts)
+
+    def test_dry_run_does_not_write(self, two_projects: tuple[Path, Path]) -> None:
+        src, dst = two_projects
+        kg_dir = src / "personalities" / "knowledge" / "knowledge_graph" / "alpha"
+        kg_dir.mkdir(parents=True, exist_ok=True)
+        (kg_dir / "config.yaml").write_text("indices: []\n")
+
+        report = InstanceMerger().merge(
+            src, dst, instance_name="knowledge", dry_run=True,
         )
 
-        # Merge clone into target
-        _make_allmight_project(target_project)
-        merger.merge(source=clone, target=target_project)
+        assert not (
+            dst / "personalities" / "knowledge"
+            / "knowledge_graph" / "alpha" / "config.yaml"
+        ).is_file()
+        assert report.memory_files_added or report.workspaces_added
 
-        # Target should have a real directory, not a symlink
-        pll = target_project / "knowledge_graph" / "pll"
-        assert pll.is_dir()
-        assert not pll.is_symlink()
-        assert (pll / "config.yaml").exists()
+
+class TestRecomposeAfterMerge:
+    """A successful merge re-runs compose() + compose_agents_md()."""
+
+    def test_root_agents_md_still_marker_stamped(
+        self, two_projects: tuple[Path, Path],
+    ) -> None:
+        src, dst = two_projects
+        InstanceMerger().merge(src, dst, instance_name="knowledge")
+        assert "<!-- all-might generated -->" in (dst / "AGENTS.md").read_text()
+
+
+class TestCliMergeFlags:
+    """Smoke test the new ``allmight merge`` command surface."""
+
+    def test_cli_help_lists_new_flags(self) -> None:
+        from click.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["merge", "--help"])
+        assert result.exit_code == 0
+        assert "--from" in result.output
+        assert "--instance" in result.output
+        assert "--as" in result.output
+        assert "--dry-run" in result.output
+
+    def test_cli_rejects_missing_required_flags(self) -> None:
+        from click.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["merge"])
+        # Click exits 2 for missing required options.
+        assert result.exit_code == 2
+        assert "--from" in result.output or "Missing option" in result.output

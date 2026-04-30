@@ -7,8 +7,8 @@ Commands = HOW (operational guides with smak commands)
 
 import pytest
 
-from allmight.detroit_smak.initializer import ProjectInitializer
-from allmight.detroit_smak.scanner import ProjectScanner
+from allmight.capabilities.corpus_keeper.initializer import ProjectInitializer
+from allmight.capabilities.corpus_keeper.scanner import ProjectScanner
 
 
 @pytest.fixture
