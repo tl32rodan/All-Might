@@ -310,6 +310,181 @@ main.add_command(_build_init_command())
 
 
 # ------------------------------------------------------------------
+# Add / List (personality lifecycle)
+# ------------------------------------------------------------------
+
+@main.command("add")
+@click.argument("name")
+@click.option(
+    "--capabilities",
+    "capabilities_str",
+    default=None,
+    help=(
+        "Comma-separated capability names (e.g. database,memory). "
+        "Default: every discovered capability."
+    ),
+)
+@click.option("--force", is_flag=True, help="Overwrite an existing personality.")
+def add(name: str, capabilities_str: str | None, force: bool) -> None:
+    """Add a personality with one or more capabilities.
+
+    Operates on the current directory; the directory must already be
+    an All-Might project (run ``allmight init`` first). Creates
+    ``personalities/<name>/`` with the requested capability data dirs,
+    runs each capability's install hook, projects any
+    personality-specific entries into ``.opencode/`` via ``compose``,
+    and appends to ``.allmight/personalities.yaml``.
+    """
+    from pathlib import Path as P
+
+    from .core.personalities import (
+        InstallContext,
+        Personality,
+        RegistryEntry,
+        compose,
+        compose_agents_md,
+        discover,
+        read_registry,
+        slugify_instance_name,
+        stage_compose_conflicts,
+        write_registry,
+    )
+    from .capabilities.database.scanner import ProjectScanner
+
+    root = P(".").resolve()
+    if not (root / ".allmight").is_dir():
+        click.echo(
+            f"error: {root} is not an All-Might project (no .allmight/ found). "
+            "Run 'allmight init' first.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    name = slugify_instance_name(name)
+    instance_root = root / "personalities" / name
+
+    existing_entries = read_registry(root)
+    existing_names = {e.instance for e in existing_entries}
+    if (instance_root.exists() or name in existing_names) and not force:
+        click.echo(
+            f"error: personality '{name}' already exists. Pass --force to overwrite.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    all_templates = discover()
+    template_by_name = {t.name: t for t in all_templates}
+
+    if capabilities_str is None:
+        wanted = [t.name for t in all_templates]
+    else:
+        wanted = [c.strip() for c in capabilities_str.split(",") if c.strip()]
+
+    unknown = [c for c in wanted if c not in template_by_name]
+    if unknown:
+        click.echo(
+            f"error: unknown capability/capabilities: {', '.join(unknown)}. "
+            f"Available: {', '.join(sorted(template_by_name))}.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    selected = [template_by_name[c] for c in wanted]
+    if not selected:
+        click.echo("error: --capabilities must list at least one capability.", err=True)
+        raise SystemExit(1)
+
+    scanner = ProjectScanner()
+    manifest = scanner.scan(root)
+
+    ctx = InstallContext(
+        project_root=root,
+        manifest=manifest,
+        staging=False,
+        force=force,
+    )
+    instance = Personality(
+        template=selected[0],
+        project_root=root,
+        name=name,
+        options={},
+        capabilities=[t.name for t in selected],
+    )
+    for tpl in selected:
+        tpl.install(ctx, instance)
+
+    conflicts = compose(root, instance, force=force)
+    stage_compose_conflicts(root, conflicts)
+
+    new_entries = [e for e in existing_entries if e.instance != name]
+    new_entries.append(RegistryEntry(
+        instance=name,
+        capabilities=[t.name for t in selected],
+        versions={t.name: t.version for t in selected},
+    ))
+    write_registry(root, new_entries)
+
+    # Recompose root AGENTS.md so the new personality's ROLE.md shows up.
+    instances: list[Personality] = []
+    for entry in new_entries:
+        primary = template_by_name.get(
+            entry.capabilities[0] if entry.capabilities else entry.template
+        )
+        if primary is None:
+            continue
+        instances.append(Personality(
+            template=primary,
+            project_root=root,
+            name=entry.instance,
+            capabilities=list(entry.capabilities),
+        ))
+    compose_agents_md(root, instances, project_name=manifest.name)
+
+    click.echo(
+        f"All-Might! Added personality '{name}' "
+        f"(capabilities: {', '.join(t.name for t in selected)})."
+    )
+    if conflicts:
+        click.echo(f"  Conflicts: {len(conflicts)} — run /sync to resolve.")
+
+
+@main.command("list")
+def list_personalities() -> None:
+    """List installed personalities in the current All-Might project."""
+    from pathlib import Path as P
+
+    from .core.personalities import read_registry
+
+    root = P(".").resolve()
+    if not (root / ".allmight").is_dir():
+        click.echo(
+            f"error: {root} is not an All-Might project (no .allmight/ found).",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    entries = read_registry(root)
+    if not entries:
+        click.echo("No personalities installed.")
+        return
+
+    name_w = max(len("Personality"), max(len(e.instance) for e in entries))
+    cap_w = max(
+        len("Capabilities"),
+        max(len(", ".join(e.capabilities) or e.template) for e in entries),
+    )
+    click.echo(f"{'Personality':<{name_w}}  {'Capabilities':<{cap_w}}  {'Version'}")
+    click.echo(f"{'-' * name_w}  {'-' * cap_w}  {'-' * 7}")
+    for e in entries:
+        caps = ", ".join(e.capabilities) if e.capabilities else e.template
+        version = (
+            e.versions.get(e.capabilities[0]) if e.capabilities and e.versions
+            else e.version
+        )
+        click.echo(f"{e.instance:<{name_w}}  {caps:<{cap_w}}  {version}")
+
+
+# ------------------------------------------------------------------
 # Clone
 # ------------------------------------------------------------------
 
