@@ -1,7 +1,7 @@
 """L1 cap-audit entry point — invoked by hooks as a script.
 
 Thin module so external runtimes (OpenCode plugin, ad-hoc Stop hooks)
-can call ``python3 -m allmight.personalities.memory_keeper.cap_audit
+can call ``python3 -m allmight.capabilities.memory_keeper.cap_audit
 <project_dir>`` without importing the broader ``l1_rewriter`` surface.
 The actual auditing logic lives in ``l1_rewriter``; this module only
 exposes it as a CLI.
@@ -21,7 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
         print(
-            "usage: python -m allmight.personalities.memory_keeper.cap_audit "
+            "usage: python -m allmight.capabilities.memory_keeper.cap_audit "
             "<project_dir>",
             file=sys.stderr,
         )

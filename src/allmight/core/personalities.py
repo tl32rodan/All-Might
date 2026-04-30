@@ -18,7 +18,7 @@ entrypoints (``AGENTS.md``, ``MEMORY.md``) stay at the project root.
 Design notes
 ------------
 * Templates are plain Python objects, not subclasses. Discovery is a
-  shallow scan of ``allmight.personalities.*`` for a ``TEMPLATE``
+  shallow scan of ``allmight.capabilities.*`` for a ``TEMPLATE``
   attribute. No entry points, no plugin registry — third-party
   authoring is **explicitly out of scope** for this PR (TODO marker
   below).
@@ -94,7 +94,7 @@ class PersonalityTemplate:
 
     Plain dataclass holding metadata plus the two operation callables.
     Built-in templates live as module-level ``TEMPLATE`` constants
-    inside ``allmight.personalities.<name>``.
+    inside ``allmight.capabilities.<name>``.
 
     ``default_instance_name`` is the slug used when ``allmight init``
     runs non-interactively (or the user accepts the default). Should be
@@ -133,7 +133,7 @@ class Personality:
 # ---------------------------------------------------------------------------
 
 
-def discover(package: str = "allmight.personalities") -> list[PersonalityTemplate]:
+def discover(package: str = "allmight.capabilities") -> list[PersonalityTemplate]:
     """Scan ``package`` for subpackages exposing a ``TEMPLATE`` attribute.
 
     Discovery order is the iteration order of ``pkgutil.iter_modules``,

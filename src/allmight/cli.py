@@ -113,7 +113,7 @@ def _init_callback(
         write_init_scaffold,
         write_registry,
     )
-    from .personalities.corpus_keeper.scanner import ProjectScanner
+    from .capabilities.corpus_keeper.scanner import ProjectScanner
 
     root = P(path).resolve()
     scanner = ProjectScanner()
@@ -482,7 +482,7 @@ def memory_init(path: str):
     """
     from pathlib import Path as P
 
-    from .personalities.memory_keeper.initializer import MemoryInitializer
+    from .capabilities.memory_keeper.initializer import MemoryInitializer
 
     root = P(path).resolve()
 
@@ -511,7 +511,7 @@ def memory_export(fmt: str, root: str, out: str):
     """
     from pathlib import Path as P
 
-    from .personalities.memory_keeper.trajectory_export import export_to_jsonl
+    from .capabilities.memory_keeper.trajectory_export import export_to_jsonl
 
     root_path = P(root).resolve()
     out_path = P(out).resolve()

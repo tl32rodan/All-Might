@@ -17,9 +17,9 @@ import yaml
 from allmight.cli import main
 from click.testing import CliRunner
 
-from allmight.personalities.memory_keeper.cap_audit import audit_and_update_sentinel
-from allmight.personalities.memory_keeper.initializer import MemoryInitializer
-from allmight.personalities.memory_keeper.l1_rewriter import (
+from allmight.capabilities.memory_keeper.cap_audit import audit_and_update_sentinel
+from allmight.capabilities.memory_keeper.initializer import MemoryInitializer
+from allmight.capabilities.memory_keeper.l1_rewriter import (
     DEFAULT_MAX_BYTES,
     SENTINEL_MARKER,
     AuditResult,
@@ -122,7 +122,7 @@ class TestModuleRunnableAsScript:
         src_path = Path(__file__).parent.parent / "src"
         env = {"PYTHONPATH": str(src_path), "PATH": ""}
         result = subprocess.run(
-            [sys.executable, "-m", "allmight.personalities.memory_keeper.cap_audit", str(tmp_path)],
+            [sys.executable, "-m", "allmight.capabilities.memory_keeper.cap_audit", str(tmp_path)],
             capture_output=True,
             text=True,
             env={**env, "PATH": "/usr/bin:/bin"},
@@ -164,7 +164,7 @@ class TestStopHookCap:
     """
 
     def test_cap_audit_exposes_entry_point(self):
-        from allmight.personalities.memory_keeper import cap_audit
+        from allmight.capabilities.memory_keeper import cap_audit
 
         assert hasattr(cap_audit, "audit_and_update_sentinel")
         assert callable(cap_audit.audit_and_update_sentinel)
