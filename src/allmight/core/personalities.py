@@ -201,31 +201,33 @@ def discover(package: str = "allmight.capabilities") -> list[PersonalityTemplate
 
 
 # ---------------------------------------------------------------------------
-# Composition (.opencode/<kind>/* symlinks)
+# Composition (upward symlinks personalities/<p>/{skills,commands})
 # ---------------------------------------------------------------------------
 
 
-_COMPOSED_KINDS = ("skills", "commands", "plugins")
+# Each personality dir gets these as symlinks back into the global
+# .opencode/ set. plugins/ is intentionally NOT exposed per-personality:
+# plugins are project-wide hooks, not personality-scoped.
+_COMPOSED_KINDS = ("skills", "commands")
 
 
 @dataclass
 class ComposeConflict:
-    """A composition target we refused to overwrite.
+    """An upward-symlink target we refused to overwrite.
 
-    Raised by ``compose()`` when ``.opencode/<kind>/<name>`` is occupied
-    by content that doesn't carry an All-Might marker — i.e. the user
-    (or some other tool) authored the file. The agent resolves the
-    conflict during ``/sync``.
+    Raised by ``compose()`` when ``personalities/<p>/<kind>`` is
+    occupied by content the user/another tool authored. The agent
+    resolves the conflict during ``/sync``.
 
     Attributes:
-        instance_name: Name of the personality instance that wanted to
-            contribute this entry.
-        kind: One of ``skills``, ``commands``, ``plugins``.
-        basename: Final path component (e.g. ``search.md``).
-        dst: Absolute path of the conflicted destination
-            (``.opencode/<kind>/<basename>``).
-        source: Absolute path of the entry we would have linked to
-            (``personalities/<instance>/<kind>/<basename>``).
+        instance_name: Name of the personality instance.
+        kind: One of ``skills`` or ``commands``.
+        basename: Empty in the upward-symlink model — the whole subdir
+            is the link.
+        dst: Path of the conflicted location
+            (``personalities/<p>/<kind>``).
+        source: Path the symlink would have pointed at
+            (``../../.opencode/<kind>``, relative).
         existing: ``"file"``, ``"directory"``, or
             ``"symlink-to-elsewhere"`` — what currently occupies dst.
     """
@@ -244,107 +246,75 @@ def compose(
     *,
     force: bool = False,
 ) -> list[ComposeConflict]:
-    """Symlink an instance's skills/commands/plugins into ``.opencode/``.
+    """Write upward symlinks ``personalities/<p>/{skills,commands}``.
 
-    For each kind, every entry under ``personalities/<instance>/<kind>/``
-    is mirrored at ``.opencode/<kind>/<basename>`` as a relative
-    symlink pointing back to the instance.
+    Part-D model: capability templates write the agent surface
+    (commands, skills, plugins) directly into ``.opencode/`` once per
+    project. ``compose`` makes each personality dir browsable as a
+    unit by symlinking its ``skills/`` and ``commands/`` back into
+    the global set. ``plugins/`` stays project-wide.
 
     Conflict handling — never raises, returns conflicts instead:
 
-    * **Already correct** (symlink to our entry): idempotent, do nothing.
-    * **Symlink to elsewhere**: returned as a conflict; ``dst`` is left
-      untouched. ``force=True`` overrides and replaces it.
-    * **Regular file with an All-Might marker**: it's our own old
-      generated file — auto-resolve by deleting and re-symlinking.
-    * **Regular file without a marker**: user authored, returned as a
-      conflict; ``dst`` is preserved. ``force=True`` overrides.
-    * **Directory**: returned as a conflict (we never recursively
-      delete user content). ``force=True`` overrides only when the dir
-      is itself a stale All-Might-owned dir (any file with a marker).
+    * **Already correct** (symlink to our target): idempotent, do nothing.
+    * **Symlink to elsewhere**: conflict; left untouched.
+      ``force=True`` overrides.
+    * **Real file/directory at the link target**: conflict; left
+      untouched. ``force=True`` overrides (rmtree dir, unlink file).
 
     The CLI passes the returned list to
     :func:`stage_compose_conflicts` so ``/sync`` can resolve them.
     """
-    from .markers import ALLMIGHT_MARKER_MD, ALLMIGHT_MARKER_TS, ALLMIGHT_MARKER_YAML
-
-    markers = (ALLMIGHT_MARKER_MD, ALLMIGHT_MARKER_TS, ALLMIGHT_MARKER_YAML)
-
-    def _looks_owned(path: Path) -> bool:
-        """True when ``path`` contains any All-Might marker token.
-
-        Used to distinguish *our* old generated content (safe to
-        overwrite) from *user* content (must be staged for ``/sync``).
-        Reads at most a few KB so we don't slurp huge files.
-        """
-        try:
-            head = path.read_bytes()[:4096].decode("utf-8", errors="replace")
-        except OSError:
-            return False
-        return any(m in head for m in markers)
-
-    def _dir_looks_owned(path: Path) -> bool:
-        """True when any file inside ``path`` carries our marker."""
-        for child in path.rglob("*"):
-            if child.is_file() and _looks_owned(child):
-                return True
-        return False
+    instance_root = instance.root
+    instance_root.mkdir(parents=True, exist_ok=True)
 
     conflicts: list[ComposeConflict] = []
 
     for kind in _COMPOSED_KINDS:
-        src_dir = instance.root / kind
-        if not src_dir.is_dir():
-            continue
-        dst_dir = project_root / ".opencode" / kind
-        dst_dir.mkdir(parents=True, exist_ok=True)
-        for entry in sorted(src_dir.iterdir()):
-            dst = dst_dir / entry.name
+        # Ensure the global target exists so the symlink resolves on read.
+        global_dir = project_root / ".opencode" / kind
+        global_dir.mkdir(parents=True, exist_ok=True)
 
-            if dst.is_symlink():
-                if force or dst.resolve() == entry.resolve():
-                    dst.unlink()
+        link_path = instance_root / kind
+        # personalities/<p>/<kind> -> ../../.opencode/<kind>
+        rel_target = Path("..") / ".." / ".opencode" / kind
+
+        if link_path.is_symlink():
+            current = os.readlink(link_path)
+            if current == str(rel_target):
+                continue  # already correct, idempotent
+            if force:
+                link_path.unlink()
+            else:
+                conflicts.append(ComposeConflict(
+                    instance_name=instance.name,
+                    kind=kind,
+                    basename="",
+                    dst=link_path,
+                    source=Path(str(rel_target)),
+                    existing="symlink-to-elsewhere",
+                ))
+                continue
+        elif link_path.exists():
+            if force:
+                if link_path.is_dir():
+                    import shutil
+
+                    shutil.rmtree(link_path)
                 else:
-                    conflicts.append(ComposeConflict(
-                        instance_name=instance.name,
-                        kind=kind,
-                        basename=entry.name,
-                        dst=dst,
-                        source=entry,
-                        existing="symlink-to-elsewhere",
-                    ))
-                    continue
-            elif dst.exists():
-                if dst.is_dir():
-                    if force or _dir_looks_owned(dst):
-                        import shutil
+                    link_path.unlink()
+            else:
+                conflicts.append(ComposeConflict(
+                    instance_name=instance.name,
+                    kind=kind,
+                    basename="",
+                    dst=link_path,
+                    source=Path(str(rel_target)),
+                    existing="directory" if link_path.is_dir() else "file",
+                ))
+                continue
 
-                        shutil.rmtree(dst)
-                    else:
-                        conflicts.append(ComposeConflict(
-                            instance_name=instance.name,
-                            kind=kind,
-                            basename=entry.name,
-                            dst=dst,
-                            source=entry,
-                            existing="directory",
-                        ))
-                        continue
-                else:
-                    if force or _looks_owned(dst):
-                        dst.unlink()
-                    else:
-                        conflicts.append(ComposeConflict(
-                            instance_name=instance.name,
-                            kind=kind,
-                            basename=entry.name,
-                            dst=dst,
-                            source=entry,
-                            existing="file",
-                        ))
-                        continue
-
-            dst.symlink_to(os.path.relpath(entry, dst_dir))
+        link_path.symlink_to(rel_target)
 
     return conflicts
 
@@ -368,14 +338,25 @@ def stage_compose_conflicts(
             path.unlink()
         return None
     path.parent.mkdir(parents=True, exist_ok=True)
+    def _rel(p: Path) -> str:
+        # ``source`` is the symlink target, which is intentionally relative
+        # in the upward-symlink model (e.g. ``../../.opencode/commands``).
+        # ``dst`` is the absolute personality dir we wanted to write into.
+        if p.is_absolute():
+            try:
+                return str(p.relative_to(project_root))
+            except ValueError:
+                return str(p)
+        return str(p)
+
     payload = {
         "compose_conflicts": [
             {
                 "instance": c.instance_name,
                 "kind": c.kind,
                 "basename": c.basename,
-                "dst": str(c.dst.relative_to(project_root)),
-                "source": str(c.source.relative_to(project_root)),
+                "dst": _rel(c.dst),
+                "source": _rel(c.source),
                 "existing": c.existing,
             }
             for c in conflicts

@@ -133,14 +133,15 @@ class MemoryInitializer:
         return self._instance_root / "memory"
 
     def _agent_surface_dirs(self, root: Path) -> tuple[Path, Path]:
-        """Return (commands_dir, plugins_dir) for the instance.
+        """Return (commands_dir, plugins_dir) — always project-global ``.opencode/``.
 
-        Falls back to the legacy ``.opencode/`` paths when there is no
-        instance root, so direct callers (clone, merge) keep working.
+        Part-D: memory capability writes its share of
+        ``.opencode/{commands,plugins}/`` once per project.
+        Per-personality access goes through the upward symlink
+        ``personalities/<p>/commands → ../../.opencode/commands``
+        written by ``compose``.
         """
-        if self._instance_root is None or self._instance_root == root:
-            return root / ".opencode" / "commands", root / ".opencode" / "plugins"
-        return self._instance_root / "commands", self._instance_root / "plugins"
+        return root / ".opencode" / "commands", root / ".opencode" / "plugins"
 
     @property
     def _mem_root_rel(self) -> str:

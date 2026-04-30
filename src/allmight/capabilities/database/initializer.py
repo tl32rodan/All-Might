@@ -225,15 +225,16 @@ class ProjectInitializer:
         )
 
     def _agent_surface_dirs(self, root: Path) -> tuple[Path, Path]:
-        """Return (skills_dir, commands_dir) for the instance.
+        """Return (skills_dir, commands_dir) — always project-global ``.opencode/``.
 
-        Inside the instance dir for the new layout; falls back to the
-        legacy ``.opencode/`` locations when ``instance_root`` is unset
-        (legacy callers like ``merge``) or equal to ``root``.
+        Part-D: capability templates write the agent surface once into
+        the global ``.opencode/{skills,commands}/``. ``compose`` then
+        creates upward symlinks ``personalities/<p>/{skills,commands}``
+        back into the global set. Bodies are generic
+        (``personalities/<active>/...`` placeholders), so a single
+        global write serves every personality.
         """
-        if self._instance_root is None or self._instance_root == root:
-            return root / ".opencode" / "skills", root / ".opencode" / "commands"
-        return self._instance_root / "skills", self._instance_root / "commands"
+        return root / ".opencode" / "skills", root / ".opencode" / "commands"
 
     def _role_md_body(
         self, manifest: ProjectManifest, writable: bool = False,
