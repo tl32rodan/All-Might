@@ -106,9 +106,9 @@ For each entry in `onboard.yaml`'s `folders` list:
    | src/ | corpus | source code |
    | docs/ | memory | reference material |
    ```
-   Don't create knowledge_graph workspace stubs yet — the user runs
-   `/ingest` later for that, and the corpus keeper's commands tell the
-   agent how.
+   Don't create database workspace stubs yet — the user runs
+   `/ingest` later for that, and the database capability's commands
+   tell the agent how.
 
 ### 5. Re-stitch the root AGENTS.md
 

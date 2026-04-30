@@ -139,7 +139,7 @@ class InstanceMerger:
         if dry_run:
             return
         shutil.copytree(source_dir, dest_dir)
-        # Rewrite path-env hints inside any knowledge_graph configs so
+        # Rewrite path-env hints inside any database configs so
         # the new instance points at the destination's environment.
         for cfg in dest_dir.rglob("config.yaml"):
             warnings = self._rewriter.rewrite_config(cfg)
@@ -188,8 +188,8 @@ class InstanceMerger:
         # Walk source instance and copy file-by-file with conflict
         # handling. ``ROLE.md`` and ``config.yaml`` are user/agent-
         # authored, so collisions get the ``.incoming`` suffix; raw
-        # data dirs (knowledge_graph/, memory/journal/) get their
-        # contents copied through where there's no conflict.
+        # data dirs (database/, memory/journal/) get their contents
+        # copied through where there's no conflict.
         for src_path in sorted(source_dir.rglob("*")):
             if not src_path.is_file():
                 continue
@@ -197,7 +197,7 @@ class InstanceMerger:
             dst_path = dest_dir / rel
             if dst_path.exists():
                 if rel.parts and rel.parts[-1] in {"config.yaml", "ROLE.md"} \
-                        or rel.parts[0] in {"memory", "knowledge_graph"} \
+                        or rel.parts[0] in {"memory", "database"} \
                         and dst_path.read_bytes() != src_path.read_bytes():
                     incoming = dst_path.with_name(
                         f"{dst_path.stem}.incoming{dst_path.suffix}"

@@ -1,6 +1,6 @@
 """Test Group 2: Workspace Management.
 
-SMAK workspaces live inside knowledge_graph/. Each has its own
+SMAK workspaces live inside database/. Each has its own
 config.yaml and store/. All-Might discovers them by scanning.
 """
 
@@ -26,7 +26,7 @@ def project_root(tmp_path):
 @pytest.fixture
 def project_with_workspaces(project_root):
     """Project with 3 SMAK workspaces pre-created."""
-    kg = project_root / "knowledge_graph"
+    kg = project_root / "database"
 
     # stdcell: EDA workspace
     stdcell = kg / "stdcell"
@@ -68,17 +68,17 @@ def project_with_workspaces(project_root):
 class TestWorkspaceDiscovery:
 
     def test_discover_workspaces_by_scanning(self, project_with_workspaces):
-        """Scanning knowledge_graph/ finds all workspaces with config.yaml."""
-        kg = project_with_workspaces / "knowledge_graph"
+        """Scanning database/ finds all workspaces with config.yaml."""
+        kg = project_with_workspaces / "database"
         workspaces = [
             d.name for d in sorted(kg.iterdir())
             if d.is_dir() and (d / "config.yaml").exists()
         ]
         assert workspaces == ["io_phy", "pll", "stdcell"]
 
-    def test_discover_empty_knowledge_graph(self, project_root):
-        """Empty knowledge_graph/ returns no workspaces."""
-        kg = project_root / "knowledge_graph"
+    def test_discover_empty_database(self, project_root):
+        """Empty database/ returns no workspaces."""
+        kg = project_root / "database"
         workspaces = [
             d.name for d in kg.iterdir()
             if d.is_dir() and (d / "config.yaml").exists()
@@ -87,7 +87,7 @@ class TestWorkspaceDiscovery:
 
     def test_each_workspace_has_own_config(self, project_with_workspaces):
         """Each workspace has its own SMAK config.yaml with indices."""
-        kg = project_with_workspaces / "knowledge_graph"
+        kg = project_with_workspaces / "database"
 
         stdcell_cfg = yaml.safe_load((kg / "stdcell" / "config.yaml").read_text())
         assert "indices" in stdcell_cfg
@@ -98,7 +98,7 @@ class TestWorkspaceDiscovery:
 
     def test_workspace_store_dir(self, project_with_workspaces):
         """Each workspace has a store/ directory for search data."""
-        kg = project_with_workspaces / "knowledge_graph"
+        kg = project_with_workspaces / "database"
         for ws_name in ("stdcell", "io_phy", "pll"):
             assert (kg / ws_name / "store").is_dir()
 
@@ -113,23 +113,23 @@ class TestWorkspaceDiscovery:
 
 
 class TestWorkspaceSymlinks:
-    """knowledge_graph/ supports both symlinks and real directories."""
+    """database/ supports both symlinks and real directories."""
 
     def test_symlinked_workspace_discovered(self, project_root, tmp_path):
         """A symlinked workspace is discovered as a valid workspace."""
         import os
 
-        # Create a real workspace outside knowledge_graph/
+        # Create a real workspace outside database/
         external_ws = tmp_path / "external_ws"
         external_ws.mkdir()
         (external_ws / "config.yaml").write_text("indices:\n  - name: ext\n")
         (external_ws / "store").mkdir()
 
-        # Symlink it into knowledge_graph/
-        link = project_root / "knowledge_graph" / "external"
+        # Symlink it into database/
+        link = project_root / "database" / "external"
         os.symlink(str(external_ws), str(link))
 
-        kg = project_root / "knowledge_graph"
+        kg = project_root / "database"
         workspaces = [
             d.name for d in sorted(kg.iterdir())
             if d.is_dir() and (d / "config.yaml").exists()
@@ -147,20 +147,20 @@ class TestWorkspaceSymlinks:
             "indices:\n  - name: source_code\n    uri: ./store/sc\n"
         )
 
-        link = project_root / "knowledge_graph" / "linked"
+        link = project_root / "database" / "linked"
         os.symlink(str(external_ws), str(link))
 
         cfg = yaml.safe_load((link / "config.yaml").read_text())
         assert cfg["indices"][0]["name"] == "source_code"
 
     def test_broken_symlink_skipped(self, project_root):
-        """A broken symlink in knowledge_graph/ is silently skipped."""
+        """A broken symlink in database/ is silently skipped."""
         import os
 
-        broken = project_root / "knowledge_graph" / "broken"
+        broken = project_root / "database" / "broken"
         os.symlink("/nonexistent/path", str(broken))
 
-        kg = project_root / "knowledge_graph"
+        kg = project_root / "database"
         # is_dir() returns False for broken symlinks, so they're skipped
         workspaces = [
             d.name for d in sorted(kg.iterdir())

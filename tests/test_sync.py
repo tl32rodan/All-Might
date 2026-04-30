@@ -184,7 +184,7 @@ class TestReInit:
         _full_init(sample_project)
         # Simulate missing directory
         import shutil
-        kg = sample_project / "knowledge_graph"
+        kg = sample_project / "database"
         if kg.exists():
             shutil.rmtree(kg)
 

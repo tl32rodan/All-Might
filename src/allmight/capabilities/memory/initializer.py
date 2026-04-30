@@ -488,7 +488,7 @@ export default RememberTriggerPlugin;
  *               queue it for injection on the next chat.message.
  *
  * Workspace inference: scans any tool's args for a
- * knowledge_graph/<name>/ path fragment. If never seen this session,
+ * database/<name>/ path fragment. If never seen this session,
  * curation at session end writes under "unscoped" workspace.
  */
 import type { Plugin } from "@opencode-ai/plugin";
@@ -513,7 +513,7 @@ function ensure(sid: string): Ledger {
   return s;
 }
 
-const WORKSPACE_RE = /knowledge_graph\\/([^/\\s"']+)/;
+const WORKSPACE_RE = /database\\/([^/\\s"']+)/;
 
 function inferWorkspace(args: any): string | null {
   if (!args) return null;
@@ -1390,7 +1390,7 @@ export default UsageLoggerPlugin;
  *   - tool_calls (each {tool, args} from tool.execute.before,
  *                 annotated with verdict from tool.execute.after)
  *   - output    (accumulated agent response summary)
- *   - workspace (inferred from any knowledge_graph/<name>/ path)
+ *   - workspace (inferred from any database/<name>/ path)
  *
  * Flush triggers:
  *   - experimental.session.compacting — last chance before history is summarised
@@ -1415,7 +1415,7 @@ type Trajectory = {
 
 const sessions = new Map<string, Trajectory>();
 
-const WORKSPACE_RE = /knowledge_graph\\/([^/\\s"']+)/;
+const WORKSPACE_RE = /database\\/([^/\\s"']+)/;
 
 function ensure(sid: string): Trajectory {
   let t = sessions.get(sid);

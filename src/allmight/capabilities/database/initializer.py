@@ -1,9 +1,9 @@
-"""Detroit SMAK Initializer — one punch creates the entire workspace.
+"""Database capability initializer — bootstraps the knowledge-graph data dir.
 
 Takes a ProjectManifest from the Scanner and generates:
-- knowledge_graph/ directory
-- .claude/commands/ (slash commands)
-- Updates CLAUDE.md at project root
+- database/ directory (per-instance)
+- .opencode/commands/ (slash commands) or per-instance commands
+- ROLE.md inside the personality dir
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ class ProjectInitializer:
         # ``initialize()``. ``initialize()`` overwrites them when
         # called.
         self._instance_root: Path | None = None
-        self._instance_rel: str = ""
 
     def initialize(
         self,
@@ -42,15 +41,14 @@ class ProjectInitializer:
                       Default is read-only (search only).
             instance_root: Personality instance directory under
                 ``personalities/<name>/``. The per-instance content
-                (knowledge_graph/, skills/, commands/) lives here.
-                If ``None``, defaults to ``manifest.root_path`` for
-                callers (clone, merge) that haven't migrated yet.
+                (database/, skills/, commands/) lives here. If ``None``,
+                defaults to ``manifest.root_path`` for callers (clone,
+                merge) that haven't migrated yet.
         """
         root = manifest.root_path
         if instance_root is None:
             instance_root = root
         self._instance_root = instance_root
-        self._instance_rel = self._compute_instance_rel(root, instance_root)
         allmight_dir = root / ".allmight"
         is_reinit = allmight_dir.is_dir() and not force
 
@@ -64,7 +62,7 @@ class ProjectInitializer:
                     "Read-only projects cannot be converted to writable."
                 )
 
-        # 1. Create knowledge_graph/ (always safe — mkdir exist_ok)
+        # 1. Create database/ (always safe — mkdir exist_ok)
         self._create_metadata(root, manifest)
 
         if is_reinit:
@@ -104,27 +102,13 @@ class ProjectInitializer:
                 "writable" if writable else "read-only"
             )
 
-    @staticmethod
-    def _compute_instance_rel(root: Path, instance_root: Path) -> str:
-        """Return the instance dir as a forward-slash relative path.
-
-        Used to splice ``personalities/<instance>/knowledge_graph`` into
-        agent-facing strings (commands, AGENTS.md). When ``instance_root
-        == root`` (legacy callers) returns ``""`` so paths collapse back
-        to bare ``knowledge_graph/``.
-        """
-        if instance_root == root:
-            return ""
-        rel = instance_root.relative_to(root)
-        return rel.as_posix() + "/"
-
     def _create_metadata(self, root: Path, manifest: ProjectManifest) -> None:
-        """Create knowledge_graph/ inside the instance dir.
+        """Create database/ inside the instance dir.
 
         Note: config.yaml is NOT created here — it belongs to SMAK workspaces
-        under <kg_root>/<workspace>/config.yaml, not the All-Might project root.
+        under <db_root>/<workspace>/config.yaml, not the All-Might project root.
         """
-        (self._instance_root / "knowledge_graph").mkdir(parents=True, exist_ok=True)
+        (self._instance_root / "database").mkdir(parents=True, exist_ok=True)
 
     def _stage_templates(
         self,
@@ -261,7 +245,7 @@ class ProjectInitializer:
 
     def _role_md_readonly(self, manifest: ProjectManifest) -> str:
         """ROLE.md for the corpus keeper, read-only mode."""
-        kg_root = self._instance_rel + "knowledge_graph"
+        db_root = "personalities/<active>/database"
         sos_prereq = ""
         if manifest.has_path_env:
             sos_prereq = """
@@ -289,7 +273,7 @@ modify corpora (no ingesting, no enriching, no sidecar edits).
 ### Concepts
 
 - **Corpus** (= **workspace**) — one independently-indexed source domain.
-  Each corpus maps to `{kg_root}/<workspace>/` and has its own SMAK
+  Each corpus maps to `{db_root}/<workspace>/` and has its own SMAK
   vector store. A project may have multiple corpora (e.g. `stdcell`, `pll`).
   Source files are indexed **in-place** — only the index is stored locally.
   The corpus name and workspace name are the same string throughout All-Might.
@@ -305,7 +289,7 @@ The `/search` command has a detailed operational guide in `.opencode/commands/`.
 
     def _role_md_writable(self, manifest: ProjectManifest) -> str:
         """ROLE.md for the corpus keeper, writable mode."""
-        kg_root = self._instance_rel + "knowledge_graph"
+        db_root = "personalities/<active>/database"
         sos_prereq = ""
         if manifest.has_path_env:
             sos_prereq = """
@@ -333,7 +317,7 @@ across sessions.
 ### Concepts
 
 - **Corpus** (= **workspace**) — one independently-indexed source domain.
-  Each corpus maps to `{kg_root}/<workspace>/` and has its own SMAK
+  Each corpus maps to `{db_root}/<workspace>/` and has its own SMAK
   vector store. A project may have multiple corpora (e.g. `stdcell`, `pll`).
   Source files are indexed **in-place** — only the index is stored locally.
   The corpus name and workspace name are the same string throughout All-Might.
@@ -353,9 +337,9 @@ guide in `.opencode/commands/`.
 """
 
     def _search_command_body(self) -> str:
-        """Return search.md command content with instance-aware kg path."""
-        kg_root = self._instance_rel + "knowledge_graph"
-        return self._SEARCH_BODY.replace("{kg_root}", kg_root)
+        """Return search.md command content (generic — agent resolves <active>)."""
+        db_root = "personalities/<active>/database"
+        return self._SEARCH_BODY.replace("{db_root}", db_root)
 
     _SEARCH_BODY = """\
 Search the codebase by semantic meaning.
@@ -366,17 +350,17 @@ Results point back to files at their original paths.
 ## How to execute
 
 ```bash
-smak search "<query>" --config {kg_root}/<workspace>/config.yaml --index source_code --top-k 5 --json
+smak search "<query>" --config {db_root}/<workspace>/config.yaml --index source_code --top-k 5 --json
 ```
 
 To search across all corpora at once:
 ```bash
-smak search-all "<query>" --config {kg_root}/<workspace>/config.yaml --top-k 3 --json
+smak search-all "<query>" --config {db_root}/<workspace>/config.yaml --top-k 3 --json
 ```
 
 To look up a specific symbol by UID:
 ```bash
-smak lookup "<file_path>::<symbol_name>" --config {kg_root}/<workspace>/config.yaml --index source_code --json
+smak lookup "<file_path>::<symbol_name>" --config {db_root}/<workspace>/config.yaml --index source_code --json
 ```
 
 ## What to expect
@@ -396,9 +380,9 @@ JSON output with a `results` array. Each result contains:
 """
 
     def _ingest_command_body(self) -> str:
-        """Return ingest.md command content with instance-aware kg path."""
-        kg_root = self._instance_rel + "knowledge_graph"
-        return self._INGEST_BODY.replace("{kg_root}", kg_root)
+        """Return ingest.md command content (generic — agent resolves <active>)."""
+        db_root = "personalities/<active>/database"
+        return self._INGEST_BODY.replace("{db_root}", db_root)
 
     _INGEST_BODY = """\
 Build the SMAK vector index from source files.
@@ -420,12 +404,12 @@ from the search index.
 
 Rebuild all corpora in a workspace:
 ```bash
-smak ingest --config {kg_root}/<workspace>/config.yaml --json
+smak ingest --config {db_root}/<workspace>/config.yaml --json
 ```
 
 Rebuild a specific corpus:
 ```bash
-smak ingest --config {kg_root}/<workspace>/config.yaml --index source_code --json
+smak ingest --config {db_root}/<workspace>/config.yaml --index source_code --json
 ```
 
 ## What to expect
@@ -437,8 +421,8 @@ smak ingest --config {kg_root}/<workspace>/config.yaml --index source_code --jso
 ## Troubleshooting
 
 - If `smak` is not found, ensure SMAK is installed and on PATH
-- Check `smak health --config {kg_root}/<workspace>/config.yaml --json` for diagnostics
-- List available corpora: `smak describe --config {kg_root}/<workspace>/config.yaml --json`
+- Check `smak health --config {db_root}/<workspace>/config.yaml --json` for diagnostics
+- List available corpora: `smak describe --config {db_root}/<workspace>/config.yaml --json`
 """
 
     def _generate_commands(

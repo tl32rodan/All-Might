@@ -1,8 +1,8 @@
 """database capability template.
 
-Generates ``knowledge_graph/`` workspaces, the ``/search``,
-``/enrich``, ``/ingest``, ``/sync`` commands, the AGENTS.md section,
-and the bundled /sync skill.
+Generates ``database/`` workspaces (the on-disk vector index +
+SMAK config), the ``/search``, ``/enrich``, ``/ingest``, ``/sync``
+commands, the AGENTS.md section, and the bundled /sync skill.
 
 The template's ``cli_options`` contribute ``--sos`` and ``--writable``
 to ``allmight init`` — those flags are not interpreted by ``cli.py``;
@@ -47,13 +47,13 @@ def _install(ctx: InstallContext, instance: Personality) -> InstallResult:
 def _status(root: Path, instance: Personality) -> PersonalityStatus:
     """Reflect on-disk presence of the instance's owned files."""
     instance_root = instance.root
-    installed = (instance_root / "knowledge_graph").is_dir()
+    installed = (instance_root / "database").is_dir()
     return PersonalityStatus(
         installed=installed,
         version_on_disk=TEMPLATE.version if installed else None,
         details={
             "instance_root": str(instance_root),
-            "has_knowledge_graph": (instance_root / "knowledge_graph").is_dir(),
+            "has_database": (instance_root / "database").is_dir(),
             "has_commands": (instance_root / "commands").is_dir(),
         },
     )
@@ -71,7 +71,7 @@ TEMPLATE = PersonalityTemplate(
     owned_paths=[
         "personalities/{instance}/skills/**",
         "personalities/{instance}/commands/**",
-        "personalities/{instance}/knowledge_graph/**",
+        "personalities/{instance}/database/**",
         "AGENTS.md",
     ],
     cli_options=[

@@ -479,11 +479,11 @@ class TestOpenCodeHooks:
         assert "## Open" in content
         assert "chat.message" in content
 
-    def test_todo_curator_infers_workspace_from_knowledge_graph_path(self, project_root):
-        """Workspace inference uses the knowledge_graph/<name>/ convention."""
+    def test_todo_curator_infers_workspace_from_database_path(self, project_root):
+        """Workspace inference uses the database/<name>/ convention."""
         MemoryInitializer().initialize(project_root)
         content = (project_root / ".opencode" / "plugins" / "todo-curator.ts").read_text()
-        assert "knowledge_graph" in content
+        assert "database" in content
 
     def test_creates_opencode_package_json(self, project_root):
         """`.opencode/package.json` is generated so Bun can bun-install the plugin dep."""

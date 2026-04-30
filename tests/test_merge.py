@@ -57,7 +57,7 @@ class TestSideBySide:
         src, dst = two_projects
         # Add a unique workspace under the source's knowledge instance so
         # we can detect that side-by-side actually copied content.
-        ws = src / "personalities" / "knowledge" / "knowledge_graph" / "alpha"
+        ws = src / "personalities" / "knowledge" / "database" / "alpha"
         ws.mkdir(parents=True)
         (ws / "config.yaml").write_text("indices: []\n")
 
@@ -67,7 +67,7 @@ class TestSideBySide:
 
         new_dir = dst / "personalities" / "alt_knowledge"
         assert new_dir.is_dir()
-        assert (new_dir / "knowledge_graph" / "alpha" / "config.yaml").is_file()
+        assert (new_dir / "database" / "alpha" / "config.yaml").is_file()
 
     def test_registers_in_personalities_yaml(
         self, two_projects: tuple[Path, Path],
@@ -99,20 +99,20 @@ class TestCombine:
         src, dst = two_projects
         # Stage a brand-new file under the source instance only; merge
         # should copy it into the target.
-        kg_dir = src / "personalities" / "knowledge" / "knowledge_graph" / "alpha"
+        kg_dir = src / "personalities" / "knowledge" / "database" / "alpha"
         kg_dir.mkdir(parents=True, exist_ok=True)
         (kg_dir / "config.yaml").write_text("indices: []\n")
 
         InstanceMerger().merge(src, dst, instance_name="knowledge")
 
-        copied = dst / "personalities" / "knowledge" / "knowledge_graph" / "alpha" / "config.yaml"
+        copied = dst / "personalities" / "knowledge" / "database" / "alpha" / "config.yaml"
         assert copied.is_file()
 
     def test_conflict_creates_incoming(self, two_projects: tuple[Path, Path]) -> None:
         src, dst = two_projects
         # Same workspace dir, different config content -> must produce .incoming.
         for project in (src, dst):
-            kg_dir = project / "personalities" / "knowledge" / "knowledge_graph" / "alpha"
+            kg_dir = project / "personalities" / "knowledge" / "database" / "alpha"
             kg_dir.mkdir(parents=True, exist_ok=True)
             # Real-shape config.yaml so the post-merge path-rewriter pass
             # has dict-like indices to iterate.
@@ -128,19 +128,19 @@ class TestCombine:
 
         incoming = (
             dst / "personalities" / "knowledge"
-            / "knowledge_graph" / "alpha" / "config.incoming.yaml"
+            / "database" / "alpha" / "config.incoming.yaml"
         )
         assert incoming.is_file(), report.memory_conflicts
         original = (
             dst / "personalities" / "knowledge"
-            / "knowledge_graph" / "alpha" / "config.yaml"
+            / "database" / "alpha" / "config.yaml"
         )
         assert "dst_project" in original.read_text()
         assert any("config.yaml" in entry for entry in report.memory_conflicts)
 
     def test_dry_run_does_not_write(self, two_projects: tuple[Path, Path]) -> None:
         src, dst = two_projects
-        kg_dir = src / "personalities" / "knowledge" / "knowledge_graph" / "alpha"
+        kg_dir = src / "personalities" / "knowledge" / "database" / "alpha"
         kg_dir.mkdir(parents=True, exist_ok=True)
         (kg_dir / "config.yaml").write_text("indices: []\n")
 
@@ -150,7 +150,7 @@ class TestCombine:
 
         assert not (
             dst / "personalities" / "knowledge"
-            / "knowledge_graph" / "alpha" / "config.yaml"
+            / "database" / "alpha" / "config.yaml"
         ).is_file()
         assert report.memory_files_added or report.workspaces_added
 

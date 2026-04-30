@@ -10,7 +10,7 @@ Each capability is split in two:
 * ``Personality``         — an *instance* of a template attached to one
   project. Lives under ``personalities/<name>/`` and owns its own
   agent surface (skills/commands/plugins) plus its data dir
-  (``knowledge_graph/`` or ``memory/``).
+  (``database/`` or ``memory/``).
 
 The top-level ``.opencode/`` is **composed** from each instance's
 ``skills/``, ``commands/``, ``plugins/`` via symlinks; agent-facing

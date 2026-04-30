@@ -116,7 +116,7 @@ decide whether the directory is still wanted.
 ### Merge conflict resolution (after `allmight merge`)
 
 1. Read `.allmight/merge-report.yaml` for the merge summary
-2. For each conflicting workspace (`knowledge_graph/<name>.incoming/`):
+2. For each conflicting workspace (`database/<name>.incoming/`):
    - Compare configs: `<name>/config.yaml` vs `<name>.incoming/config.yaml`
    - Ask the user which indices to keep, merge, or discard
    - Apply the decision and remove the `.incoming` directory

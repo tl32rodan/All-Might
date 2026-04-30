@@ -319,7 +319,7 @@ main.add_command(_build_init_command())
 def clone(source: str, path: str):
     """Clone an existing All-Might project (read-only).
 
-    Creates a read-only clone where knowledge_graph/ workspaces are
+    Creates a read-only clone where database/ workspaces are
     symlinks to the source project. Memory is fresh (new L1/L2/L3).
 
     The clone can search the source's corpora but cannot ingest or

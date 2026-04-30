@@ -2,7 +2,7 @@
 
 TDD: these tests define the TARGET architecture.
 One All-Might project with shared enrichment/memory/panorama
-and multiple SMAK workspaces under knowledge_graph/.
+and multiple SMAK workspaces under database/.
 """
 
 import pytest
@@ -58,10 +58,10 @@ class TestProjectInit:
         assert (cmds / "ingest.md").exists()
         assert not (cmds / "status.md").exists()
 
-    def test_creates_knowledge_graph_dir(self, project_root):
-        """knowledge_graph/ directory created."""
+    def test_creates_database_dir(self, project_root):
+        """database/ directory created."""
         _init(project_root)
-        assert (project_root / "knowledge_graph").is_dir()
+        assert (project_root / "database").is_dir()
 
     def test_no_config_yaml_at_root(self, project_root):
         """No config.yaml at project root — config.yaml is SMAK's concern."""
@@ -77,19 +77,19 @@ class TestProjectInit:
         assert "smak enrich" not in content
 
     def test_agents_md_defines_corpus_and_workspace(self, project_root):
-        """AGENTS.md explains that corpus = workspace, linked to knowledge_graph/."""
+        """AGENTS.md explains that corpus = workspace, linked to database/."""
         _init(project_root)
         content = (project_root / "AGENTS.md").read_text()
         assert "Corpus" in content or "corpus" in content
         assert "workspace" in content
-        assert "knowledge_graph/" in content
+        assert "database/" in content
 
     def test_init_idempotent(self, project_root):
         """Running init twice doesn't break anything."""
         _init(project_root)
         _init(project_root)
         assert (project_root / "AGENTS.md").exists()
-        assert (project_root / "knowledge_graph").is_dir()
+        assert (project_root / "database").is_dir()
 
 
 class TestProjectInitIncludesMemory:
@@ -108,11 +108,11 @@ class TestProjectInitIncludesMemory:
         assert (cmds / "remember.md").exists()
         assert (cmds / "recall.md").exists()
 
-    def test_memory_not_inside_knowledge_graph(self, project_root):
-        """memory/ lives at project root, NOT inside knowledge_graph/."""
+    def test_memory_not_inside_database(self, project_root):
+        """memory/ lives at project root, NOT inside database/."""
         _init_with_memory(project_root)
         assert (project_root / "memory").is_dir()
-        for ws_dir in (project_root / "knowledge_graph").iterdir():
+        for ws_dir in (project_root / "database").iterdir():
             assert not (ws_dir / "memory").exists()
 
 
