@@ -492,7 +492,7 @@ export default RememberTriggerPlugin;
  * curation at session end writes under "unscoped" workspace.
  */
 import type { Plugin } from "@opencode-ai/plugin";
-import { readFileSync, existsSync, mkdirSync, appendFileSync } from "fs";
+import { readFileSync, existsSync, mkdirSync, appendFileSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 
 type TodoItem = { id?: string; content: string; status: string };
@@ -522,8 +522,28 @@ function inferWorkspace(args: any): string | null {
   return m?.[1] ?? null;
 }
 
+function memoryDirForWorkspace(cwd: string, workspace: string): string {
+  const personalitiesDir = join(cwd, "personalities");
+  if (existsSync(personalitiesDir)) {
+    let entries: string[] = [];
+    try { entries = readdirSync(personalitiesDir); } catch { entries = []; }
+    // First: a personality that owns this workspace under its database/
+    for (const name of entries) {
+      if (existsSync(join(personalitiesDir, name, "database", workspace))) {
+        return join(personalitiesDir, name, "memory");
+      }
+    }
+    // Fallback: first personality with a memory/ subdir
+    for (const name of entries.sort()) {
+      const memDir = join(personalitiesDir, name, "memory");
+      if (existsSync(memDir)) return memDir;
+    }
+  }
+  return join(cwd, "memory");
+}
+
 function loadOpenBacklog(cwd: string, workspace: string): string | null {
-  const path = join(cwd, "memory", "todos", `${workspace}.md`);
+  const path = join(memoryDirForWorkspace(cwd, workspace), "todos", `${workspace}.md`);
   if (!existsSync(path)) return null;
   const content = readFileSync(path, "utf-8");
   const marker = "## Open";
@@ -542,7 +562,9 @@ function appendCuration(
   items: TodoItem[],
 ): void {
   if (items.length === 0) return;
-  const path = join(cwd, "memory", "todos", `${workspace}.md`);
+  const path = join(
+    memoryDirForWorkspace(cwd, workspace), "todos", `${workspace}.md`,
+  );
   mkdirSync(dirname(path), { recursive: true });
   if (!existsSync(path)) {
     appendFileSync(
@@ -655,8 +677,12 @@ export const TodoCuratorPlugin: Plugin = async ({ directory }: any) => {
       appendCuration(cwd, s.workspace, s.latest);
       const context = output?.context ?? (output && (output.context = []));
       if (Array.isArray(context)) {
+        const ledger = join(
+          memoryDirForWorkspace(cwd, s.workspace),
+          "todos", `${s.workspace}.md`,
+        );
         context.push(
-          `Curated TODO ledger updated at memory/todos/${s.workspace}.md \\u2014 ` +
+          `Curated TODO ledger updated at ${ledger} \\u2014 ` +
             "reference it instead of duplicating the list in the summary.",
         );
       }
@@ -1301,18 +1327,36 @@ Log the recall to `memory/usage.log`:
  * before the hook returns.
  */
 import type { Plugin } from "@opencode-ai/plugin";
-import { appendFileSync, mkdirSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 
 const COMMAND_RE = /(?:^|\\s)\\/(remember|recall)\\b/;
 
+function findMemoryDirs(cwd: string): string[] {
+  const out: string[] = [];
+  const personalitiesDir = join(cwd, "personalities");
+  if (existsSync(personalitiesDir)) {
+    let entries: string[] = [];
+    try { entries = readdirSync(personalitiesDir); } catch { entries = []; }
+    for (const name of entries.sort()) {
+      const memDir = join(personalitiesDir, name, "memory");
+      if (existsSync(memDir)) out.push(memDir);
+    }
+  }
+  if (out.length === 0) out.push(join(cwd, "memory"));
+  return out;
+}
+
 function append(cwd: string, line: string): void {
-  const p = join(cwd, "memory", "usage.log");
-  try {
-    mkdirSync(dirname(p), { recursive: true });
-    appendFileSync(p, line.endsWith("\\n") ? line : line + "\\n");
-  } catch {
-    // Best-effort: a plugin hook must never throw.
+  const suffix = line.endsWith("\\n") ? line : line + "\\n";
+  for (const memDir of findMemoryDirs(cwd)) {
+    const p = join(memDir, "usage.log");
+    try {
+      mkdirSync(dirname(p), { recursive: true });
+      appendFileSync(p, suffix);
+    } catch {
+      // Best-effort: a plugin hook must never throw.
+    }
   }
 }
 
@@ -1400,7 +1444,7 @@ export default UsageLoggerPlugin;
  *   - chat.message — record the latest user input (does NOT mutate output)
  */
 import type { Plugin } from "@opencode-ai/plugin";
-import { mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "fs";
 import { join } from "path";
 
 type ToolCallRec = { tool: string; args: any; verdict: "ok" | "drift" | "blocked" };
@@ -1416,6 +1460,24 @@ type Trajectory = {
 const sessions = new Map<string, Trajectory>();
 
 const WORKSPACE_RE = /database\\/([^/\\s"']+)/;
+
+function memoryDirForWorkspace(cwd: string, workspace: string): string {
+  const personalitiesDir = join(cwd, "personalities");
+  if (existsSync(personalitiesDir)) {
+    let entries: string[] = [];
+    try { entries = readdirSync(personalitiesDir); } catch { entries = []; }
+    for (const name of entries) {
+      if (existsSync(join(personalitiesDir, name, "database", workspace))) {
+        return join(personalitiesDir, name, "memory");
+      }
+    }
+    for (const name of entries.sort()) {
+      const memDir = join(personalitiesDir, name, "memory");
+      if (existsSync(memDir)) return memDir;
+    }
+  }
+  return join(cwd, "memory");
+}
 
 function ensure(sid: string): Trajectory {
   let t = sessions.get(sid);
@@ -1452,7 +1514,7 @@ function flush(cwd: string, sid: string, t: Trajectory): void {
   const iso = now.toISOString();
   const ts = iso.replace(/[:.]/g, "-");
   const id = `${iso.slice(0, 19)}-${sid.slice(0, 6)}`;
-  const dir = join(cwd, "memory", "journal", workspace);
+  const dir = join(memoryDirForWorkspace(cwd, workspace), "journal", workspace);
   mkdirSync(dir, { recursive: true });
   const path = join(dir, `${ts}-trajectory.md`);
 

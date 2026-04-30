@@ -700,8 +700,8 @@ class TestTrajectoryWriterPlugin:
         content = (
             project_root / ".opencode" / "plugins" / "trajectory-writer.ts"
         ).read_text()
-        # The plugin must target memory/journal/<workspace>/ paths.
-        assert 'memory", "journal"' in content or "memory/journal" in content
+        # The plugin must target the journal subdir of a memory dir.
+        assert '"journal"' in content
         # Negative: must NOT use the deprecated msg.content mutation.
         assert "msg.content =" not in content
 
