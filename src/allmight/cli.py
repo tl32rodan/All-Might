@@ -123,15 +123,24 @@ def _init_callback(
     is_reinit = allmight_dir.is_dir() and not force
 
     templates = discover()
+    template_by_name = {t.name: t for t in templates}
 
-    # Decide instance names + folders. If onboard.yaml exists, reuse
-    # what was captured before so re-init never asks the user the same
-    # questions. Otherwise prompt (or use defaults under --yes).
+    # Decide the single personality name + its capability set. If
+    # onboard.yaml exists, reuse what was captured before so re-init
+    # never asks the user again. Otherwise prompt (or use the
+    # project-root dir name under --yes).
     onboard_path = allmight_dir / "onboard.yaml"
     captured = _read_onboard_yaml(onboard_path)
     if captured is None:
         captured = _collect_onboard_answers(templates, manifest, interactive=not yes)
-    instance_names = {row["template"]: row["instance"] for row in captured["personalities"]}
+
+    rows = captured.get("personalities", [])
+    if not rows:
+        raise RuntimeError("onboard.yaml has no personalities entry")
+    row = rows[0]
+    personality_name = row.get("name") or row.get("instance")
+    wanted_caps = row.get("capabilities") or [row.get("template")]
+    selected_templates = [template_by_name[c] for c in wanted_caps if c in template_by_name]
 
     write_init_scaffold(root)
 
@@ -141,22 +150,18 @@ def _init_callback(
         staging=is_reinit,
         force=force,
     )
-    instances: list[Personality] = []
+    instance = Personality(
+        template=selected_templates[0],
+        project_root=root,
+        name=personality_name,
+        options=dict(template_options),
+        capabilities=[t.name for t in selected_templates],
+    )
     notes: list[str] = []
-    for template in templates:
-        instance_name = instance_names.get(
-            template.name,
-            template.default_instance_name or f"{manifest.name}-{template.short_name}",
-        )
-        instance = Personality(
-            template=template,
-            project_root=root,
-            name=instance_name,
-            options=dict(template_options),
-        )
+    for template in selected_templates:
         result = template.install(ctx, instance)
         notes.extend(result.notes)
-        instances.append(instance)
+    instances: list[Personality] = [instance]
 
     # Compose .opencode/ symlinks from each instance's surface.
     # Conflicts (user-authored files at our target paths) are NOT
@@ -170,17 +175,20 @@ def _init_callback(
     # Stitch every instance's ROLE.md into the single root AGENTS.md.
     compose_agents_md(root, instances, project_name=manifest.name)
 
-    # Persist the registry so allmight list/status can find them again.
+    # Persist the registry so allmight list/status can find it again.
     write_registry(root, [
-        RegistryEntry(template=i.template.name, instance=i.name, version=i.template.version)
-        for i in instances
+        RegistryEntry(
+            instance=instance.name,
+            capabilities=list(instance.capabilities),
+            versions={t.name: t.version for t in selected_templates},
+        ),
     ])
 
     # Persist onboarding answers for the agent-side /onboard skill.
     captured["personalities"] = [
-        {"template": i.template.name, "instance": i.name}
-        for i in instances
+        {"name": instance.name, "capabilities": list(instance.capabilities)},
     ]
+    captured.setdefault("folders", [])
     captured.setdefault("onboarded", False)
     _write_onboard_yaml(onboard_path, captured)
 
@@ -234,10 +242,15 @@ def _collect_onboard_answers(
     *,
     interactive: bool,
 ) -> dict:
-    """Gather instance names + folders.
+    """Gather the single personality name + its capabilities.
 
-    Always returns the same dict shape — uses defaults under
-    ``--yes`` / non-TTY, prompts otherwise.
+    Part-D commit 7: ``allmight init`` creates ONE personality with
+    ALL discovered capabilities. The previous flow (one prompt per
+    template + folder list) is gone — folder classification is
+    deferred entirely to the agent-side ``/onboard`` skill.
+
+    Always returns the same dict shape — uses the project-root dir
+    name as the default under ``--yes`` / non-TTY, prompts otherwise.
     """
     import sys
 
@@ -246,39 +259,29 @@ def _collect_onboard_answers(
     is_tty = sys.stdin.isatty() and sys.stdout.isatty()
     do_prompt = interactive and is_tty
 
-    personalities = []
-    for template in templates:
-        default_name = template.default_instance_name or f"{manifest.name}-{template.short_name}"
-        if do_prompt:
-            raw = click.prompt(
-                f"  Name for the {template.short_name} personality",
-                default=default_name,
-                show_default=True,
-            )
-            slug = slugify_instance_name(raw) or default_name
-            if slug != raw:
-                click.echo(f"    → using slug: {slug}")
-        else:
-            slug = default_name
-        personalities.append({"template": template.name, "instance": slug})
+    default_name = slugify_instance_name(manifest.root_path.name) or "main"
 
-    folders: list[dict] = []
     if do_prompt:
-        raw_folders = click.prompt(
-            "  Folders to register (comma-separated; empty to skip)",
-            default="",
-            show_default=False,
-        ).strip()
-        if raw_folders:
-            for chunk in raw_folders.split(","):
-                p = chunk.strip()
-                if p:
-                    folders.append({"path": p})
+        raw = click.prompt(
+            "  Personality name",
+            default=default_name,
+            show_default=True,
+        )
+        slug = slugify_instance_name(raw) or default_name
+        if slug != raw:
+            click.echo(f"    → using slug: {slug}")
+    else:
+        slug = default_name
 
     return {
         "onboarded": False,
-        "personalities": personalities,
-        "folders": folders,
+        "personalities": [
+            {
+                "name": slug,
+                "capabilities": [t.name for t in templates],
+            },
+        ],
+        "folders": [],
     }
 
 
