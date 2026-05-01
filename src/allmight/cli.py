@@ -488,6 +488,176 @@ def list_personalities() -> None:
 
 
 # ------------------------------------------------------------------
+# Import (personality bundle restore)
+# ------------------------------------------------------------------
+
+@main.command("import")
+@click.argument("bundle", type=click.Path(exists=True, file_okay=False))
+@click.option("--as", "as_name", default=None,
+              help="Install the bundled personality under this new name "
+                   "(instead of the manifest's personality_name).")
+@click.option("--force", is_flag=True,
+              help="Overwrite an existing personality of the same name.")
+def import_personality(bundle: str, as_name: str | None, force: bool) -> None:
+    """Restore a personality bundle into the current All-Might project.
+
+    Reads ``manifest.yaml`` from the bundle, runs each named
+    capability's install hook (so the on-disk structure conforms to
+    the receiving project's allmight version), and copies the
+    bundle's data into ``personalities/<name>/``. Vector indices
+    (``store/``) are not in bundles; rebuild via ``/ingest`` afterward.
+    """
+    from pathlib import Path as P
+    import shutil
+
+    import yaml as _yaml
+
+    from .core.personalities import (
+        InstallContext,
+        Personality,
+        RegistryEntry,
+        compose,
+        compose_agents_md,
+        discover,
+        read_registry,
+        slugify_instance_name,
+        stage_compose_conflicts,
+        write_registry,
+    )
+    from .capabilities.database.scanner import ProjectScanner
+
+    project_root = P(".").resolve()
+    if not (project_root / ".allmight").is_dir():
+        click.echo(
+            f"error: {project_root} is not an All-Might project (no .allmight/ found). "
+            "Run 'allmight init' first.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    bundle_path = P(bundle).resolve()
+    manifest_path = bundle_path / "manifest.yaml"
+    if not manifest_path.is_file():
+        click.echo(
+            f"error: bundle {bundle_path} has no manifest.yaml — not an "
+            "allmight personality export.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    try:
+        manifest_data = _yaml.safe_load(manifest_path.read_text()) or {}
+    except _yaml.YAMLError as exc:
+        click.echo(f"error: malformed manifest.yaml: {exc}", err=True)
+        raise SystemExit(1)
+
+    bundle_name = manifest_data.get("personality_name")
+    if not bundle_name:
+        click.echo("error: manifest.yaml is missing personality_name.", err=True)
+        raise SystemExit(1)
+    bundle_caps = list((manifest_data.get("capabilities") or {}).keys())
+    if not bundle_caps:
+        click.echo("error: manifest.yaml lists no capabilities.", err=True)
+        raise SystemExit(1)
+
+    target_name = slugify_instance_name(as_name or bundle_name)
+    target_root = project_root / "personalities" / target_name
+    existing_entries = read_registry(project_root)
+    existing_names = {e.instance for e in existing_entries}
+    if (target_root.exists() or target_name in existing_names) and not force:
+        click.echo(
+            f"error: personality '{target_name}' already exists. "
+            "Use --force to overwrite.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    all_templates = discover()
+    template_by_name = {t.name: t for t in all_templates}
+    unknown = [c for c in bundle_caps if c not in template_by_name]
+    if unknown:
+        click.echo(
+            f"error: bundle requires unknown capability/capabilities: "
+            f"{', '.join(unknown)}. "
+            f"Available: {', '.join(sorted(template_by_name))}.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    selected = [template_by_name[c] for c in bundle_caps]
+
+    scanner = ProjectScanner()
+    project_manifest = scanner.scan(project_root)
+
+    ctx = InstallContext(
+        project_root=project_root,
+        manifest=project_manifest,
+        staging=False,
+        force=force,
+    )
+    instance = Personality(
+        template=selected[0],
+        project_root=project_root,
+        name=target_name,
+        options={},
+        capabilities=[t.name for t in selected],
+    )
+    for tpl in selected:
+        tpl.install(ctx, instance)
+
+    # Copy bundle data into the freshly-installed personality dir.
+    # ``store/`` subdirs are intentionally absent from bundles; we
+    # don't fabricate them here.
+    if (bundle_path / "ROLE.md").is_file():
+        shutil.copy2(bundle_path / "ROLE.md", target_root / "ROLE.md")
+    for cap in bundle_caps:
+        bundle_cap_dir = bundle_path / cap
+        if not bundle_cap_dir.is_dir():
+            continue
+        target_cap_dir = target_root / cap
+        target_cap_dir.mkdir(parents=True, exist_ok=True)
+        for src in bundle_cap_dir.rglob("*"):
+            if src.is_dir():
+                continue
+            rel = src.relative_to(bundle_cap_dir)
+            dst = target_cap_dir / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+
+    conflicts = compose(project_root, instance, force=force)
+    stage_compose_conflicts(project_root, conflicts)
+
+    new_entries = [e for e in existing_entries if e.instance != target_name]
+    new_entries.append(RegistryEntry(
+        instance=target_name,
+        capabilities=[t.name for t in selected],
+        versions={t.name: t.version for t in selected},
+    ))
+    write_registry(project_root, new_entries)
+
+    instances: list[Personality] = []
+    for entry in new_entries:
+        primary = template_by_name.get(
+            entry.capabilities[0] if entry.capabilities else entry.template
+        )
+        if primary is None:
+            continue
+        instances.append(Personality(
+            template=primary,
+            project_root=project_root,
+            name=entry.instance,
+            capabilities=list(entry.capabilities),
+        ))
+    compose_agents_md(project_root, instances, project_name=project_manifest.name)
+
+    click.echo(
+        f"All-Might! Imported personality '{target_name}' "
+        f"(capabilities: {', '.join(t.name for t in selected)})."
+    )
+    click.echo("  Next: re-run /ingest to rebuild the search index.")
+
+
+# ------------------------------------------------------------------
 # Clone
 # ------------------------------------------------------------------
 

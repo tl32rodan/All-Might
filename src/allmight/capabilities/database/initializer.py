@@ -89,6 +89,7 @@ class ProjectInitializer:
             self._generate_commands(root, manifest, writable=writable, force=force)
             self._write_role_md(root, manifest, writable=writable, force=force)
             self._install_onboard_skill(root, force=force)
+            self._install_export_skill(root, force=force)
 
             # Create .allmight/ marker (clean up any stale templates)
             allmight_dir.mkdir(exist_ok=True)
@@ -194,6 +195,35 @@ class ProjectInitializer:
         )
         commands_dir.mkdir(parents=True, exist_ok=True)
         write_guarded(commands_dir / "sync.md", SYNC_COMMAND_BODY, ALLMIGHT_MARKER_MD)
+
+    def _install_export_skill(self, root: Path, *, force: bool = False) -> None:
+        """Install /export skill + command (Part-D commit 10).
+
+        ``/export`` is agent-driven (PII review, per-capability
+        rules). This installs the skill body and the companion
+        slash command so the user can invoke it after any
+        ``allmight init``.
+        """
+        from .export_skill_content import EXPORT_SKILL_BODY, EXPORT_COMMAND_BODY
+
+        skill_dir, commands_dir = self._agent_surface_dirs(root)
+        self._write_skill(
+            skill_dir / "export" / "SKILL.md",
+            name="export",
+            description=(
+                "Bundle a personality for transfer to another All-Might "
+                "project. Applies per-capability export rules and "
+                "reviews content for PII before writing the bundle."
+            ),
+            body=EXPORT_SKILL_BODY,
+        )
+        commands_dir.mkdir(parents=True, exist_ok=True)
+        write_guarded(
+            commands_dir / "export.md",
+            EXPORT_COMMAND_BODY,
+            ALLMIGHT_MARKER_MD,
+            force=force,
+        )
 
     def _install_onboard_skill(self, root: Path, *, force: bool = False) -> None:
         """Install /onboard skill + command on every fresh init.
