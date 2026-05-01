@@ -339,8 +339,9 @@ guide in `.opencode/commands/`.
 
     def _search_command_body(self) -> str:
         """Return search.md command content (generic — agent resolves <active>)."""
+        from ...core.routing import ROUTING_PREAMBLE
         db_root = "personalities/<active>/database"
-        return self._SEARCH_BODY.replace("{db_root}", db_root)
+        return ROUTING_PREAMBLE + self._SEARCH_BODY.replace("{db_root}", db_root)
 
     _SEARCH_BODY = """\
 Search the codebase by semantic meaning.
@@ -382,8 +383,9 @@ JSON output with a `results` array. Each result contains:
 
     def _ingest_command_body(self) -> str:
         """Return ingest.md command content (generic — agent resolves <active>)."""
+        from ...core.routing import ROUTING_PREAMBLE
         db_root = "personalities/<active>/database"
-        return self._INGEST_BODY.replace("{db_root}", db_root)
+        return ROUTING_PREAMBLE + self._INGEST_BODY.replace("{db_root}", db_root)
 
     _INGEST_BODY = """\
 Build the SMAK vector index from source files.
@@ -515,7 +517,13 @@ smak ingest --config {db_root}/<workspace>/config.yaml --index source_code --jso
 
     @staticmethod
     def _enrich_command_body(has_path_env: bool) -> str:
-        """Return the enrich.md command content, SOS-aware when applicable."""
+        """Return the enrich.md command content, SOS-aware when applicable.
+
+        Prepends the routing preamble so the agent resolves
+        ``<active>`` before substituting it into the SMAK paths
+        below.
+        """
+        from ...core.routing import ROUTING_PREAMBLE
         base = """\
 Annotate a code symbol with intent and/or relations.
 
@@ -523,14 +531,16 @@ Annotate a code symbol with intent and/or relations.
 
 Set intent (what the symbol does and why):
 ```bash
-smak enrich --config config.yaml --index source_code \\
+smak enrich --config personalities/<active>/database/<workspace>/config.yaml \\
+    --index source_code \\
     --file <relative_path> --symbol "<SymbolName>" \\
     --intent "Human-readable description of purpose"
 ```
 
 Add a relation to another symbol:
 ```bash
-smak enrich --config config.yaml --index source_code \\
+smak enrich --config personalities/<active>/database/<workspace>/config.yaml \\
+    --index source_code \\
     --file <relative_path> --symbol "<SymbolName>" \\
     --relation "<other_file>::<OtherSymbol>" --bidirectional
 ```
@@ -565,7 +575,7 @@ Skip auto-generated code, simple getters, and obvious boilerplate.
 - Never invent UIDs — use `/search` to discover valid ones
 """
         if not has_path_env:
-            return base
+            return ROUTING_PREAMBLE + base
 
         sos_section = """
 ## SOS Environment (CliosoftSOS)
@@ -608,7 +618,7 @@ Use `--dry-run` with the `cliosoft-sos` MCP tools to enrich safely:
 - Path mismatch warnings in workspaces are normal — you're editing in a workspace while relations point to the canonical path
 - After check-in, re-ingest to update the search index
 """
-        return base + sos_section
+        return ROUTING_PREAMBLE + base + sos_section
 
     def _write_skill(
         self,

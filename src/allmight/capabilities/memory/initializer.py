@@ -769,7 +769,8 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
         self._write_memory_command_content(commands_dir)
 
     def _remember_command_body(self) -> str:
-        return """\
+        from ...core.routing import ROUTING_PREAMBLE
+        return ROUTING_PREAMBLE + """\
 Persist memory and maintain its quality. Two modes — pick the one that
 matches the trigger context:
 
@@ -1072,7 +1073,8 @@ Append to `memory/usage.log`:
 """
 
     def _recall_command_body(self) -> str:
-        return """\
+        from ...core.routing import ROUTING_PREAMBLE
+        return ROUTING_PREAMBLE + """\
 Pick up where you left off, and search past memories.
 
 `/recall` is **not just** a journal search. Before running a query,
