@@ -1,32 +1,37 @@
-"""Bundled /onboard skill and command content.
+"""Bundled /onboard skill and command content (Part-D rewrite).
 
-Installed by the ``database`` capability on every init (legacy and
-registry-driven). The skill walks the agent through the second stage
-of bootstrap that ``allmight init`` deferred: capturing the user's
-intent in each personality's ``ROLE.md`` and classifying any folders
-the user listed during init.
+Installed by the ``database`` capability on every init. The skill
+walks the agent through the qualitative half of bootstrap that
+``allmight init`` deferred:
+
+* Capture each personality's role description in
+  ``personalities/<name>/ROLE.md``.
+* Build (or update) the project-map table in ``MEMORY.md``.
+* Add the leading ``> **Default personality**: <name>`` callout when
+  there is more than one personality, so plugins and command bodies
+  can route by context.
 
 Why ``database`` owns it: ``/onboard`` is a cross-capability skill,
 but it has to live in *one* template. ``database`` is the lead
-capability during bootstrap (the user's first question is "what
-knowledge should I manage?") so it's the natural home.
+capability during bootstrap so it's the natural home.
 """
 
 ONBOARD_SKILL_BODY = """\
 # Onboard — finish All-Might setup inside the agent
 
-> Run this skill after `allmight init` to capture the user's intent in
-> each personality's `ROLE.md` and classify any folders they listed.
+> Run this skill after `allmight init` to capture each personality's
+> role in `ROLE.md`, populate `MEMORY.md`'s project map, and add the
+> default-personality routing hint.
 
 ## When to use
 
 - Right after `allmight init` (the CLI prints "Run /onboard to finish
   setup"). The marker file `.allmight/onboard.yaml` exists and has
   `onboarded: false`.
-- The user explicitly asks to re-onboard (re-classify a folder, edit a
-  role description). `.allmight/onboard.yaml` exists with `onboarded:
-  true`; ask the user what specifically to change before re-running
-  the full procedure.
+- The user explicitly asks to re-onboard (edit a role description,
+  change the default). `.allmight/onboard.yaml` exists with
+  `onboarded: true`; ask the user what specifically to change before
+  re-running the full procedure.
 
 ## Procedure
 
@@ -41,97 +46,99 @@ You'll see something like:
 ```yaml
 onboarded: false
 personalities:
-  - template: database
-    instance: knowledge
-  - template: memory
-    instance: memory
-folders:
-  - path: src/
-  - path: docs/
+  - name: my-chip
+    capabilities: [database, memory]
+folders: []
 ```
 
-If `onboarded: true`, ask the user which step to redo (role text,
-folder classification, both) and skip the rest of the procedure
-accordingly.
+Each personality block has a `name` and a list of `capabilities` it
+was installed with. There may be one personality (the default after
+`allmight init --yes`) or several (if the user followed up with
+`allmight add ...`).
 
-### 2. Customize the corpus role
+### 2. Customize each personality's ROLE.md
 
-Ask the user a single open-ended question:
+For every personality entry, ask the user one open-ended question:
 
-> **"What knowledge do you want to manage in this project?"**
+> **"Tell me about the `<name>` role. What does it cover, and how
+> should I act when answering questions in this role?"**
 
-Keep the answer short — a paragraph or two. Then rewrite
-`personalities/<corpus-instance>/ROLE.md`'s body section to reflect
-the answer. Preserve the leading `<!-- all-might generated -->`
-marker and the `# Corpus Keeper` heading; you're editing the prose
-that follows. Make the role-specific (e.g. "You manage the EDA
-flow's standard cells and PLL design knowledge") rather than generic.
+Take the answer and rewrite `personalities/<name>/ROLE.md`. The file
+**must** keep the leading `<!-- all-might generated -->` marker so
+re-init's overwrite guard recognises the file as ours.
 
-### 3. Customize the memory role
+A good ROLE.md skeleton:
 
-Ask:
+```markdown
+<!-- all-might generated -->
+# <Name>
 
-> **"What kind of assistant do you want to build?"**
+You are <one-sentence role from user>.
 
-Rewrite `personalities/<memory-instance>/ROLE.md` similarly.
-Keep the marker and the `# Memory Keeper` heading; replace the
-body's introductory paragraph with what the user described.
+### Scope
 
-### 4. Classify and register the folders
+<2-3 bullets describing what the role covers, in the user's words>
 
-For each entry in `onboard.yaml`'s `folders` list:
+### Capabilities
 
-1. **Classify** as `corpus` or `memory`:
-   - **corpus** — source code, design files, anything the agent should
-     search by meaning (e.g. `src/`, `rtl/`, `tests/`).
-   - **memory** — notes, docs, reference material the agent should
-     *know about* but not index (e.g. `docs/`, `notes/`, `decisions/`).
-   When unsure, prefer `corpus` — the user can always reclassify later.
-2. **Show the classification** to the user in one line per folder and
-   ask for overrides:
-   ```
-   Classified:
-     src/    → corpus  (source code, ingest with /ingest)
-     docs/   → memory  (reference; recorded in MEMORY.md)
-   Override any? (e.g. "docs/ as corpus" or just "ok")
-   ```
-3. **Register every classified folder in `MEMORY.md`** under a
-   "Project Map" table. Read the existing project map and append rows;
-   don't duplicate. Format:
-   ```markdown
-   ## Project Map
+| Command | What it does |
+|---------|-------------|
+| `/search <query>` | Search this personality's database/ workspaces |
+| `/remember` | Persist findings into this personality's memory/ |
+| `/recall <query>` | Retrieve past findings from this personality |
 
-   | Path | Kind | Notes |
-   |------|------|-------|
-   | src/ | corpus | source code |
-   | docs/ | memory | reference material |
-   ```
-   Don't create database workspace stubs yet — the user runs
-   `/ingest` later for that, and the database capability's commands
-   tell the agent how.
+(Only list commands that match the personality's installed
+capabilities — see the `capabilities:` field in `onboard.yaml`.)
 
-### 5. Re-stitch the root AGENTS.md
+### Getting Started
 
-After editing the ROLE.md files, the root `AGENTS.md` is stale
-(composed from ROLE.md content at init time). Re-compose it:
-
-```bash
-python -c "from pathlib import Path; \\
-from allmight.core.personalities import compose_agents_md, \\
-    Personality, read_registry, discover; \\
-root = Path('.').resolve(); \\
-templates = {t.name: t for t in discover()}; \\
-instances = [Personality(template=templates[r.template], project_root=root, name=r.instance) \\
-             for r in read_registry(root)]; \\
-compose_agents_md(root, instances)"
+1. <first-step from user's answer>
+2. <second-step>
 ```
 
-(That snippet is the closest thing to a CLI today; future versions
-may surface a `allmight compose` subcommand.)
+### 3. Update MEMORY.md's project map
 
-### 6. Mark onboarding complete
+Read `MEMORY.md` at the project root. Find the `## Project Map`
+section (create it if absent — the section is one heading + a
+markdown table). For each personality, ensure there is a row:
 
-Edit `.allmight/onboard.yaml` and flip the flag:
+```markdown
+## Project Map
+
+| Personality | Capabilities | Scope |
+|-------------|--------------|-------|
+| my-chip     | database, memory | Standard-cell library design and verification |
+```
+
+Update existing rows in place; append new ones at the end of the
+table. Don't disturb other sections of `MEMORY.md` — the user may
+already have prefs/goals captured.
+
+### 4. Add the default-personality routing hint
+
+If `onboard.yaml` lists more than one personality, ask the user:
+
+> **"Which personality should I default to when the conversation isn't
+> clearly about a specific one?"**
+
+Insert (or update) a leading blockquote at the very top of
+`MEMORY.md`, above the project map:
+
+```markdown
+> **Default personality**: <chosen-name>
+```
+
+If there is only one personality, skip the question — the lone
+personality is the implicit default; you may still write the callout
+for clarity.
+
+The exact format matters: command bodies and agent-routing logic
+parse this line. Use `> **Default personality**: <name>` verbatim
+(blockquote, bold label, single space, name).
+
+### 5. Mark onboarding complete
+
+Edit `.allmight/onboard.yaml`:
 
 ```yaml
 onboarded: true
@@ -141,60 +148,57 @@ Don't touch the rest of the file — it remains the record of what was
 captured at init time. The next session will see `onboarded: true`
 and skip the procedure unless the user explicitly asks to re-onboard.
 
-### 7. Tell the user what changed
+### 6. Tell the user what changed
 
 One short summary:
 
-> Onboarded. Customized:
-> - corpus role: "<one-line summary>"
-> - memory role: "<one-line summary>"
-> - registered N folders (<corpus count> as corpus, <memory count> as memory)
->
-> Next: try `/search "<query>"` to explore — or `/ingest` first if you
-> want to build the index over the corpus folders.
+> Onboarded. Wrote ROLE.md for: <name1>, <name2>, ...
+> Default personality: <chosen-name>.
+> Try `/search "<query>"` to explore — or `/ingest` first if you want to
+> build the index.
 
 ## Important
 
 - **Never overwrite the markers** at the top of each ROLE.md
   (`<!-- all-might generated -->`). They mark the file as All-Might-
   owned for re-init's overwrite guard.
-- **MEMORY.md is agent-authored from here on.** Don't replace its
-  existing sections; append to the project map table.
+- **MEMORY.md is agent-authored from here on.** Update sections in
+  place; never replace the file from a template.
 - If `onboard.yaml` is missing entirely, the project wasn't initialized
-  by the new interactive flow. Tell the user to run `allmight init`
-  first.
+  by the new flow. Tell the user to run `allmight init` first.
+- Folder classification is **not** part of /onboard anymore. The
+  agent learns the project structure from `MEMORY.md`'s project map
+  and from running `/search` against the database/ workspaces.
 """
 
 ONBOARD_COMMAND_BODY = """\
-Finish All-Might setup by capturing your intent for each personality.
+Finish All-Might setup by capturing each personality's role.
 
-Run this once after `allmight init` (or any time you want to
-re-classify a folder or rewrite a role description).
+Run once after `allmight init` (or any time you want to rewrite a
+role description or change the default personality).
 
 ## What happens
 
-1. Reads `.allmight/onboard.yaml` (created by `allmight init`).
-2. Asks two open-ended questions:
-   - "What knowledge do you want to manage?" — shapes the corpus
-     keeper's role description.
-   - "What kind of assistant do you want to build?" — shapes the
-     memory keeper's role description.
-3. Classifies each folder you listed during init as `corpus` or
-   `memory`, registers them in MEMORY.md's project map, and shows you
-   the classification for confirmation.
-4. Re-stitches the root `AGENTS.md` from the updated ROLE.md files.
+1. Reads `.allmight/onboard.yaml` (written by `allmight init`).
+2. For each personality, asks the user a single open-ended question
+   about the role and rewrites `personalities/<name>/ROLE.md`.
+3. Updates `MEMORY.md`'s project map with one row per personality.
+4. Adds (or updates) the leading
+   `> **Default personality**: <name>` callout in `MEMORY.md` so
+   plugins and command bodies can route by context.
 5. Marks `onboarded: true` in `.allmight/onboard.yaml`.
 
 ## How to execute
 
 Load the `onboard` skill and follow its procedure. The skill body
-covers each step (read state, customize ROLE.md files, classify
-folders, re-compose, mark complete) and what to ask the user.
+covers each step (read state, customize ROLE.md files, update the
+project map, add the default-personality hint, mark complete) and
+what to ask the user.
 
 ## When NOT to run
 
-- The project was migrated from an older All-Might layout — onboarding
-  data isn't there. Use `/sync` or `allmight migrate` instead.
 - You're partway through a session that's already onboarded — the
-  skill is idempotent but will ask the user what to redo.
+  skill is idempotent but will ask what to redo.
+- The project has no `.allmight/onboard.yaml` — run `allmight init`
+  first to create one.
 """
