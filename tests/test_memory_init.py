@@ -178,20 +178,48 @@ class TestMemoryInitializer:
         assert "<kind>/<workspace>.md" in content
         assert "scope" in content.lower()
 
-    def test_no_claude_hooks_directory(self, project_root):
-        """No .claude/hooks/ should be generated — TS plugins handle memory loading."""
-        MemoryInitializer().initialize(project_root)
-        assert not (project_root / ".claude" / "hooks").exists()
+    def test_writes_claude_memory_load_hook(self, project_root):
+        """The memory capability writes the Claude Code memory-load hook.
 
-    def test_no_claude_settings_json(self, project_root):
-        """No .claude/settings.json should be generated."""
+        Sibling of the OpenCode ``.opencode/plugins/memory-load.ts``
+        plugin. Both must exist; changes to either require updating
+        the other (see All-Might CLAUDE.md -> Editor Compatibility).
+        """
         MemoryInitializer().initialize(project_root)
+        hook = project_root / ".claude" / "hooks" / "memory_load.py"
+        assert hook.exists()
+        body = hook.read_text()
+        assert body.startswith("#!/usr/bin/env python3")
+        assert "all-might generated" in body
+        assert "MEMORY.md" in body
+        assert "Memory Scope-First Principle" in body
+
+    def test_memory_load_hook_is_executable(self, project_root):
+        """Hook script needs +x — Claude Code runs it as a command."""
+        import stat
+
+        MemoryInitializer().initialize(project_root)
+        hook = project_root / ".claude" / "hooks" / "memory_load.py"
+        mode = hook.stat().st_mode
+        assert mode & stat.S_IXUSR
+        assert mode & stat.S_IXGRP
+        assert mode & stat.S_IXOTH
+
+    def test_memory_init_does_not_write_project_level_bridge(self, project_root):
+        """Project-level bridge files belong to write_init_scaffold, not MemoryInitializer.
+
+        The memory capability owns its own hook script
+        (.claude/hooks/memory_load.py) but must not write CLAUDE.md,
+        .claude/settings.json, .claude/commands, .claude/skills, or
+        the role-load hook — those live in core.claude_bridge so the
+        capability stays template-shaped (writes only its share).
+        """
+        MemoryInitializer().initialize(project_root)
+        assert not (project_root / "CLAUDE.md").exists()
         assert not (project_root / ".claude" / "settings.json").exists()
-
-    def test_no_claude_dir_at_all(self, project_root):
-        """After memory init, .claude/ directory must not exist."""
-        MemoryInitializer().initialize(project_root)
-        assert not (project_root / ".claude").exists()
+        assert not (project_root / ".claude" / "commands").exists()
+        assert not (project_root / ".claude" / "skills").exists()
+        assert not (project_root / ".claude" / "hooks" / "role_load.py").exists()
 
     def test_no_hardcoded_todos_dir(self, project_root):
         """Initializer does NOT precreate memory/todos/ — agents make it on demand."""

@@ -476,6 +476,13 @@ def write_init_scaffold(project_root: Path) -> None:
 
     _write_role_load_plugin(project_root)
 
+    # Claude Code compatibility bridge — markdown surface via dir
+    # symlinks, agent context via @-import shim, runtime hooks for
+    # role-load (memory-load lives in the memory capability).
+    from .claude_bridge import write_claude_bridge
+
+    write_claude_bridge(project_root)
+
 
 # ---------------------------------------------------------------------------
 # ROLE.md composition + role-load.ts plugin

@@ -15,6 +15,7 @@ import pytest
 from allmight.capabilities.database.scanner import ProjectScanner
 from allmight.capabilities.database.initializer import ProjectInitializer
 from allmight.capabilities.memory.initializer import MemoryInitializer
+from allmight.core.personalities import write_init_scaffold
 
 
 @pytest.fixture
@@ -32,14 +33,18 @@ def sample_project(tmp_path):
 
 
 def _full_init(root, force=False, writable=False):
-    """Run the full init sequence: ProjectInitializer + MemoryInitializer.
+    """Run the full init sequence: scaffold + ProjectInitializer + MemoryInitializer.
 
     Mirrors the logic in ``cli.py``: detect re-init before calling
-    initializers so the staging flag is consistent.
+    initializers so the staging flag is consistent. ``write_init_scaffold``
+    sets up project-level files that don't belong to any template
+    (``.opencode/{opencode.json,package.json}``, role-load plugin, and
+    the Claude Code bridge).
     """
     scanner = ProjectScanner()
     manifest = scanner.scan(root)
     is_reinit = (root / ".allmight").is_dir() and not force
+    write_init_scaffold(root)
     ProjectInitializer().initialize(manifest, force=force, writable=writable)
     MemoryInitializer().initialize(root, staging=is_reinit)
     return manifest
@@ -69,10 +74,26 @@ class TestFirstInit:
         assert (commands / "enrich.md").exists()
         assert (commands / "ingest.md").exists()
 
-    def test_no_claude_hooks_generated(self, sample_project):
-        """No .claude/hooks/ generated — TS plugins handle memory in OpenCode."""
+    def test_full_init_writes_claude_bridge(self, sample_project):
+        """Full init writes the Claude Code bridge alongside .opencode/.
+
+        Mirrors what the OpenCode side gets:
+        - root CLAUDE.md is the @-import shim Claude Code reads
+        - .claude/{commands,skills} are dir symlinks into .opencode/
+        - .claude/hooks/{memory_load,role_load}.py mirror the
+          memory-load.ts and role-load.ts plugins
+        - .claude/settings.json registers both hooks for SessionStart
+          and PreCompact
+        """
         _full_init(sample_project)
-        assert not (sample_project / ".claude" / "hooks").exists()
+        assert (sample_project / "CLAUDE.md").exists()
+        commands_link = sample_project / ".claude" / "commands"
+        skills_link = sample_project / ".claude" / "skills"
+        assert commands_link.is_symlink()
+        assert skills_link.is_symlink()
+        assert (sample_project / ".claude" / "hooks" / "memory_load.py").exists()
+        assert (sample_project / ".claude" / "hooks" / "role_load.py").exists()
+        assert (sample_project / ".claude" / "settings.json").exists()
 
     def test_first_init_writes_agents_md(self, sample_project):
         _full_init(sample_project)

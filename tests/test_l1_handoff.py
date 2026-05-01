@@ -173,19 +173,23 @@ class TestStopHookCap:
 class TestMemoryLoadHookWarning:
     """L1-over-cap nudge surfaces through MEMORY.md content, not a shell hook.
 
-    The TS plugin ``memory-load.ts`` injects MEMORY.md every session,
-    and the agent reads ``memory/.l1-over-cap`` directly during
-    /reflect's cap-triage step. There is no longer a ``.claude/`` hook
-    that prefixes a warning to stdout, so the only contract left to
-    test here is the sentinel file itself, covered by
-    ``TestAuditAndUpdateSentinel``.
+    The TS plugin ``memory-load.ts`` injects MEMORY.md every session
+    in OpenCode; the parallel ``.claude/hooks/memory_load.py`` does the
+    same for Claude Code via the SessionStart hook. The agent reads
+    ``memory/.l1-over-cap`` directly during /reflect's cap-triage step
+    — there is no separate ``warning-prefix`` shell hook in either
+    surface, so the only contract left to test here is the sentinel
+    file itself (covered by ``TestAuditAndUpdateSentinel``).
     """
 
     def test_memory_load_plugin_replaces_shell_hook(self, tmp_path):
         MemoryInitializer().initialize(tmp_path)
-        # Plugin exists; legacy shell hook does not.
+        # OpenCode plugin and Claude Code hook both exist; legacy
+        # warning-prefix shell hook (the "legacy" path that the test
+        # name still mentions) does not.
         assert (tmp_path / ".opencode" / "plugins" / "memory-load.ts").exists()
-        assert not (tmp_path / ".claude").exists()
+        assert (tmp_path / ".claude" / "hooks" / "memory_load.py").exists()
+        assert not (tmp_path / ".claude" / "memory-load.sh").exists()
 
 
 class TestCommandBodies:

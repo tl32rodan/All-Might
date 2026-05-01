@@ -12,6 +12,10 @@ After modifying initializer, skill templates, commands, or memory init:
    `cd /tmp/demo && allmight init . && tsc --noEmit --skipLibCheck .opencode/plugins/*.ts`
    Python tests only verify strings written — they cannot catch
    wrong-shape API calls in the generated `.ts`.
+3. **If the change touches an OpenCode plugin, the matching Claude
+   Code hook MUST also be updated** (see *Editor Compatibility* below).
+   The two surfaces share a behavioural contract; updating one and
+   leaving the other stale is a regression even when tests pass.
 
 ## Planning Workflow
 
@@ -151,6 +155,57 @@ rejected before and will be rejected again.
 | AGENTS.md (in workspace) | What capabilities exist | Agent (high-level) |
 | Skills/Commands | How to execute operations (smak CLI) | Agent (low-level) |
 | CLI | `init`, `add`, `list`, `import`, `clone`, `migrate`, `memory` | Human (bootstrap + lifecycle) |
+
+---
+
+## Editor Compatibility
+
+`.opencode/` is the canonical agent surface; `.claude/` is a
+**generated mirror** so a single `allmight init` produces a project
+both OpenCode and Claude Code can drive without forking source of
+truth. The mirror has three layers, each with a different sync model:
+
+| Asset | Source of truth | Mirror | Sync model |
+|---|---|---|---|
+| Slash commands | `.opencode/commands/*.md` | `.claude/commands` (dir symlink) | Symlink — adding a new command is automatically visible on both sides |
+| Skills | `.opencode/skills/<name>/` | `.claude/skills` (dir symlink) | Same |
+| Agent context | `AGENTS.md`, `MEMORY.md`, `personalities/*/ROLE.md` | root `CLAUDE.md` (`@`-import shim) | Single set of files, both editors read |
+| Runtime hooks | `.opencode/plugins/*.ts` | `.claude/hooks/*.py` + `.claude/settings.json` | **Hand-mirrored** — updates to one require updates to the other |
+
+The bridge is wired by `src/allmight/core/claude_bridge.py`
+(project-level pieces: root `CLAUDE.md`, dir symlinks, settings.json,
+`role_load.py`) plus per-capability hook scripts (e.g.
+`MemoryInitializer._claude_memory_load_hook_content` mirroring
+`memory-load.ts`).
+
+### Dual-platform invariant for plugin/hook changes
+
+When you change an OpenCode plugin, the Claude Code hook script that
+mirrors it **must** be updated in the same commit:
+
+| OpenCode plugin (`.ts`) | Claude Code hook (`.py`) |
+|---|---|
+| `memory-load.ts` | `memory_load.py` (in `MemoryInitializer`) |
+| `role-load.ts` | `role_load.py` (in `core.claude_bridge`) |
+| `remember-trigger.ts` | *(not yet mirrored — see TODO in claude_bridge)* |
+| `usage-logger.ts` | *(not yet mirrored)* |
+| `trajectory-writer.ts` | *(not yet mirrored)* |
+
+The two scripts are not generated from a shared template; each is
+hand-authored in its native language because the runtime contracts
+differ (TS plugin returns objects mutating chat parts; Claude Code
+hook reads JSON from stdin and prints JSON to stdout). The
+behavioural equivalence is enforced by:
+
+- `tests/test_claude_bridge.py::TestHooksRunCleanly` — runs each
+  generated hook end-to-end and asserts the JSON output shape.
+- `tests/test_memory_init.py::test_writes_claude_memory_load_hook` —
+  pins the memory-load hook content alongside its OpenCode sibling.
+
+If you skip the dual update, the OpenCode and Claude Code surfaces
+will silently drift, and bug reports will look like "behaviour
+depends on which editor I open the project with" — by the time
+anyone notices, several plugin generations may be stale.
 
 ---
 
