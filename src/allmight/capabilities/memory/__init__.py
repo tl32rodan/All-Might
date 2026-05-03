@@ -40,6 +40,7 @@ def _install(ctx: InstallContext, instance: Personality) -> InstallResult:
         ctx.project_root,
         staging=ctx.staging,
         instance_root=instance.root,
+        force=ctx.force,
     )
     return InstallResult(notes=[f"memory: staging={ctx.staging}"])
 

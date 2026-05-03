@@ -54,6 +54,7 @@ class MemoryInitializer:
         root: Path,
         staging: bool = False,
         instance_root: Path | None = None,
+        force: bool = False,
     ) -> None:
         """Bootstrap the memory subsystem at *root*.
 
@@ -67,6 +68,13 @@ class MemoryInitializer:
                 commands, and plugins live here. When ``None`` (legacy
                 callers) writes go under ``root`` to preserve the
                 pre-personalities layout.
+            force: If True, regenerate framework-owned files
+                (``.opencode/plugins/*.ts``, the Claude Code memory
+                hook, generated commands, ROLE.md) even when the on-
+                disk file is missing the All-Might marker. **Never
+                touches user data**: ``MEMORY.md``, ``memory/journal/``,
+                ``memory/understanding/``, ``memory/store/``, and
+                ``memory/usage.log`` always preserve existing content.
         """
         self._instance_root = instance_root
         self._instance_rel = self._compute_instance_rel(root, instance_root)
@@ -103,19 +111,19 @@ class MemoryInitializer:
             skills_log.write_text(self._skills_log_template())
 
         # 5. Generate memory commands (remember, recall, reflect)
-        self._generate_memory_commands(root)
+        self._generate_memory_commands(root, force=force)
 
         # 7. Write ROLE.md (root AGENTS.md is composed by the registry)
-        self._write_role_md(root)
+        self._write_role_md(root, force=force)
 
         # 8. Generate opencode.json with hooks for OpenCode
-        self._generate_opencode_json(root)
+        self._generate_opencode_json(root, force=force)
 
         # 9. Write the Claude Code memory-load hook script (mirrors
         #    .opencode/plugins/memory-load.ts; the project-level bridge
         #    in core.claude_bridge already registered it in
         #    .claude/settings.json).
-        self._write_claude_memory_load_hook(root)
+        self._write_claude_memory_load_hook(root, force=force)
 
     # ------------------------------------------------------------------
     # Instance-root helpers
@@ -190,7 +198,9 @@ class MemoryInitializer:
         for filename, content in self._opencode_plugin_map().items():
             write_guarded(tpl / filename, content, ALLMIGHT_MARKER_TS)
 
-    def _write_memory_command_content(self, commands_dir: Path) -> None:
+    def _write_memory_command_content(
+        self, commands_dir: Path, force: bool = False,
+    ) -> None:
         """Write memory command content (just /remember and /recall).
 
         ``/reflect`` is no longer a separate command — its end-of-session
@@ -202,11 +212,13 @@ class MemoryInitializer:
             commands_dir / "remember.md",
             self._remember_command_body(),
             ALLMIGHT_MARKER_MD,
+            force=force,
         )
         write_guarded(
             commands_dir / "recall.md",
             self._recall_command_body(),
             ALLMIGHT_MARKER_MD,
+            force=force,
         )
 
     def _role_md_body(self) -> str:
@@ -768,11 +780,13 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
     # Command generation
     # ------------------------------------------------------------------
 
-    def _generate_memory_commands(self, root: Path) -> None:
+    def _generate_memory_commands(
+        self, root: Path, force: bool = False,
+    ) -> None:
         """Generate /remember and /recall commands."""
         commands_dir, _ = self._agent_surface_dirs(root)
         commands_dir.mkdir(parents=True, exist_ok=True)
-        self._write_memory_command_content(commands_dir)
+        self._write_memory_command_content(commands_dir, force=force)
 
     def _remember_command_body(self) -> str:
         from ...core.routing import ROUTING_PREAMBLE
@@ -1201,7 +1215,9 @@ Log the recall to `memory/usage.log`:
     # OpenCode compatibility
     # ------------------------------------------------------------------
 
-    def _generate_opencode_json(self, root: Path) -> None:
+    def _generate_opencode_json(
+        self, root: Path, force: bool = False,
+    ) -> None:
         """Generate opencode.json for OpenCode compatibility.
 
         Idempotent and non-destructive: ``$schema`` is only set when
@@ -1233,16 +1249,29 @@ Log the recall to `memory/usage.log`:
         # bun-install the plugin runtime dependency at startup.
         self._write_opencode_package_json(root)
 
+        # Generate .opencode/tsconfig.json so contributors and CI can
+        # type-check the generated plugins via ``npx tsc --noEmit``.
+        self._write_opencode_tsconfig(root)
+
         # Generate OpenCode plugins (L1 loader + remember-trigger + todo-curator)
-        self._generate_opencode_plugins(root)
+        self._generate_opencode_plugins(root, force=force)
 
     def _opencode_package_json_content(self) -> str:
         """Return the .opencode/package.json content.
 
-        Only declares what OpenCode's Bun actually needs to install:
-        @opencode-ai/plugin (the Plugin type and runtime). fs/path are
-        Node built-ins that ship with Bun; no type package is required
-        for runtime.
+        Runtime dep: ``@opencode-ai/plugin`` (the Plugin type and
+        runtime hooks). fs/path/process are Node built-ins; Bun
+        provides them at runtime, so no runtime install is required.
+
+        Dev deps are declared so contributors and CI can type-check
+        the generated plugins via ``npx tsc --noEmit``:
+          * ``@types/node`` — types for the Node built-ins the
+            plugins use (fs, path, process).
+          * ``typescript`` — pinned major version so the type-check
+            output is reproducible across machines.
+        Without ``@types/node``, ``tsc`` reports a wave of false
+        ``Cannot find module 'fs'`` / ``Cannot find name 'process'``
+        errors on framework-clean code.
         """
         import json
 
@@ -1252,8 +1281,64 @@ Log the recall to `memory/usage.log`:
             "dependencies": {
                 "@opencode-ai/plugin": "latest",
             },
+            "devDependencies": {
+                "@types/node": "^22",
+                "typescript": "^5.4",
+            },
         }
         return json.dumps(manifest, indent=2) + "\n"
+
+    def _opencode_tsconfig_content(self) -> str:
+        """Return the .opencode/tsconfig.json content.
+
+        Tuned for the OpenCode runtime + the All-Might-emitted plugins:
+
+        * ``target: ES2022`` — Bun runs ES2022 natively.
+        * ``module: ESNext`` + ``moduleResolution: bundler`` — match
+          how Bun resolves dependencies of ``@opencode-ai/plugin``.
+        * ``types: ["node"]`` — explicit so Node built-ins
+          (``fs``/``path``/``process``) resolve from
+          ``@types/node`` without requiring the plugin author to
+          remember to import them.
+        * ``skipLibCheck: true`` — silences noise from transitive
+          ``effect`` / ``fast-check`` ``.d.ts`` files which are not
+          our concern.
+        * ``strict: true`` + ``noEmit: true`` — type-check only;
+          surface bugs early; never produce build artefacts.
+        * ``include: ["plugins/**/*.ts"]`` — the only files we
+          actually own and want checked.
+        """
+        import json
+
+        config = {
+            "compilerOptions": {
+                "target": "ES2022",
+                "module": "ESNext",
+                "moduleResolution": "bundler",
+                "strict": True,
+                "skipLibCheck": True,
+                "types": ["node"],
+                "noEmit": True,
+                "esModuleInterop": True,
+                "lib": ["ES2022"],
+            },
+            "include": ["plugins/**/*.ts"],
+        }
+        return json.dumps(config, indent=2) + "\n"
+
+    def _write_opencode_tsconfig(self, root: Path) -> None:
+        """Write .opencode/tsconfig.json (idempotent, preserves user edits).
+
+        If a tsconfig.json already exists (e.g. user customised the
+        compiler options), leave it alone. The default we ship is
+        good enough for ``tsc --noEmit`` to pass on the generated
+        plugins, but customisation is the user's prerogative.
+        """
+        path = root / ".opencode" / "tsconfig.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            return
+        path.write_text(self._opencode_tsconfig_content())
 
     def _write_opencode_package_json(self, root: Path) -> None:
         """Write .opencode/package.json (idempotent, preserves user edits).
@@ -1277,12 +1362,20 @@ Log the recall to `memory/usage.log`:
         else:
             pkg_path.write_text(self._opencode_package_json_content())
 
-    def _generate_opencode_plugins(self, root: Path) -> None:
+    def _generate_opencode_plugins(
+        self, root: Path, force: bool = False,
+    ) -> None:
         """Generate all OpenCode plugins inside the instance plugins/ dir.
 
         Composition (registry-driven) symlinks each plugin under root
         ``.opencode/plugins/``; the legacy direct path is used when no
         instance_root is supplied.
+
+        ``force`` propagates to ``write_guarded`` so ``allmight init
+        --force`` actually regenerates plugins that the user edited
+        out of marker. Without this, a hand-edited plugin would
+        survive ``--force`` and the user has no clean way to recover
+        the framework version short of ``rm`` followed by re-init.
 
         Writes five plugin files:
         - memory-load.ts   — primes MEMORY.md + scope-first principle per session
@@ -1295,9 +1388,14 @@ Log the recall to `memory/usage.log`:
         plugins_dir.mkdir(parents=True, exist_ok=True)
 
         for filename, content in self._opencode_plugin_map().items():
-            write_guarded(plugins_dir / filename, content, ALLMIGHT_MARKER_TS)
+            write_guarded(
+                plugins_dir / filename, content, ALLMIGHT_MARKER_TS,
+                force=force,
+            )
 
-    def _write_claude_memory_load_hook(self, root: Path) -> None:
+    def _write_claude_memory_load_hook(
+        self, root: Path, force: bool = False,
+    ) -> None:
         """Write ``.claude/hooks/memory_load.py`` — Claude Code mirror.
 
         Pairs with ``.opencode/plugins/memory-load.ts``. Both inject
@@ -1316,7 +1414,7 @@ Log the recall to `memory/usage.log`:
         hooks_dir.mkdir(parents=True, exist_ok=True)
         target = hooks_dir / "memory_load.py"
         write_guarded(target, self._claude_memory_load_hook_content(),
-                      CLAUDE_HOOK_MARKER)
+                      CLAUDE_HOOK_MARKER, force=force)
         target.chmod(0o755)
 
     def _claude_memory_load_hook_content(self) -> str:
