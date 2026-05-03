@@ -91,17 +91,50 @@ Layout:
 
 ```yaml
 allmight_version: '<current package version>'
-schema_version: 1
+schema_version: 2
 personality_name: <name>
 capabilities:
   <capname>:
     capability_version: <X.Y.Z>
 exported_at: '<iso-8601 timestamp>'
+database_subscriptions:                # optional; omit if no shared SMAK
+  - index: <index_name>                # matches an entry in database/config.yaml
+    nfs_path: /nfs/smak/<index_name>   # where the shared SMAK index lives
+    last_validated_against: <ISO date> # when the personality last ran clean against this index
+    required: true                     # if true, import warns when nfs_path is missing
 ```
 
 Read the current ``allmight`` package version with
 ``python -c "import allmight; print(allmight.__version__)"`` (or
 fallback to the version baked into ``.allmight/personalities.yaml``).
+
+### 5b. Populate ``database_subscriptions`` (Mode-1 + shared-SMAK case)
+
+If this personality reads from a **team-shared** SMAK index hosted on
+NFS (the canonical Mode-1 + shared-SMAK pattern: one index per team,
+single bot writer, everyone reads), record those subscriptions in
+the manifest so the receiver can verify access on import.
+
+Procedure:
+
+1. Read ``personalities/<name>/database/config.yaml`` and list its
+   indices.
+2. For each index, ask the user:
+
+   > "Index ``<name>`` — is this hosted on a shared NFS path the
+   > receiver will need access to? (yes / no)"
+
+3. If yes, ask for the canonical NFS path and whether it is
+   ``required`` (import will warn loudly when missing) or optional
+   (warn quietly).
+4. Emit one entry under ``database_subscriptions`` per
+   user-confirmed index. If the user says no for every index, omit
+   the field entirely (legacy bundle shape).
+
+If the source personality is a fully-local installation (no NFS
+sharing at all), skip this section — the manifest's
+``database_subscriptions`` stays absent, and the bundle behaves
+exactly like a Part-D bundle.
 
 ### 6. Tell the user what you wrote
 

@@ -560,6 +560,38 @@ def import_personality(bundle: str, as_name: str | None, force: bool) -> None:
         click.echo("error: manifest.yaml lists no capabilities.", err=True)
         raise SystemExit(1)
 
+    # Parse database_subscriptions (optional, schema v2+).
+    # Warn when an entry's nfs_path is missing on the receiver's box.
+    # Never block the import — receivers often install bundles before
+    # mounting team NFS, and they need to be able to fix paths after.
+    subscriptions = manifest_data.get("database_subscriptions") or []
+    if not isinstance(subscriptions, list):
+        click.echo(
+            "warning: manifest.yaml database_subscriptions is not a list, "
+            "ignoring.",
+            err=True,
+        )
+        subscriptions = []
+    sub_warnings = 0
+    for sub in subscriptions:
+        if not isinstance(sub, dict):
+            continue
+        nfs_path = sub.get("nfs_path")
+        index = sub.get("index", "<unnamed>")
+        required = bool(sub.get("required", True))
+        if not nfs_path:
+            continue
+        if not P(str(nfs_path)).exists():
+            sub_warnings += 1
+            level = "warning" if required else "note"
+            click.echo(
+                f"{level}: database subscription '{index}' references "
+                f"missing path '{nfs_path}'. The personality will import, "
+                "but you must mount the shared SMAK or update its "
+                "database/config.yaml before /search will work.",
+                err=True,
+            )
+
     target_name = slugify_instance_name(as_name or bundle_name)
     target_root = project_root / "personalities" / target_name
     existing_entries = read_registry(project_root)
@@ -654,6 +686,11 @@ def import_personality(bundle: str, as_name: str | None, force: bool) -> None:
         f"All-Might! Imported personality '{target_name}' "
         f"(capabilities: {', '.join(t.name for t in selected)})."
     )
+    if subscriptions:
+        click.echo(
+            f"  Database subscriptions: {len(subscriptions)} "
+            f"({sub_warnings} warning(s))."
+        )
     click.echo("  Next: re-run /ingest to rebuild the search index.")
 
 

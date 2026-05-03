@@ -191,3 +191,93 @@ class TestImportCli:
         assert first.exit_code == 0
         second = _invoke_in(initted_project, ["import", str(sample_bundle)])
         assert second.exit_code != 0
+
+
+def _bundle_with_subscriptions(
+    base: Path, subs: list[dict],
+) -> Path:
+    """Build a minimal valid bundle whose manifest carries
+    ``database_subscriptions``."""
+    bundle = base / "stdcell_owner-export"
+    bundle.mkdir()
+    manifest = {
+        "allmight_version": "0.1.0",
+        "schema_version": 2,
+        "personality_name": "stdcell_owner",
+        "capabilities": {
+            "database": {"capability_version": "1.0.0"},
+            "memory": {"capability_version": "1.0.0"},
+        },
+        "database_subscriptions": subs,
+    }
+    (bundle / "manifest.yaml").write_text(yaml.safe_dump(manifest))
+    (bundle / "ROLE.md").write_text(
+        "<!-- all-might generated -->\n# stdcell_owner\nRole.\n",
+    )
+    (bundle / "database").mkdir()
+    (bundle / "memory").mkdir()
+    (bundle / "memory" / "understanding").mkdir()
+    (bundle / "memory" / "understanding" / "stdcell.md").write_text(
+        "<!-- all-might generated -->\n# stdcell\nNotes.\n",
+    )
+    return bundle
+
+
+class TestImportDatabaseSubscriptions:
+    """Manifest schema v2: database_subscriptions field."""
+
+    def test_export_skill_documents_subscriptions_field(self) -> None:
+        from allmight.capabilities.database.export_skill_content import (
+            EXPORT_SKILL_BODY,
+        )
+        # Manifest example must show the new field, and the procedure
+        # must include the populate step (5b).
+        assert "database_subscriptions" in EXPORT_SKILL_BODY
+        assert "5b" in EXPORT_SKILL_BODY or "Populate" in EXPORT_SKILL_BODY
+
+    def test_import_warns_on_missing_required_subscription(
+        self, initted_project: Path, tmp_path: Path,
+    ) -> None:
+        bundle = _bundle_with_subscriptions(
+            tmp_path,
+            [{
+                "index": "stdcell",
+                "nfs_path": "/nonexistent/nfs/smak/stdcell",
+                "last_validated_against": "2026-04-15",
+                "required": True,
+            }],
+        )
+        result = _invoke_in(initted_project, ["import", str(bundle)])
+        # Import must succeed even when the subscription path is missing.
+        assert result.exit_code == 0, result.output
+        # Both stdout (success line) and stderr (warning) are merged into
+        # result.output by Click's CliRunner.
+        assert "warning" in result.output.lower()
+        assert "stdcell" in result.output
+        assert "/nonexistent/nfs/smak/stdcell" in result.output
+
+    def test_import_subscription_summary_in_output(
+        self, initted_project: Path, tmp_path: Path,
+    ) -> None:
+        bundle = _bundle_with_subscriptions(
+            tmp_path,
+            [
+                {"index": "a", "nfs_path": str(tmp_path), "required": True},
+                {"index": "b", "nfs_path": "/nope/x", "required": True},
+            ],
+        )
+        result = _invoke_in(initted_project, ["import", str(bundle)])
+        assert result.exit_code == 0, result.output
+        assert "Database subscriptions: 2" in result.output
+        assert "1 warning" in result.output
+
+    def test_import_legacy_bundle_without_subscriptions_still_works(
+        self, initted_project: Path, sample_bundle: Path,
+    ) -> None:
+        # The sample_bundle fixture (defined above) emits a v1-shaped
+        # manifest with no database_subscriptions. Old bundles must
+        # import without warnings.
+        result = _invoke_in(initted_project, ["import", str(sample_bundle)])
+        assert result.exit_code == 0, result.output
+        # No subscription summary line should appear.
+        assert "Database subscriptions:" not in result.output
