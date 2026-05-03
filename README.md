@@ -154,6 +154,46 @@ matches the receiving project's `allmight` version) and copies the
 bundled files into place. After import, run `/ingest` to rebuild the
 search index.
 
+## Team Share
+
+Two patterns for sharing All-Might across a team:
+
+* **Bundle share** — push a personality bundle to a git remote with
+  `allmight share publish`; teammates `allmight share pull` to import.
+  Each receiver owns their copy. Best for starter-kit personalities
+  that get customised per project.
+
+  ```bash
+  # On the source project (after running /export to produce the bundle):
+  allmight share publish ./stdcell_owner-export/ --to file:///nfs/team/stdcell_owner.git
+
+  # On a receiving project:
+  allmight share pull file:///nfs/team/stdcell_owner.git
+  allmight share pull file:///nfs/team/stdcell_owner.git --as stdcell_v2
+  ```
+
+  Any URL the local `git` can reach works (file://, ssh, https). For
+  a brand-new local bare repo, `share publish` runs `git init --bare`
+  on first push automatically.
+
+* **Instance share** — multiple users `cd` into a shared NFS-hosted
+  All-Might project and run their agents against the same memory +
+  database. Best for service roles like a team review agent. The
+  `memory/lessons_learned/_inbox/` directory is the user-side write
+  buffer for that mode; a curator periodically audits and promotes
+  entries to `_reviewed/`.
+
+For database (SMAK) sharing, the canonical pattern is one
+NFS-hosted SMAK index per team, written by a single dedicated
+account, read by everyone. A personality bundle records its SMAK
+index dependencies in `manifest.yaml::database_subscriptions`; on
+import, missing NFS paths surface as warnings without blocking the
+install.
+
+See [docs/team-share.md](docs/team-share.md) for the layout,
+permissions, manifest schema, and the lessons-learned curation
+workflow.
+
 ## Re-init is safe
 
 ```bash

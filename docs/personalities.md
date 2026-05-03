@@ -1,7 +1,11 @@
 # Personalities
 
 A *personality* is a reusable capability bundle that ``allmight init``
-attaches to a project. Built-in personalities today:
+attaches to a project. Personalities can be shared across projects
+or teams; see [team-share.md](team-share.md) for the bundle (Mode 1,
+git transport) and instance (Mode 2, NFS) sharing patterns.
+
+Built-in personalities today:
 
 | Template       | Short name | What it provides |
 |----------------|------------|------------------|
