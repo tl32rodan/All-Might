@@ -126,6 +126,110 @@ class TestExportSkillIsInstalled:
 
 
 # -----------------------------------------------------------------------
+# /one-for-all and `allmight all-for-one` — naming aliases
+# -----------------------------------------------------------------------
+
+
+class TestOneForAllAliases:
+    """Both old (`/export`, `allmight import`) and new
+    (`/one-for-all`, `allmight all-for-one`) names must work; the new
+    names are first-class permanent aliases, not a deprecation.
+    """
+
+    def test_one_for_all_skill_present(self, initted_project: Path) -> None:
+        skill = (
+            initted_project / ".opencode" / "skills"
+            / "one-for-all" / "SKILL.md"
+        )
+        assert skill.exists()
+
+    def test_one_for_all_command_present(self, initted_project: Path) -> None:
+        cmd = (
+            initted_project / ".opencode" / "commands" / "one-for-all.md"
+        )
+        assert cmd.exists()
+
+    def test_one_for_all_body_matches_export(
+        self, initted_project: Path,
+    ) -> None:
+        """Both /one-for-all and /export run the same procedure;
+        the slash command bodies are byte-identical.
+        """
+        export_cmd = (
+            initted_project / ".opencode" / "commands" / "export.md"
+        ).read_text()
+        ofa_cmd = (
+            initted_project / ".opencode" / "commands" / "one-for-all.md"
+        ).read_text()
+        assert export_cmd == ofa_cmd
+
+    def test_one_for_all_skill_body_matches_export(
+        self, initted_project: Path,
+    ) -> None:
+        """Both SKILL.md files share the same procedure body —
+        differing only in the YAML frontmatter ``name:`` line.
+        """
+        from allmight.capabilities.database.export_skill_content import (
+            EXPORT_SKILL_BODY,
+        )
+        export_skill = (
+            initted_project / ".opencode" / "skills" / "export" / "SKILL.md"
+        ).read_text()
+        ofa_skill = (
+            initted_project / ".opencode" / "skills"
+            / "one-for-all" / "SKILL.md"
+        ).read_text()
+        # Both SKILL.md files embed the canonical EXPORT_SKILL_BODY.
+        assert EXPORT_SKILL_BODY in export_skill
+        assert EXPORT_SKILL_BODY in ofa_skill
+        # Frontmatter names diverge by design.
+        assert "name: export" in export_skill
+        assert "name: one-for-all" in ofa_skill
+
+    def test_all_for_one_cli_invokes_import(
+        self, initted_project: Path, sample_bundle: Path,
+    ) -> None:
+        """`allmight all-for-one <bundle>` produces the same on-disk
+        effect as `allmight import <bundle>`.
+        """
+        result = _invoke_in(
+            initted_project, ["all-for-one", str(sample_bundle)],
+        )
+        assert result.exit_code == 0, result.output
+        p = initted_project / "personalities" / "stdcell_owner"
+        assert p.is_dir()
+        assert (p / "ROLE.md").is_file()
+        assert (p / "memory" / "understanding" / "stdcell.md").is_file()
+
+    def test_all_for_one_supports_as_flag(
+        self, initted_project: Path, sample_bundle: Path,
+    ) -> None:
+        """`--as` rename works on the alias too."""
+        result = _invoke_in(
+            initted_project,
+            ["all-for-one", str(sample_bundle), "--as", "stdcell_v2"],
+        )
+        assert result.exit_code == 0, result.output
+        assert (
+            initted_project / "personalities" / "stdcell_v2"
+        ).is_dir()
+        assert not (
+            initted_project / "personalities" / "stdcell_owner"
+        ).exists()
+
+    def test_old_import_name_still_works(
+        self, initted_project: Path, sample_bundle: Path,
+    ) -> None:
+        """`allmight import` is permanent — no deprecation warning."""
+        result = _invoke_in(initted_project, ["import", str(sample_bundle)])
+        assert result.exit_code == 0, result.output
+        # No deprecation noise in stderr/stdout.
+        out_lower = result.output.lower()
+        assert "deprecat" not in out_lower
+        assert "removed" not in out_lower
+
+
+# -----------------------------------------------------------------------
 # allmight import CLI
 # -----------------------------------------------------------------------
 

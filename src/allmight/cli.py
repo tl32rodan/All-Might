@@ -708,6 +708,16 @@ def import_personality(bundle: str, as_name: str | None, force: bool) -> None:
     click.echo("  Next: re-run /ingest to rebuild the search index.")
 
 
+# Permanent alias: ``allmight all-for-one`` invokes the same
+# import-personality logic. Naming captures the *receiving*
+# direction of the operation (gathering a personality the user
+# found elsewhere) and pairs with the ``/one-for-all`` slash command
+# (the *passing-on* side). Both names are first-class — no
+# deprecation. ``main.add_command`` registers an additional public
+# name; Click dispatches both to the same callback.
+main.add_command(import_personality, name="all-for-one")
+
+
 # ------------------------------------------------------------------
 # Share (publish + pull personality bundles via git transport)
 # ------------------------------------------------------------------

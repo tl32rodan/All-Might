@@ -197,29 +197,52 @@ class ProjectInitializer:
         write_guarded(commands_dir / "sync.md", SYNC_COMMAND_BODY, ALLMIGHT_MARKER_MD)
 
     def _install_export_skill(self, root: Path, *, force: bool = False) -> None:
-        """Install /export skill + command (Part-D commit 10).
+        """Install /export and /one-for-all skill + commands.
 
         ``/export`` is agent-driven (PII review, per-capability
         rules). This installs the skill body and the companion
         slash command so the user can invoke it after any
         ``allmight init``.
+
+        ``/one-for-all`` is a permanent alias whose body is identical
+        to ``/export``'s. It signals the *direction* of the operation
+        (passing a personality on to another project) and matches the
+        ``allmight all-for-one`` import alias added in cli.py. Both
+        names are first-class — there is no deprecation path.
         """
         from .export_skill_content import EXPORT_SKILL_BODY, EXPORT_COMMAND_BODY
 
         skill_dir, commands_dir = self._agent_surface_dirs(root)
+        skill_description = (
+            "Bundle a personality for transfer to another All-Might "
+            "project. Applies per-capability export rules and "
+            "reviews content for PII before writing the bundle."
+        )
+        # /export — the original verb.
         self._write_skill(
             skill_dir / "export" / "SKILL.md",
             name="export",
-            description=(
-                "Bundle a personality for transfer to another All-Might "
-                "project. Applies per-capability export rules and "
-                "reviews content for PII before writing the bundle."
-            ),
+            description=skill_description,
             body=EXPORT_SKILL_BODY,
         )
+        # /one-for-all — alias whose body is identical to /export's.
+        # Same skill, two callable names.
+        self._write_skill(
+            skill_dir / "one-for-all" / "SKILL.md",
+            name="one-for-all",
+            description=skill_description,
+            body=EXPORT_SKILL_BODY,
+        )
+
         commands_dir.mkdir(parents=True, exist_ok=True)
         write_guarded(
             commands_dir / "export.md",
+            EXPORT_COMMAND_BODY,
+            ALLMIGHT_MARKER_MD,
+            force=force,
+        )
+        write_guarded(
+            commands_dir / "one-for-all.md",
             EXPORT_COMMAND_BODY,
             ALLMIGHT_MARKER_MD,
             force=force,

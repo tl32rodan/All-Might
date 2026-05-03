@@ -124,7 +124,16 @@ command against that personality's data dir.
 
 ## Sharing personalities between projects
 
-`/export` writes a directory bundle:
+> **A note on names.** The export / import operations also answer
+> to ``/one-for-all`` (export) and ``allmight all-for-one`` (import).
+> The names mirror the *direction* of the operation: One-for-All
+> passes a personality on for others to carry; All-for-One gathers
+> a personality you found elsewhere. (Both verbs are first-class
+> permanent aliases — never deprecated.) The framework itself,
+> *All-Might*, is the carrier in this metaphor — fitting because
+> it's where personalities live and travel.
+
+`/export` (alias `/one-for-all`) writes a directory bundle:
 
 ```
 stdcell_owner-export/
@@ -142,11 +151,13 @@ export rules (`store/` is never bundled), reviews every file for
 likely PII, and asks for explicit consent on sensitive content
 before writing the bundle.
 
-`allmight import <bundle>` restores it in another project:
+`allmight import <bundle>` (alias `allmight all-for-one <bundle>`)
+restores it in another project:
 
 ```bash
 allmight import ./stdcell_owner-export/
-allmight import ./stdcell_owner-export/ --as stdcell_v2  # rename
+allmight all-for-one ./stdcell_owner-export/                 # same thing
+allmight import ./stdcell_owner-export/ --as stdcell_v2      # rename
 ```
 
 `import` runs each capability's install (so the directory structure
