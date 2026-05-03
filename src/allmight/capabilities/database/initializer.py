@@ -1,9 +1,9 @@
-"""Detroit SMAK Initializer — one punch creates the entire workspace.
+"""Database capability initializer — bootstraps the knowledge-graph data dir.
 
 Takes a ProjectManifest from the Scanner and generates:
-- knowledge_graph/ directory
-- .claude/commands/ (slash commands)
-- Updates CLAUDE.md at project root
+- database/ directory (per-instance)
+- .opencode/commands/ (slash commands) or per-instance commands
+- ROLE.md inside the personality dir
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ class ProjectInitializer:
         # ``initialize()``. ``initialize()`` overwrites them when
         # called.
         self._instance_root: Path | None = None
-        self._instance_rel: str = ""
 
     def initialize(
         self,
@@ -42,15 +41,14 @@ class ProjectInitializer:
                       Default is read-only (search only).
             instance_root: Personality instance directory under
                 ``personalities/<name>/``. The per-instance content
-                (knowledge_graph/, skills/, commands/) lives here.
-                If ``None``, defaults to ``manifest.root_path`` for
-                callers (clone, merge) that haven't migrated yet.
+                (database/, skills/, commands/) lives here. If ``None``,
+                defaults to ``manifest.root_path`` for callers (clone,
+                merge) that haven't migrated yet.
         """
         root = manifest.root_path
         if instance_root is None:
             instance_root = root
         self._instance_root = instance_root
-        self._instance_rel = self._compute_instance_rel(root, instance_root)
         allmight_dir = root / ".allmight"
         is_reinit = allmight_dir.is_dir() and not force
 
@@ -64,7 +62,7 @@ class ProjectInitializer:
                     "Read-only projects cannot be converted to writable."
                 )
 
-        # 1. Create knowledge_graph/ (always safe — mkdir exist_ok)
+        # 1. Create database/ (always safe — mkdir exist_ok)
         self._create_metadata(root, manifest)
 
         if is_reinit:
@@ -91,6 +89,7 @@ class ProjectInitializer:
             self._generate_commands(root, manifest, writable=writable, force=force)
             self._write_role_md(root, manifest, writable=writable, force=force)
             self._install_onboard_skill(root, force=force)
+            self._install_export_skill(root, force=force)
 
             # Create .allmight/ marker (clean up any stale templates)
             allmight_dir.mkdir(exist_ok=True)
@@ -104,27 +103,13 @@ class ProjectInitializer:
                 "writable" if writable else "read-only"
             )
 
-    @staticmethod
-    def _compute_instance_rel(root: Path, instance_root: Path) -> str:
-        """Return the instance dir as a forward-slash relative path.
-
-        Used to splice ``personalities/<instance>/knowledge_graph`` into
-        agent-facing strings (commands, AGENTS.md). When ``instance_root
-        == root`` (legacy callers) returns ``""`` so paths collapse back
-        to bare ``knowledge_graph/``.
-        """
-        if instance_root == root:
-            return ""
-        rel = instance_root.relative_to(root)
-        return rel.as_posix() + "/"
-
     def _create_metadata(self, root: Path, manifest: ProjectManifest) -> None:
-        """Create knowledge_graph/ inside the instance dir.
+        """Create database/ inside the instance dir.
 
         Note: config.yaml is NOT created here — it belongs to SMAK workspaces
-        under <kg_root>/<workspace>/config.yaml, not the All-Might project root.
+        under <db_root>/<workspace>/config.yaml, not the All-Might project root.
         """
-        (self._instance_root / "knowledge_graph").mkdir(parents=True, exist_ok=True)
+        (self._instance_root / "database").mkdir(parents=True, exist_ok=True)
 
     def _stage_templates(
         self,
@@ -203,13 +188,42 @@ class ProjectInitializer:
             skill_dir / "sync" / "SKILL.md",
             name="sync",
             description=(
-                "Reconcile staged All-Might templates or merge conflicts. "
-                "Run after allmight init (re-init) or allmight merge."
+                "Reconcile staged All-Might templates with user-customized "
+                "files. Run after allmight init on a re-initialized project."
             ),
             body=SYNC_SKILL_BODY,
         )
         commands_dir.mkdir(parents=True, exist_ok=True)
         write_guarded(commands_dir / "sync.md", SYNC_COMMAND_BODY, ALLMIGHT_MARKER_MD)
+
+    def _install_export_skill(self, root: Path, *, force: bool = False) -> None:
+        """Install /export skill + command (Part-D commit 10).
+
+        ``/export`` is agent-driven (PII review, per-capability
+        rules). This installs the skill body and the companion
+        slash command so the user can invoke it after any
+        ``allmight init``.
+        """
+        from .export_skill_content import EXPORT_SKILL_BODY, EXPORT_COMMAND_BODY
+
+        skill_dir, commands_dir = self._agent_surface_dirs(root)
+        self._write_skill(
+            skill_dir / "export" / "SKILL.md",
+            name="export",
+            description=(
+                "Bundle a personality for transfer to another All-Might "
+                "project. Applies per-capability export rules and "
+                "reviews content for PII before writing the bundle."
+            ),
+            body=EXPORT_SKILL_BODY,
+        )
+        commands_dir.mkdir(parents=True, exist_ok=True)
+        write_guarded(
+            commands_dir / "export.md",
+            EXPORT_COMMAND_BODY,
+            ALLMIGHT_MARKER_MD,
+            force=force,
+        )
 
     def _install_onboard_skill(self, root: Path, *, force: bool = False) -> None:
         """Install /onboard skill + command on every fresh init.
@@ -241,15 +255,16 @@ class ProjectInitializer:
         )
 
     def _agent_surface_dirs(self, root: Path) -> tuple[Path, Path]:
-        """Return (skills_dir, commands_dir) for the instance.
+        """Return (skills_dir, commands_dir) — always project-global ``.opencode/``.
 
-        Inside the instance dir for the new layout; falls back to the
-        legacy ``.opencode/`` locations when ``instance_root`` is unset
-        (legacy callers like ``merge``) or equal to ``root``.
+        Part-D: capability templates write the agent surface once into
+        the global ``.opencode/{skills,commands}/``. ``compose`` then
+        creates upward symlinks ``personalities/<p>/{skills,commands}``
+        back into the global set. Bodies are generic
+        (``personalities/<active>/...`` placeholders), so a single
+        global write serves every personality.
         """
-        if self._instance_root is None or self._instance_root == root:
-            return root / ".opencode" / "skills", root / ".opencode" / "commands"
-        return self._instance_root / "skills", self._instance_root / "commands"
+        return root / ".opencode" / "skills", root / ".opencode" / "commands"
 
     def _role_md_body(
         self, manifest: ProjectManifest, writable: bool = False,
@@ -261,7 +276,7 @@ class ProjectInitializer:
 
     def _role_md_readonly(self, manifest: ProjectManifest) -> str:
         """ROLE.md for the corpus keeper, read-only mode."""
-        kg_root = self._instance_rel + "knowledge_graph"
+        db_root = "personalities/<active>/database"
         sos_prereq = ""
         if manifest.has_path_env:
             sos_prereq = """
@@ -289,7 +304,7 @@ modify corpora (no ingesting, no enriching, no sidecar edits).
 ### Concepts
 
 - **Corpus** (= **workspace**) — one independently-indexed source domain.
-  Each corpus maps to `{kg_root}/<workspace>/` and has its own SMAK
+  Each corpus maps to `{db_root}/<workspace>/` and has its own SMAK
   vector store. A project may have multiple corpora (e.g. `stdcell`, `pll`).
   Source files are indexed **in-place** — only the index is stored locally.
   The corpus name and workspace name are the same string throughout All-Might.
@@ -305,7 +320,7 @@ The `/search` command has a detailed operational guide in `.opencode/commands/`.
 
     def _role_md_writable(self, manifest: ProjectManifest) -> str:
         """ROLE.md for the corpus keeper, writable mode."""
-        kg_root = self._instance_rel + "knowledge_graph"
+        db_root = "personalities/<active>/database"
         sos_prereq = ""
         if manifest.has_path_env:
             sos_prereq = """
@@ -333,7 +348,7 @@ across sessions.
 ### Concepts
 
 - **Corpus** (= **workspace**) — one independently-indexed source domain.
-  Each corpus maps to `{kg_root}/<workspace>/` and has its own SMAK
+  Each corpus maps to `{db_root}/<workspace>/` and has its own SMAK
   vector store. A project may have multiple corpora (e.g. `stdcell`, `pll`).
   Source files are indexed **in-place** — only the index is stored locally.
   The corpus name and workspace name are the same string throughout All-Might.
@@ -353,9 +368,10 @@ guide in `.opencode/commands/`.
 """
 
     def _search_command_body(self) -> str:
-        """Return search.md command content with instance-aware kg path."""
-        kg_root = self._instance_rel + "knowledge_graph"
-        return self._SEARCH_BODY.replace("{kg_root}", kg_root)
+        """Return search.md command content (generic — agent resolves <active>)."""
+        from ...core.routing import ROUTING_PREAMBLE
+        db_root = "personalities/<active>/database"
+        return ROUTING_PREAMBLE + self._SEARCH_BODY.replace("{db_root}", db_root)
 
     _SEARCH_BODY = """\
 Search the codebase by semantic meaning.
@@ -366,17 +382,17 @@ Results point back to files at their original paths.
 ## How to execute
 
 ```bash
-smak search "<query>" --config {kg_root}/<workspace>/config.yaml --index source_code --top-k 5 --json
+smak search "<query>" --config {db_root}/<workspace>/config.yaml --index source_code --top-k 5 --json
 ```
 
 To search across all corpora at once:
 ```bash
-smak search-all "<query>" --config {kg_root}/<workspace>/config.yaml --top-k 3 --json
+smak search-all "<query>" --config {db_root}/<workspace>/config.yaml --top-k 3 --json
 ```
 
 To look up a specific symbol by UID:
 ```bash
-smak lookup "<file_path>::<symbol_name>" --config {kg_root}/<workspace>/config.yaml --index source_code --json
+smak lookup "<file_path>::<symbol_name>" --config {db_root}/<workspace>/config.yaml --index source_code --json
 ```
 
 ## What to expect
@@ -396,9 +412,10 @@ JSON output with a `results` array. Each result contains:
 """
 
     def _ingest_command_body(self) -> str:
-        """Return ingest.md command content with instance-aware kg path."""
-        kg_root = self._instance_rel + "knowledge_graph"
-        return self._INGEST_BODY.replace("{kg_root}", kg_root)
+        """Return ingest.md command content (generic — agent resolves <active>)."""
+        from ...core.routing import ROUTING_PREAMBLE
+        db_root = "personalities/<active>/database"
+        return ROUTING_PREAMBLE + self._INGEST_BODY.replace("{db_root}", db_root)
 
     _INGEST_BODY = """\
 Build the SMAK vector index from source files.
@@ -420,12 +437,12 @@ from the search index.
 
 Rebuild all corpora in a workspace:
 ```bash
-smak ingest --config {kg_root}/<workspace>/config.yaml --json
+smak ingest --config {db_root}/<workspace>/config.yaml --json
 ```
 
 Rebuild a specific corpus:
 ```bash
-smak ingest --config {kg_root}/<workspace>/config.yaml --index source_code --json
+smak ingest --config {db_root}/<workspace>/config.yaml --index source_code --json
 ```
 
 ## What to expect
@@ -437,8 +454,8 @@ smak ingest --config {kg_root}/<workspace>/config.yaml --index source_code --jso
 ## Troubleshooting
 
 - If `smak` is not found, ensure SMAK is installed and on PATH
-- Check `smak health --config {kg_root}/<workspace>/config.yaml --json` for diagnostics
-- List available corpora: `smak describe --config {kg_root}/<workspace>/config.yaml --json`
+- Check `smak health --config {db_root}/<workspace>/config.yaml --json` for diagnostics
+- List available corpora: `smak describe --config {db_root}/<workspace>/config.yaml --json`
 """
 
     def _generate_commands(
@@ -448,7 +465,7 @@ smak ingest --config {kg_root}/<workspace>/config.yaml --index source_code --jso
         writable: bool = False,
         force: bool = False,
     ) -> None:
-        """Generate corpus_keeper command guides inside the instance dir."""
+        """Generate database capability command guides inside the instance dir."""
         _, commands_dir = self._agent_surface_dirs(root)
         commands_dir.mkdir(parents=True, exist_ok=True)
 
@@ -530,7 +547,13 @@ smak ingest --config {kg_root}/<workspace>/config.yaml --index source_code --jso
 
     @staticmethod
     def _enrich_command_body(has_path_env: bool) -> str:
-        """Return the enrich.md command content, SOS-aware when applicable."""
+        """Return the enrich.md command content, SOS-aware when applicable.
+
+        Prepends the routing preamble so the agent resolves
+        ``<active>`` before substituting it into the SMAK paths
+        below.
+        """
+        from ...core.routing import ROUTING_PREAMBLE
         base = """\
 Annotate a code symbol with intent and/or relations.
 
@@ -538,14 +561,16 @@ Annotate a code symbol with intent and/or relations.
 
 Set intent (what the symbol does and why):
 ```bash
-smak enrich --config config.yaml --index source_code \\
+smak enrich --config personalities/<active>/database/<workspace>/config.yaml \\
+    --index source_code \\
     --file <relative_path> --symbol "<SymbolName>" \\
     --intent "Human-readable description of purpose"
 ```
 
 Add a relation to another symbol:
 ```bash
-smak enrich --config config.yaml --index source_code \\
+smak enrich --config personalities/<active>/database/<workspace>/config.yaml \\
+    --index source_code \\
     --file <relative_path> --symbol "<SymbolName>" \\
     --relation "<other_file>::<OtherSymbol>" --bidirectional
 ```
@@ -580,7 +605,7 @@ Skip auto-generated code, simple getters, and obvious boilerplate.
 - Never invent UIDs — use `/search` to discover valid ones
 """
         if not has_path_env:
-            return base
+            return ROUTING_PREAMBLE + base
 
         sos_section = """
 ## SOS Environment (CliosoftSOS)
@@ -623,7 +648,7 @@ Use `--dry-run` with the `cliosoft-sos` MCP tools to enrich safely:
 - Path mismatch warnings in workspaces are normal — you're editing in a workspace while relations point to the canonical path
 - After check-in, re-ingest to update the search index
 """
-        return base + sos_section
+        return ROUTING_PREAMBLE + base + sos_section
 
     def _write_skill(
         self,

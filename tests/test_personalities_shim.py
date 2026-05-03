@@ -32,7 +32,7 @@ def test_legacy_import_emits_deprecation_warning() -> None:
 
 
 def test_legacy_submodule_import_resolves_to_new_path() -> None:
-    """`from allmight.personalities.corpus_keeper.scanner import X` still works.
+    """`from allmight.personalities.database.scanner import X` still works.
 
     Python's import machinery creates a distinct module record for
     each name, so legacy and new modules aren't the *same* object —
@@ -41,8 +41,8 @@ def test_legacy_submodule_import_resolves_to_new_path() -> None:
     _purge("allmight.personalities")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        legacy = importlib.import_module("allmight.personalities.corpus_keeper.scanner")
-        new = importlib.import_module("allmight.capabilities.corpus_keeper.scanner")
+        legacy = importlib.import_module("allmight.personalities.database.scanner")
+        new = importlib.import_module("allmight.capabilities.database.scanner")
     assert legacy.__file__ == new.__file__, \
         "shim must route legacy submodule imports to the new package's files"
     assert getattr(legacy, "ProjectScanner") is getattr(new, "ProjectScanner"), \

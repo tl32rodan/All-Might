@@ -19,7 +19,7 @@ class Scanner(Protocol):
 
 
 class Initializer(Protocol):
-    """Creates knowledge_graph/, enrichment/, and .claude/ skills from a manifest."""
+    """Creates database/, enrichment/, and .claude/ skills from a manifest."""
 
     def initialize(self, manifest: ProjectManifest, smak_path: Path | None = None) -> None: ...
 

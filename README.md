@@ -1,208 +1,187 @@
 # All-Might
 
 Turn your codebase into a knowledge graph that AI agents can search,
-learn from, and remember across sessions.
+learn from, and remember across sessions — organised around the
+**roles** *you* care about, not toolkits the framework hands you.
 
 ## How It Works
 
-All-Might builds two layers of understanding on top of your code,
-each provided by an independent **personality** (more on those below):
+You define **personalities** — roles like `stdcell_owner`,
+`pll_owner`, `code_reviewer` — and pick which **capabilities** each
+one needs:
 
-**Search & Annotation** — provided by the **corpus keeper**. The agent
-searches your code by meaning, not just keywords. Ask "how does
-authentication work?" and it finds the relevant modules even if they
-never use the word "authentication". As the agent reads and
-understands code, it can annotate what each function/class does and
-how things connect. Those notes persist across sessions.
+* The **`database` capability** indexes source code so the agent can
+  search by meaning ("how does authentication work?") and annotate
+  what each symbol does. Each personality gets its own searchable
+  workspace.
+* The **`memory` capability** keeps cross-session memory: your
+  preferences, past decisions, scope-specific journal entries.
 
-**Memory** — provided by the **memory keeper**. The agent remembers
-things across sessions: your preferences, past decisions, corrections
-you've made. Over time, frequently-used memories stick; forgotten ones
-fade naturally.
-
-## Why personalities?
-
-All-Might is built around **personalities** — independent capability
-bundles that you install into a project. Today there are two:
-
-- A **corpus keeper** for search and annotation.
-- A **memory keeper** for cross-session memory.
-
-Each personality lives in its own folder under `personalities/<name>/`.
-That isolation is the point: when you update All-Might, your
-customizations to one personality don't get tangled with the other,
-and you can read each personality's commands and notes in one place.
-Future personalities (review automation, doc generation, …) plug in
-the same way without touching the framework's core.
+A single project can hold one personality (the default after
+`allmight init`) or many (`allmight add` adds more). All personalities
+share **one** flat slash-command surface — `/search`, `/remember`,
+`/recall`, `/enrich`, `/ingest`, `/onboard`, `/export`, `/sync` — and
+the agent decides which personality to act for from conversation
+context plus a `> **Default personality**: <name>` hint at the top of
+`MEMORY.md`.
 
 ## Setup
 
 ```bash
 pip install allmight
-cd /path/to/your/project
-allmight init .                # search + annotation + agent memory
+cd /path/to/my-chip-project
+allmight init .                # creates one personality named after the dir
 ```
 
-`allmight init` is interactive: it asks for a name for each
-personality (default: `knowledge` for the corpus keeper, `memory` for
-the memory keeper) and an optional list of folders to register. Pass
-`--yes` (or `-y`) to skip the prompts and accept all defaults.
-
-Then open the folder in **Claude Code** or **OpenCode** and run
-`/onboard` once — the agent asks two short questions ("what knowledge
-do you want to manage?" / "what kind of assistant do you want to
-build?"), classifies each folder you listed, and customises the role
-descriptions for each personality.
-
-## Project layout after `allmight init`
+`allmight init` asks a single question (with `--yes` to skip):
 
 ```
-my-project/
-├── AGENTS.md                ← what the agent can do
-├── MEMORY.md                ← what the agent remembers
-├── .opencode/               ← Claude Code / OpenCode picks this up
-│   ├── commands/            ← /search, /remember, …
-│   ├── plugins/             ← memory hooks
-│   └── skills/              ← /sync
+Personality name? [my-chip-project]
+```
+
+The default is the project-root directory name. The personality is
+created with all available capabilities (`database` + `memory`).
+
+Then open the project in **Claude Code** or **OpenCode** and run
+`/onboard` once — the agent asks one open-ended question per
+personality ("tell me about the `<name>` role"), writes the answers
+into `personalities/<name>/ROLE.md`, populates `MEMORY.md`'s project
+map, and (if there's more than one personality) records the default.
+
+## Adding more personalities
+
+```bash
+allmight add stdcell_owner --capabilities database,memory
+allmight add pll_owner     --capabilities database,memory
+allmight add code_reviewer --capabilities memory     # no database
+```
+
+`--capabilities` is a comma-separated list. Omit it to install every
+available capability. `code_reviewer` above is created with only the
+`memory` capability — no `database/` data dir, no `/search`-against-it.
+
+```bash
+allmight list
+# Personality     Capabilities      Version
+# my-chip-project database, memory  1.0.0
+# stdcell_owner   database, memory  1.0.0
+# pll_owner       database, memory  1.0.0
+# code_reviewer   memory            1.0.0
+```
+
+## Project layout
+
+```
+my-chip-project/
+├── AGENTS.md                            ← composed from each ROLE.md
+├── MEMORY.md                            ← project map + default-personality hint
+├── .opencode/                           ← Claude Code / OpenCode picks this up
+│   ├── commands/                        ← /search, /remember, /export, …
+│   ├── plugins/                         ← memory hooks, role loader
+│   └── skills/                          ← /onboard, /export, /sync
 └── personalities/
-    ├── my-project-corpus/   ← corpus keeper data + commands
-    └── my-project-memory/   ← memory keeper data + commands
+    ├── my-chip-project/
+    │   ├── ROLE.md
+    │   ├── commands/                    ← initially empty; for personality-specific commands
+    │   ├── skills/                      ← same
+    │   ├── database/                    ← knowledge-graph workspaces
+    │   └── memory/                      ← per-personality journal + understanding
+    ├── stdcell_owner/
+    └── pll_owner/
 ```
 
-Everything under `.opencode/` is composed automatically — each
-personality contributes its own commands and plugins, and All-Might
-links them in. Your customizations to either side stay isolated under
-their own `personalities/<name>/` folder, so updates won't tread on
-your work.
+The agent surface (`commands/`, `skills/`, `plugins/`) lives **once**
+in `.opencode/` — capability templates write the globals there
+directly. Each personality has its own real `commands/` and `skills/`
+slot for personality-specific entries; ``compose`` projects those into
+``.opencode/<kind>/`` via downward symlinks so OpenCode discovers them
+from one global scan.
 
-## Talking to the Agent
+## Talking to the agent
 
-### Search the code
+```text
+> Search the stdcell rtl for setup-time violations.
+> Remember that the PLL lock-time spec is 50 µs.
+> What did we decide last week about the io_phy retiming?
+```
 
-> "Search for how authentication works"
->
-> "What does the AuthHandler class do?"
->
-> "Find all error handling patterns"
-
-### Build understanding
-
-> "Annotate the AuthHandler — write down what it does and why"
->
-> "Link the login function to its test file"
->
-Each annotation makes future searches and questions more useful.
-
-### Remember things (if memory enabled)
-
-> "Remember that I prefer TypeScript over JavaScript"
->
-> "What did we discuss about the auth module last time?"
->
-> "Consolidate what you've learned from recent sessions"
-
-## What You Need to Do
-
-| When | Tell the agent |
-|------|----------------|
-| **First time** | "Run /ingest to build the search index" |
-| **Exploring** | Ask questions about the code |
-| **Agent learns something** | "Annotate this with what you just learned" |
-| **After big changes** | "Re-run /ingest" |
-
-Everything else is automatic.
+The agent reads `MEMORY.md`'s project map (one row per personality),
+picks the right personality from your phrasing, and runs the matching
+command against that personality's data dir.
 
 ## Commands
 
-These are slash commands you can type (or just ask the agent in
-natural language — it knows what to do).
+| Command   | Plain English |
+|-----------|--------------|
+| `/onboard`  | Capture each personality's role and (if 2+ personalities) pick the default. Run once after `allmight init`. |
+| `/search`   | "Search for ..." |
+| `/enrich`   | "Annotate this symbol" |
+| `/ingest`   | "Build the search index" |
+| `/remember` | "Remember that ..." (records *or* reviews — agent picks based on trigger) |
+| `/recall`   | "What do you know about ...?" |
+| `/export`   | "Export `<name>` so I can share it" — agent applies per-capability rules and reviews for PII |
+| `/sync`     | Merge staged template updates after re-init / resolve compose conflicts |
 
-| Command | Plain English |
-|---------|--------------|
-| `/onboard` | "Finish setup — capture role + classify folders" (run once after init) |
-| `/search` | "Search for ..." |
-| `/enrich` | "Annotate this symbol" |
-| `/ingest` | "Build the search index" |
-| `/remember` | "Remember that ..." (records *or* reviews — the agent picks based on trigger) |
-| `/recall` | "What do you know about ...?" |
+## Sharing personalities between projects
+
+`/export` writes a directory bundle:
+
+```
+stdcell_owner-export/
+├── manifest.yaml                   ← allmight version + capability versions
+├── ROLE.md
+├── database/
+│   └── config.yaml                 ← (no store/ — vector index is rebuilt)
+└── memory/
+    ├── understanding/              ← only files that passed PII review
+    └── journal/                    ← only if the user opted in
+```
+
+The agent walks each capability's data, applies per-capability
+export rules (`store/` is never bundled), reviews every file for
+likely PII, and asks for explicit consent on sensitive content
+before writing the bundle.
+
+`allmight import <bundle>` restores it in another project:
+
+```bash
+allmight import ./stdcell_owner-export/
+allmight import ./stdcell_owner-export/ --as stdcell_v2  # rename
+```
+
+`import` runs each capability's install (so the directory structure
+matches the receiving project's `allmight` version) and copies the
+bundled files into place. After import, run `/ingest` to rebuild the
+search index.
+
+## Re-init is safe
+
+```bash
+pip install --upgrade allmight
+allmight init .                    # safe; stages new templates if changed
+```
+
+New templates land in `.allmight/templates/` rather than overwriting
+your working files. `/sync` walks you through merging your
+customisations with the staged updates.
+
+If you authored a file at `.opencode/<kind>/<name>` before running
+init, All-Might preserves it and stages a manifest at
+`.allmight/templates/conflicts.yaml`; `/sync` resolves each conflict
+interactively.
+
+`--force` overwrites everything. `MEMORY.md` is never overwritten —
+it's agent-authored from `/onboard` onward.
 
 ## Glossary
 
 | Term | What it means |
 |------|--------------|
-| **Personality** | A capability bundle All-Might installs (today: a corpus keeper for search/annotation, a memory keeper for cross-session memory). Each has its own folder under `personalities/<name>/`. |
-| **Knowledge graph** | The accumulated understanding: code annotations + their connections |
-| **Annotation** (enrichment) | A note describing what a function/class does and what it relates to |
-| **Corpus** | A searchable index of your source code, built by `/ingest` |
-| **Memory** | Agent's persistent knowledge across sessions (preferences, decisions, facts) |
-
-## Updating
-
-Re-running `allmight init` is safe. New templates are staged into
-`.allmight/templates/` instead of overwriting your customized files.
-Tell the agent "run /sync" and it merges your version with the new
-template intelligently.
-
-```bash
-pip install --upgrade allmight
-allmight init .
-```
-
-**Already had `.opencode/` before installing All-Might?** That's fine.
-`allmight init` never overwrites a `.opencode/` file you authored — it
-preserves your version, lists the skipped paths in
-`.allmight/templates/conflicts.yaml`, and `/sync` walks you through
-each one. The same goes for an existing `opencode.json`: your
-`$schema` and pinned plugin versions are left as-is.
-
-Use `--force` only when you want to overwrite everything, including
-your own customizations:
-
-```bash
-allmight init . --force
-```
-
-**Note:** `MEMORY.md` is never overwritten — it contains accumulated
-agent knowledge (project map, user preferences, key facts). A version
-update only touches skills, commands, and hooks.
-
-## Combining Projects
-
-Merge a personality instance from another All-Might project into yours:
-
-```bash
-# Combine the source's "knowledge" instance into this project's "knowledge".
-allmight merge --from /path/to/other-project --instance knowledge
-
-# Install the source instance side-by-side under a new name.
-allmight merge --from /path/to/other-project --instance knowledge --as alt_corpus
-```
-
-The default mode (no `--as`) folds the source instance's content into
-your same-named instance. Conflicting files land beside the originals
-with a `.incoming` suffix; tell the agent "run /sync" to resolve.
-
-`--as <new-name>` installs the source instance as a brand-new
-side-by-side instance (handy for keeping two unrelated knowledge
-graphs in one project).
-
-`--dry-run` previews what would change without touching disk.
-
-## Migrating from older All-Might
-
-Projects bootstrapped before personalities were introduced have a
-different layout. Run the one-shot migrator to upgrade in place:
-
-```bash
-allmight migrate .            # see what would change
-allmight migrate . --dry-run  # also previews; --dry-run is explicit
-```
-
-The migrator renames legacy `<project>-corpus/` and `<project>-memory/`
-instance dirs to the new defaults, splits the old root `AGENTS.md`
-into per-personality `ROLE.md` files, drops the old `/reflect` command
-(folded into `/remember`), and refreshes `.opencode/` symlinks. It's
-idempotent — running on an already-migrated project is a no-op.
+| **Personality** | A user-defined role (e.g. `stdcell_owner`). One ROLE.md, plus a data dir for each capability it has. |
+| **Capability** | A reusable feature module the framework provides — currently `database` (knowledge graph) and `memory` (cross-session memory). |
+| **Workspace** | One independently-indexed corpus inside a personality's `database/`. A personality can have several. |
+| **Default personality** | The hint written to the top of `MEMORY.md` (`> **Default personality**: <name>`) that resolves the active personality when the conversation isn't clearly about a specific one. |
+| **Annotation** | A note on a code symbol describing what it does and what it links to. Stored in sidecar files beside the source. |
 
 ## Compatibility
 

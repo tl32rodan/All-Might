@@ -2,8 +2,8 @@
 
 import pytest
 
-from allmight.capabilities.corpus_keeper.scanner import ProjectScanner
-from allmight.capabilities.corpus_keeper.initializer import ProjectInitializer
+from allmight.capabilities.database.scanner import ProjectScanner
+from allmight.capabilities.database.initializer import ProjectInitializer
 
 
 @pytest.fixture
@@ -63,17 +63,17 @@ class TestProjectInitializer:
         initializer = ProjectInitializer()
         initializer.initialize(manifest)
 
-        assert (sample_project / "knowledge_graph").is_dir()
+        assert (sample_project / "database").is_dir()
 
-    def test_creates_knowledge_graph_dir(self, sample_project):
-        """knowledge_graph/ is created — SMAK workspaces live here."""
+    def test_creates_database_dir(self, sample_project):
+        """database/ is created — SMAK workspaces live here."""
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
 
         initializer = ProjectInitializer()
         initializer.initialize(manifest)
 
-        assert (sample_project / "knowledge_graph").is_dir()
+        assert (sample_project / "database").is_dir()
         # config.yaml lives per-workspace, NOT at project root
         assert not (sample_project / "config.yaml").exists()
 
@@ -166,7 +166,7 @@ class TestProjectInitializer:
         initializer.initialize(manifest)
 
         # Should still work — no errors, files still exist
-        assert (sample_project / "knowledge_graph").is_dir()
+        assert (sample_project / "database").is_dir()
 
     def test_creates_agents_md(self, sample_project):
         """AGENTS.md created as a real file (not a symlink) for OpenCode."""

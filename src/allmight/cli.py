@@ -113,7 +113,7 @@ def _init_callback(
         write_init_scaffold,
         write_registry,
     )
-    from .capabilities.corpus_keeper.scanner import ProjectScanner
+    from .capabilities.database.scanner import ProjectScanner
 
     root = P(path).resolve()
     scanner = ProjectScanner()
@@ -123,15 +123,24 @@ def _init_callback(
     is_reinit = allmight_dir.is_dir() and not force
 
     templates = discover()
+    template_by_name = {t.name: t for t in templates}
 
-    # Decide instance names + folders. If onboard.yaml exists, reuse
-    # what was captured before so re-init never asks the user the same
-    # questions. Otherwise prompt (or use defaults under --yes).
+    # Decide the single personality name + its capability set. If
+    # onboard.yaml exists, reuse what was captured before so re-init
+    # never asks the user again. Otherwise prompt (or use the
+    # project-root dir name under --yes).
     onboard_path = allmight_dir / "onboard.yaml"
     captured = _read_onboard_yaml(onboard_path)
     if captured is None:
         captured = _collect_onboard_answers(templates, manifest, interactive=not yes)
-    instance_names = {row["template"]: row["instance"] for row in captured["personalities"]}
+
+    rows = captured.get("personalities", [])
+    if not rows:
+        raise RuntimeError("onboard.yaml has no personalities entry")
+    row = rows[0]
+    personality_name = row.get("name") or row.get("instance")
+    wanted_caps = row.get("capabilities") or [row.get("template")]
+    selected_templates = [template_by_name[c] for c in wanted_caps if c in template_by_name]
 
     write_init_scaffold(root)
 
@@ -141,22 +150,18 @@ def _init_callback(
         staging=is_reinit,
         force=force,
     )
-    instances: list[Personality] = []
+    instance = Personality(
+        template=selected_templates[0],
+        project_root=root,
+        name=personality_name,
+        options=dict(template_options),
+        capabilities=[t.name for t in selected_templates],
+    )
     notes: list[str] = []
-    for template in templates:
-        instance_name = instance_names.get(
-            template.name,
-            template.default_instance_name or f"{manifest.name}-{template.short_name}",
-        )
-        instance = Personality(
-            template=template,
-            project_root=root,
-            name=instance_name,
-            options=dict(template_options),
-        )
+    for template in selected_templates:
         result = template.install(ctx, instance)
         notes.extend(result.notes)
-        instances.append(instance)
+    instances: list[Personality] = [instance]
 
     # Compose .opencode/ symlinks from each instance's surface.
     # Conflicts (user-authored files at our target paths) are NOT
@@ -170,17 +175,20 @@ def _init_callback(
     # Stitch every instance's ROLE.md into the single root AGENTS.md.
     compose_agents_md(root, instances, project_name=manifest.name)
 
-    # Persist the registry so allmight list/status can find them again.
+    # Persist the registry so allmight list/status can find it again.
     write_registry(root, [
-        RegistryEntry(template=i.template.name, instance=i.name, version=i.template.version)
-        for i in instances
+        RegistryEntry(
+            instance=instance.name,
+            capabilities=list(instance.capabilities),
+            versions={t.name: t.version for t in selected_templates},
+        ),
     ])
 
     # Persist onboarding answers for the agent-side /onboard skill.
     captured["personalities"] = [
-        {"template": i.template.name, "instance": i.name}
-        for i in instances
+        {"name": instance.name, "capabilities": list(instance.capabilities)},
     ]
+    captured.setdefault("folders", [])
     captured.setdefault("onboarded", False)
     _write_onboard_yaml(onboard_path, captured)
 
@@ -234,10 +242,15 @@ def _collect_onboard_answers(
     *,
     interactive: bool,
 ) -> dict:
-    """Gather instance names + folders.
+    """Gather the single personality name + its capabilities.
 
-    Always returns the same dict shape — uses defaults under
-    ``--yes`` / non-TTY, prompts otherwise.
+    Part-D commit 7: ``allmight init`` creates ONE personality with
+    ALL discovered capabilities. The previous flow (one prompt per
+    template + folder list) is gone — folder classification is
+    deferred entirely to the agent-side ``/onboard`` skill.
+
+    Always returns the same dict shape — uses the project-root dir
+    name as the default under ``--yes`` / non-TTY, prompts otherwise.
     """
     import sys
 
@@ -246,39 +259,29 @@ def _collect_onboard_answers(
     is_tty = sys.stdin.isatty() and sys.stdout.isatty()
     do_prompt = interactive and is_tty
 
-    personalities = []
-    for template in templates:
-        default_name = template.default_instance_name or f"{manifest.name}-{template.short_name}"
-        if do_prompt:
-            raw = click.prompt(
-                f"  Name for the {template.short_name} personality",
-                default=default_name,
-                show_default=True,
-            )
-            slug = slugify_instance_name(raw) or default_name
-            if slug != raw:
-                click.echo(f"    → using slug: {slug}")
-        else:
-            slug = default_name
-        personalities.append({"template": template.name, "instance": slug})
+    default_name = slugify_instance_name(manifest.root_path.name) or "main"
 
-    folders: list[dict] = []
     if do_prompt:
-        raw_folders = click.prompt(
-            "  Folders to register (comma-separated; empty to skip)",
-            default="",
-            show_default=False,
-        ).strip()
-        if raw_folders:
-            for chunk in raw_folders.split(","):
-                p = chunk.strip()
-                if p:
-                    folders.append({"path": p})
+        raw = click.prompt(
+            "  Personality name",
+            default=default_name,
+            show_default=True,
+        )
+        slug = slugify_instance_name(raw) or default_name
+        if slug != raw:
+            click.echo(f"    → using slug: {slug}")
+    else:
+        slug = default_name
 
     return {
         "onboarded": False,
-        "personalities": personalities,
-        "folders": folders,
+        "personalities": [
+            {
+                "name": slug,
+                "capabilities": [t.name for t in templates],
+            },
+        ],
+        "folders": [],
     }
 
 
@@ -310,6 +313,351 @@ main.add_command(_build_init_command())
 
 
 # ------------------------------------------------------------------
+# Add / List (personality lifecycle)
+# ------------------------------------------------------------------
+
+@main.command("add")
+@click.argument("name")
+@click.option(
+    "--capabilities",
+    "capabilities_str",
+    default=None,
+    help=(
+        "Comma-separated capability names (e.g. database,memory). "
+        "Default: every discovered capability."
+    ),
+)
+@click.option("--force", is_flag=True, help="Overwrite an existing personality.")
+def add(name: str, capabilities_str: str | None, force: bool) -> None:
+    """Add a personality with one or more capabilities.
+
+    Operates on the current directory; the directory must already be
+    an All-Might project (run ``allmight init`` first). Creates
+    ``personalities/<name>/`` with the requested capability data dirs,
+    runs each capability's install hook, projects any
+    personality-specific entries into ``.opencode/`` via ``compose``,
+    and appends to ``.allmight/personalities.yaml``.
+    """
+    from pathlib import Path as P
+
+    from .core.personalities import (
+        InstallContext,
+        Personality,
+        RegistryEntry,
+        compose,
+        compose_agents_md,
+        discover,
+        read_registry,
+        slugify_instance_name,
+        stage_compose_conflicts,
+        write_registry,
+    )
+    from .capabilities.database.scanner import ProjectScanner
+
+    root = P(".").resolve()
+    if not (root / ".allmight").is_dir():
+        click.echo(
+            f"error: {root} is not an All-Might project (no .allmight/ found). "
+            "Run 'allmight init' first.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    name = slugify_instance_name(name)
+    instance_root = root / "personalities" / name
+
+    existing_entries = read_registry(root)
+    existing_names = {e.instance for e in existing_entries}
+    if (instance_root.exists() or name in existing_names) and not force:
+        click.echo(
+            f"error: personality '{name}' already exists. Pass --force to overwrite.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    all_templates = discover()
+    template_by_name = {t.name: t for t in all_templates}
+
+    if capabilities_str is None:
+        wanted = [t.name for t in all_templates]
+    else:
+        wanted = [c.strip() for c in capabilities_str.split(",") if c.strip()]
+
+    unknown = [c for c in wanted if c not in template_by_name]
+    if unknown:
+        click.echo(
+            f"error: unknown capability/capabilities: {', '.join(unknown)}. "
+            f"Available: {', '.join(sorted(template_by_name))}.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    selected = [template_by_name[c] for c in wanted]
+    if not selected:
+        click.echo("error: --capabilities must list at least one capability.", err=True)
+        raise SystemExit(1)
+
+    scanner = ProjectScanner()
+    manifest = scanner.scan(root)
+
+    ctx = InstallContext(
+        project_root=root,
+        manifest=manifest,
+        staging=False,
+        force=force,
+    )
+    instance = Personality(
+        template=selected[0],
+        project_root=root,
+        name=name,
+        options={},
+        capabilities=[t.name for t in selected],
+    )
+    for tpl in selected:
+        tpl.install(ctx, instance)
+
+    conflicts = compose(root, instance, force=force)
+    stage_compose_conflicts(root, conflicts)
+
+    new_entries = [e for e in existing_entries if e.instance != name]
+    new_entries.append(RegistryEntry(
+        instance=name,
+        capabilities=[t.name for t in selected],
+        versions={t.name: t.version for t in selected},
+    ))
+    write_registry(root, new_entries)
+
+    # Recompose root AGENTS.md so the new personality's ROLE.md shows up.
+    instances: list[Personality] = []
+    for entry in new_entries:
+        primary = template_by_name.get(
+            entry.capabilities[0] if entry.capabilities else entry.template
+        )
+        if primary is None:
+            continue
+        instances.append(Personality(
+            template=primary,
+            project_root=root,
+            name=entry.instance,
+            capabilities=list(entry.capabilities),
+        ))
+    compose_agents_md(root, instances, project_name=manifest.name)
+
+    click.echo(
+        f"All-Might! Added personality '{name}' "
+        f"(capabilities: {', '.join(t.name for t in selected)})."
+    )
+    if conflicts:
+        click.echo(f"  Conflicts: {len(conflicts)} — run /sync to resolve.")
+
+
+@main.command("list")
+def list_personalities() -> None:
+    """List installed personalities in the current All-Might project."""
+    from pathlib import Path as P
+
+    from .core.personalities import read_registry
+
+    root = P(".").resolve()
+    if not (root / ".allmight").is_dir():
+        click.echo(
+            f"error: {root} is not an All-Might project (no .allmight/ found).",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    entries = read_registry(root)
+    if not entries:
+        click.echo("No personalities installed.")
+        return
+
+    name_w = max(len("Personality"), max(len(e.instance) for e in entries))
+    cap_w = max(
+        len("Capabilities"),
+        max(len(", ".join(e.capabilities) or e.template) for e in entries),
+    )
+    click.echo(f"{'Personality':<{name_w}}  {'Capabilities':<{cap_w}}  {'Version'}")
+    click.echo(f"{'-' * name_w}  {'-' * cap_w}  {'-' * 7}")
+    for e in entries:
+        caps = ", ".join(e.capabilities) if e.capabilities else e.template
+        version = (
+            e.versions.get(e.capabilities[0]) if e.capabilities and e.versions
+            else e.version
+        )
+        click.echo(f"{e.instance:<{name_w}}  {caps:<{cap_w}}  {version}")
+
+
+# ------------------------------------------------------------------
+# Import (personality bundle restore)
+# ------------------------------------------------------------------
+
+@main.command("import")
+@click.argument("bundle", type=click.Path(exists=True, file_okay=False))
+@click.option("--as", "as_name", default=None,
+              help="Install the bundled personality under this new name "
+                   "(instead of the manifest's personality_name).")
+@click.option("--force", is_flag=True,
+              help="Overwrite an existing personality of the same name.")
+def import_personality(bundle: str, as_name: str | None, force: bool) -> None:
+    """Restore a personality bundle into the current All-Might project.
+
+    Reads ``manifest.yaml`` from the bundle, runs each named
+    capability's install hook (so the on-disk structure conforms to
+    the receiving project's allmight version), and copies the
+    bundle's data into ``personalities/<name>/``. Vector indices
+    (``store/``) are not in bundles; rebuild via ``/ingest`` afterward.
+    """
+    from pathlib import Path as P
+    import shutil
+
+    import yaml as _yaml
+
+    from .core.personalities import (
+        InstallContext,
+        Personality,
+        RegistryEntry,
+        compose,
+        compose_agents_md,
+        discover,
+        read_registry,
+        slugify_instance_name,
+        stage_compose_conflicts,
+        write_registry,
+    )
+    from .capabilities.database.scanner import ProjectScanner
+
+    project_root = P(".").resolve()
+    if not (project_root / ".allmight").is_dir():
+        click.echo(
+            f"error: {project_root} is not an All-Might project (no .allmight/ found). "
+            "Run 'allmight init' first.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    bundle_path = P(bundle).resolve()
+    manifest_path = bundle_path / "manifest.yaml"
+    if not manifest_path.is_file():
+        click.echo(
+            f"error: bundle {bundle_path} has no manifest.yaml — not an "
+            "allmight personality export.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    try:
+        manifest_data = _yaml.safe_load(manifest_path.read_text()) or {}
+    except _yaml.YAMLError as exc:
+        click.echo(f"error: malformed manifest.yaml: {exc}", err=True)
+        raise SystemExit(1)
+
+    bundle_name = manifest_data.get("personality_name")
+    if not bundle_name:
+        click.echo("error: manifest.yaml is missing personality_name.", err=True)
+        raise SystemExit(1)
+    bundle_caps = list((manifest_data.get("capabilities") or {}).keys())
+    if not bundle_caps:
+        click.echo("error: manifest.yaml lists no capabilities.", err=True)
+        raise SystemExit(1)
+
+    target_name = slugify_instance_name(as_name or bundle_name)
+    target_root = project_root / "personalities" / target_name
+    existing_entries = read_registry(project_root)
+    existing_names = {e.instance for e in existing_entries}
+    if (target_root.exists() or target_name in existing_names) and not force:
+        click.echo(
+            f"error: personality '{target_name}' already exists. "
+            "Use --force to overwrite.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    all_templates = discover()
+    template_by_name = {t.name: t for t in all_templates}
+    unknown = [c for c in bundle_caps if c not in template_by_name]
+    if unknown:
+        click.echo(
+            f"error: bundle requires unknown capability/capabilities: "
+            f"{', '.join(unknown)}. "
+            f"Available: {', '.join(sorted(template_by_name))}.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    selected = [template_by_name[c] for c in bundle_caps]
+
+    scanner = ProjectScanner()
+    project_manifest = scanner.scan(project_root)
+
+    ctx = InstallContext(
+        project_root=project_root,
+        manifest=project_manifest,
+        staging=False,
+        force=force,
+    )
+    instance = Personality(
+        template=selected[0],
+        project_root=project_root,
+        name=target_name,
+        options={},
+        capabilities=[t.name for t in selected],
+    )
+    for tpl in selected:
+        tpl.install(ctx, instance)
+
+    # Copy bundle data into the freshly-installed personality dir.
+    # ``store/`` subdirs are intentionally absent from bundles; we
+    # don't fabricate them here.
+    if (bundle_path / "ROLE.md").is_file():
+        shutil.copy2(bundle_path / "ROLE.md", target_root / "ROLE.md")
+    for cap in bundle_caps:
+        bundle_cap_dir = bundle_path / cap
+        if not bundle_cap_dir.is_dir():
+            continue
+        target_cap_dir = target_root / cap
+        target_cap_dir.mkdir(parents=True, exist_ok=True)
+        for src in bundle_cap_dir.rglob("*"):
+            if src.is_dir():
+                continue
+            rel = src.relative_to(bundle_cap_dir)
+            dst = target_cap_dir / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+
+    conflicts = compose(project_root, instance, force=force)
+    stage_compose_conflicts(project_root, conflicts)
+
+    new_entries = [e for e in existing_entries if e.instance != target_name]
+    new_entries.append(RegistryEntry(
+        instance=target_name,
+        capabilities=[t.name for t in selected],
+        versions={t.name: t.version for t in selected},
+    ))
+    write_registry(project_root, new_entries)
+
+    instances: list[Personality] = []
+    for entry in new_entries:
+        primary = template_by_name.get(
+            entry.capabilities[0] if entry.capabilities else entry.template
+        )
+        if primary is None:
+            continue
+        instances.append(Personality(
+            template=primary,
+            project_root=project_root,
+            name=entry.instance,
+            capabilities=list(entry.capabilities),
+        ))
+    compose_agents_md(project_root, instances, project_name=project_manifest.name)
+
+    click.echo(
+        f"All-Might! Imported personality '{target_name}' "
+        f"(capabilities: {', '.join(t.name for t in selected)})."
+    )
+    click.echo("  Next: re-run /ingest to rebuild the search index.")
+
+
+# ------------------------------------------------------------------
 # Clone
 # ------------------------------------------------------------------
 
@@ -319,7 +667,7 @@ main.add_command(_build_init_command())
 def clone(source: str, path: str):
     """Clone an existing All-Might project (read-only).
 
-    Creates a read-only clone where knowledge_graph/ workspaces are
+    Creates a read-only clone where database/ workspaces are
     symlinks to the source project. Memory is fresh (new L1/L2/L3).
 
     The clone can search the source's corpora but cannot ingest or
@@ -345,71 +693,6 @@ def clone(source: str, path: str):
     click.echo("  2. Run /search \"<query>\" to explore the codebase")
     click.echo("")
     click.echo("All-Might skills auto-load — just start asking questions.")
-
-
-# ------------------------------------------------------------------
-# Merge
-# ------------------------------------------------------------------
-
-@main.command()
-@click.option("--from", "source", required=True, type=click.Path(exists=True),
-              help="Source All-Might project to merge from.")
-@click.option("--instance", "instance_name", required=True,
-              help="Name of the personality instance in the source project.")
-@click.option("--as", "as_name", default=None,
-              help="Install the source instance side-by-side under this new "
-                   "name (instead of combining into a same-named target instance).")
-@click.option("--dry-run", is_flag=True,
-              help="Show what would change without touching disk.")
-def merge(source: str, instance_name: str, as_name: str | None, dry_run: bool):
-    """Merge a personality instance from another All-Might project.
-
-    Default mode (no ``--as``): combine the source instance's content
-    into a same-named target instance. Conflicts (different content
-    at the same path) land beside the originals with a ``.incoming``
-    suffix; ``/sync`` resolves them.
-
-    With ``--as <new-name>``: install the source instance side-by-side
-    under the given name. The target gains a new instance row in
-    ``.allmight/personalities.yaml``.
-    """
-    from pathlib import Path as P
-
-    from .merge.merger import InstanceMerger
-
-    source_path = P(source).resolve()
-    target_path = P(".").resolve()
-
-    report = InstanceMerger().merge(
-        source=source_path,
-        target=target_path,
-        instance_name=instance_name,
-        as_name=as_name,
-        dry_run=dry_run,
-    )
-
-    prefix = "[DRY RUN] " if dry_run else ""
-    if as_name:
-        click.echo(f"{prefix}Installed source instance '{instance_name}' "
-                   f"as '{as_name}'.")
-    else:
-        click.echo(f"{prefix}Combined source instance '{instance_name}' into "
-                   "the target.")
-
-    if report.workspaces_added:
-        click.echo(f"  Added:        {', '.join(report.workspaces_added)}")
-    if report.memory_files_added:
-        click.echo(f"  Files copied: {len(report.memory_files_added)}")
-    if report.memory_conflicts:
-        click.echo(f"  Conflicts:    {len(report.memory_conflicts)} "
-                   "(staged with .incoming suffix)")
-    if report.warnings:
-        click.echo(f"  Path warnings: {len(report.warnings)}")
-
-    if report.action_needed:
-        click.echo("")
-        for action in report.action_needed:
-            click.echo(f"  → {action}")
 
 
 # ------------------------------------------------------------------
@@ -482,7 +765,7 @@ def memory_init(path: str):
     """
     from pathlib import Path as P
 
-    from .capabilities.memory_keeper.initializer import MemoryInitializer
+    from .capabilities.memory.initializer import MemoryInitializer
 
     root = P(path).resolve()
 
@@ -511,7 +794,7 @@ def memory_export(fmt: str, root: str, out: str):
     """
     from pathlib import Path as P
 
-    from .capabilities.memory_keeper.trajectory_export import export_to_jsonl
+    from .capabilities.memory.trajectory_export import export_to_jsonl
 
     root_path = P(root).resolve()
     out_path = P(out).resolve()

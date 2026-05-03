@@ -111,6 +111,12 @@ class MemoryInitializer:
         # 8. Generate opencode.json with hooks for OpenCode
         self._generate_opencode_json(root)
 
+        # 9. Write the Claude Code memory-load hook script (mirrors
+        #    .opencode/plugins/memory-load.ts; the project-level bridge
+        #    in core.claude_bridge already registered it in
+        #    .claude/settings.json).
+        self._write_claude_memory_load_hook(root)
+
     # ------------------------------------------------------------------
     # Instance-root helpers
     # ------------------------------------------------------------------
@@ -133,14 +139,15 @@ class MemoryInitializer:
         return self._instance_root / "memory"
 
     def _agent_surface_dirs(self, root: Path) -> tuple[Path, Path]:
-        """Return (commands_dir, plugins_dir) for the instance.
+        """Return (commands_dir, plugins_dir) — always project-global ``.opencode/``.
 
-        Falls back to the legacy ``.opencode/`` paths when there is no
-        instance root, so direct callers (clone, merge) keep working.
+        Part-D: memory capability writes its share of
+        ``.opencode/{commands,plugins}/`` once per project.
+        Per-personality access goes through the upward symlink
+        ``personalities/<p>/commands → ../../.opencode/commands``
+        written by ``compose``.
         """
-        if self._instance_root is None or self._instance_root == root:
-            return root / ".opencode" / "commands", root / ".opencode" / "plugins"
-        return self._instance_root / "commands", self._instance_root / "plugins"
+        return root / ".opencode" / "commands", root / ".opencode" / "plugins"
 
     @property
     def _mem_root_rel(self) -> str:
@@ -488,11 +495,11 @@ export default RememberTriggerPlugin;
  *               queue it for injection on the next chat.message.
  *
  * Workspace inference: scans any tool's args for a
- * knowledge_graph/<name>/ path fragment. If never seen this session,
+ * database/<name>/ path fragment. If never seen this session,
  * curation at session end writes under "unscoped" workspace.
  */
 import type { Plugin } from "@opencode-ai/plugin";
-import { readFileSync, existsSync, mkdirSync, appendFileSync } from "fs";
+import { readFileSync, existsSync, mkdirSync, appendFileSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 
 type TodoItem = { id?: string; content: string; status: string };
@@ -513,7 +520,7 @@ function ensure(sid: string): Ledger {
   return s;
 }
 
-const WORKSPACE_RE = /knowledge_graph\\/([^/\\s"']+)/;
+const WORKSPACE_RE = /database\\/([^/\\s"']+)/;
 
 function inferWorkspace(args: any): string | null {
   if (!args) return null;
@@ -522,8 +529,28 @@ function inferWorkspace(args: any): string | null {
   return m?.[1] ?? null;
 }
 
+function memoryDirForWorkspace(cwd: string, workspace: string): string {
+  const personalitiesDir = join(cwd, "personalities");
+  if (existsSync(personalitiesDir)) {
+    let entries: string[] = [];
+    try { entries = readdirSync(personalitiesDir); } catch { entries = []; }
+    // First: a personality that owns this workspace under its database/
+    for (const name of entries) {
+      if (existsSync(join(personalitiesDir, name, "database", workspace))) {
+        return join(personalitiesDir, name, "memory");
+      }
+    }
+    // Fallback: first personality with a memory/ subdir
+    for (const name of entries.sort()) {
+      const memDir = join(personalitiesDir, name, "memory");
+      if (existsSync(memDir)) return memDir;
+    }
+  }
+  return join(cwd, "memory");
+}
+
 function loadOpenBacklog(cwd: string, workspace: string): string | null {
-  const path = join(cwd, "memory", "todos", `${workspace}.md`);
+  const path = join(memoryDirForWorkspace(cwd, workspace), "todos", `${workspace}.md`);
   if (!existsSync(path)) return null;
   const content = readFileSync(path, "utf-8");
   const marker = "## Open";
@@ -542,7 +569,9 @@ function appendCuration(
   items: TodoItem[],
 ): void {
   if (items.length === 0) return;
-  const path = join(cwd, "memory", "todos", `${workspace}.md`);
+  const path = join(
+    memoryDirForWorkspace(cwd, workspace), "todos", `${workspace}.md`,
+  );
   mkdirSync(dirname(path), { recursive: true });
   if (!existsSync(path)) {
     appendFileSync(
@@ -655,8 +684,12 @@ export const TodoCuratorPlugin: Plugin = async ({ directory }: any) => {
       appendCuration(cwd, s.workspace, s.latest);
       const context = output?.context ?? (output && (output.context = []));
       if (Array.isArray(context)) {
+        const ledger = join(
+          memoryDirForWorkspace(cwd, s.workspace),
+          "todos", `${s.workspace}.md`,
+        );
         context.push(
-          `Curated TODO ledger updated at memory/todos/${s.workspace}.md \\u2014 ` +
+          `Curated TODO ledger updated at ${ledger} \\u2014 ` +
             "reference it instead of duplicating the list in the summary.",
         );
       }
@@ -742,7 +775,8 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
         self._write_memory_command_content(commands_dir)
 
     def _remember_command_body(self) -> str:
-        return """\
+        from ...core.routing import ROUTING_PREAMBLE
+        return ROUTING_PREAMBLE + """\
 Persist memory and maintain its quality. Two modes — pick the one that
 matches the trigger context:
 
@@ -1045,7 +1079,8 @@ Append to `memory/usage.log`:
 """
 
     def _recall_command_body(self) -> str:
-        return """\
+        from ...core.routing import ROUTING_PREAMBLE
+        return ROUTING_PREAMBLE + """\
 Pick up where you left off, and search past memories.
 
 `/recall` is **not just** a journal search. Before running a query,
@@ -1262,6 +1297,105 @@ Log the recall to `memory/usage.log`:
         for filename, content in self._opencode_plugin_map().items():
             write_guarded(plugins_dir / filename, content, ALLMIGHT_MARKER_TS)
 
+    def _write_claude_memory_load_hook(self, root: Path) -> None:
+        """Write ``.claude/hooks/memory_load.py`` — Claude Code mirror.
+
+        Pairs with ``.opencode/plugins/memory-load.ts``. Both inject
+        the same MEMORY.md content plus the scope-first principle so
+        the agent's L1 cache stays warm across sessions and after
+        compaction. When you change one, change the other (see All-
+        Might ``CLAUDE.md`` -> Editor Compatibility).
+
+        The settings.json registration is written by the project-level
+        bridge in ``core.claude_bridge``; this method only emits the
+        script body.
+        """
+        from ...core.claude_bridge import CLAUDE_HOOK_MARKER
+
+        hooks_dir = root / ".claude" / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        target = hooks_dir / "memory_load.py"
+        write_guarded(target, self._claude_memory_load_hook_content(),
+                      CLAUDE_HOOK_MARKER)
+        target.chmod(0o755)
+
+    def _claude_memory_load_hook_content(self) -> str:
+        """Return the memory-load hook body for Claude Code.
+
+        Functionally equivalent to the OpenCode memory-load.ts plugin:
+        reads project-root MEMORY.md and prepends the scope-first
+        principle, emitting the result as ``additionalContext`` for
+        SessionStart / PreCompact.
+        """
+        return '''\
+#!/usr/bin/env python3
+# all-might generated — DO NOT EDIT.
+#
+# Mirror of .opencode/plugins/memory-load.ts. Changes here MUST land in
+# the .ts plugin too; see All-Might CLAUDE.md -> Editor Compatibility.
+"""Memory-load hook for Claude Code (SessionStart, PreCompact).
+
+Primes the agent with MEMORY.md (L1) plus the scope-first memory
+principle. Same content the OpenCode memory-load plugin injects via
+chat.message.
+"""
+import json
+import os
+import sys
+from pathlib import Path
+
+
+SCOPE_FIRST_PRINCIPLE = """--- Memory Scope-First Principle ---
+Before writing anything to memory, decide the scope:
+- Project-wide fact / preference / goal -> MEMORY.md (L1)
+- Per-corpus knowledge -> memory/understanding/<workspace>.md (L2)
+- Per-corpus personal state (TODOs, shortcuts, ad-hoc notes)
+    -> memory/<kind>/<workspace>.md  (create on demand)
+- Historical / searchable -> memory/journal/<workspace>/<date>-<title>.md (L3)
+
+Prefer the narrower scope. Never dump per-corpus content into MEMORY.md
+or memory/journal/general/. See /remember for the full guide.
+--- End Principle ---"""
+
+
+def main() -> int:
+    cwd = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    parts: list[str] = []
+    memory_md = cwd / "MEMORY.md"
+    if memory_md.is_file():
+        try:
+            body = memory_md.read_text(encoding="utf-8")
+        except OSError:
+            body = ""
+        if body:
+            parts.append("--- Project Memory (MEMORY.md) ---")
+            parts.append(body.rstrip())
+            parts.append("--- End Project Memory ---")
+            parts.append("")
+    parts.append(SCOPE_FIRST_PRINCIPLE)
+    text = "\\n".join(parts).strip()
+    if not text:
+        return 0
+
+    try:
+        payload = json.load(sys.stdin) if not sys.stdin.isatty() else {}
+    except (json.JSONDecodeError, ValueError):
+        payload = {}
+    event = payload.get("hook_event_name") or "SessionStart"
+
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": event,
+            "additionalContext": text,
+        }
+    }))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
     def _opencode_plugin_map(self) -> dict[str, str]:
         """Return mapping of plugin filename → content."""
         return {
@@ -1301,18 +1435,36 @@ Log the recall to `memory/usage.log`:
  * before the hook returns.
  */
 import type { Plugin } from "@opencode-ai/plugin";
-import { appendFileSync, mkdirSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 
 const COMMAND_RE = /(?:^|\\s)\\/(remember|recall)\\b/;
 
+function findMemoryDirs(cwd: string): string[] {
+  const out: string[] = [];
+  const personalitiesDir = join(cwd, "personalities");
+  if (existsSync(personalitiesDir)) {
+    let entries: string[] = [];
+    try { entries = readdirSync(personalitiesDir); } catch { entries = []; }
+    for (const name of entries.sort()) {
+      const memDir = join(personalitiesDir, name, "memory");
+      if (existsSync(memDir)) out.push(memDir);
+    }
+  }
+  if (out.length === 0) out.push(join(cwd, "memory"));
+  return out;
+}
+
 function append(cwd: string, line: string): void {
-  const p = join(cwd, "memory", "usage.log");
-  try {
-    mkdirSync(dirname(p), { recursive: true });
-    appendFileSync(p, line.endsWith("\\n") ? line : line + "\\n");
-  } catch {
-    // Best-effort: a plugin hook must never throw.
+  const suffix = line.endsWith("\\n") ? line : line + "\\n";
+  for (const memDir of findMemoryDirs(cwd)) {
+    const p = join(memDir, "usage.log");
+    try {
+      mkdirSync(dirname(p), { recursive: true });
+      appendFileSync(p, suffix);
+    } catch {
+      // Best-effort: a plugin hook must never throw.
+    }
   }
 }
 
@@ -1390,7 +1542,7 @@ export default UsageLoggerPlugin;
  *   - tool_calls (each {tool, args} from tool.execute.before,
  *                 annotated with verdict from tool.execute.after)
  *   - output    (accumulated agent response summary)
- *   - workspace (inferred from any knowledge_graph/<name>/ path)
+ *   - workspace (inferred from any database/<name>/ path)
  *
  * Flush triggers:
  *   - experimental.session.compacting — last chance before history is summarised
@@ -1400,7 +1552,7 @@ export default UsageLoggerPlugin;
  *   - chat.message — record the latest user input (does NOT mutate output)
  */
 import type { Plugin } from "@opencode-ai/plugin";
-import { mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "fs";
 import { join } from "path";
 
 type ToolCallRec = { tool: string; args: any; verdict: "ok" | "drift" | "blocked" };
@@ -1415,7 +1567,25 @@ type Trajectory = {
 
 const sessions = new Map<string, Trajectory>();
 
-const WORKSPACE_RE = /knowledge_graph\\/([^/\\s"']+)/;
+const WORKSPACE_RE = /database\\/([^/\\s"']+)/;
+
+function memoryDirForWorkspace(cwd: string, workspace: string): string {
+  const personalitiesDir = join(cwd, "personalities");
+  if (existsSync(personalitiesDir)) {
+    let entries: string[] = [];
+    try { entries = readdirSync(personalitiesDir); } catch { entries = []; }
+    for (const name of entries) {
+      if (existsSync(join(personalitiesDir, name, "database", workspace))) {
+        return join(personalitiesDir, name, "memory");
+      }
+    }
+    for (const name of entries.sort()) {
+      const memDir = join(personalitiesDir, name, "memory");
+      if (existsSync(memDir)) return memDir;
+    }
+  }
+  return join(cwd, "memory");
+}
 
 function ensure(sid: string): Trajectory {
   let t = sessions.get(sid);
@@ -1452,7 +1622,7 @@ function flush(cwd: string, sid: string, t: Trajectory): void {
   const iso = now.toISOString();
   const ts = iso.replace(/[:.]/g, "-");
   const id = `${iso.slice(0, 19)}-${sid.slice(0, 6)}`;
-  const dir = join(cwd, "memory", "journal", workspace);
+  const dir = join(memoryDirForWorkspace(cwd, workspace), "journal", workspace);
   mkdirSync(dir, { recursive: true });
   const path = join(dir, `${ts}-trajectory.md`);
 

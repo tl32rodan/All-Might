@@ -1,7 +1,8 @@
 """Personality framework — pluggable capabilities for an All-Might project.
 
-A *personality* is a reusable capability bundle (e.g. corpus_keeper for
-knowledge-graph workspaces, memory_keeper for L1/L2/L3 agent memory).
+A *personality* is a user-defined role that bundles one or more
+capabilities (e.g. ``database`` for knowledge-graph workspaces,
+``memory`` for L1/L2/L3 agent memory).
 Each capability is split in two:
 
 * ``PersonalityTemplate`` — the *kind*. A static description plus the
@@ -9,7 +10,7 @@ Each capability is split in two:
 * ``Personality``         — an *instance* of a template attached to one
   project. Lives under ``personalities/<name>/`` and owns its own
   agent surface (skills/commands/plugins) plus its data dir
-  (``knowledge_graph/`` or ``memory/``).
+  (``database/`` or ``memory/``).
 
 The top-level ``.opencode/`` is **composed** from each instance's
 ``skills/``, ``commands/``, ``plugins/`` via symlinks; agent-facing
@@ -90,7 +91,7 @@ class PersonalityStatus:
 
 @dataclass
 class PersonalityTemplate:
-    """The KIND of a personality (e.g. corpus_keeper, memory_keeper).
+    """The KIND of a capability (e.g. ``database``, ``memory``).
 
     Plain dataclass holding metadata plus the two operation callables.
     Built-in templates live as module-level ``TEMPLATE`` constants
@@ -99,7 +100,7 @@ class PersonalityTemplate:
     ``default_instance_name`` is the slug used when ``allmight init``
     runs non-interactively (or the user accepts the default). Should be
     a filesystem-safe slug (slugify_instance_name-friendly) — e.g.
-    ``"knowledge"`` for corpus_keeper, ``"memory"`` for memory_keeper.
+    ``"knowledge"`` for ``database``, ``"memory"`` for ``memory``.
     """
 
     name: str
@@ -160,12 +161,12 @@ def discover(package: str = "allmight.capabilities") -> list[PersonalityTemplate
     """Scan ``package`` for subpackages exposing a ``TEMPLATE`` attribute.
 
     Discovery order is the iteration order of ``pkgutil.iter_modules``,
-    which is alphabetical on POSIX. Order matters because
-    ``corpus_keeper`` writes ``AGENTS.md`` before ``memory_keeper``
-    appends its memory section. The two built-in templates already
-    sort that way (``corpus_keeper`` < ``memory_keeper``); if a third
-    template is added that needs a specific slot, give it a name that
-    sorts correctly or extend this function with explicit ordering.
+    which is alphabetical on POSIX. Order matters because ``database``
+    writes ``AGENTS.md`` before ``memory`` appends its memory section.
+    The two built-in templates already sort that way (``database`` <
+    ``memory``); if a third template is added that needs a specific
+    slot, give it a name that sorts correctly or extend this function
+    with explicit ordering.
 
     Duplicate template ``name`` values raise ``ValueError``.
     """
@@ -200,31 +201,40 @@ def discover(package: str = "allmight.capabilities") -> list[PersonalityTemplate
 
 
 # ---------------------------------------------------------------------------
-# Composition (.opencode/<kind>/* symlinks)
+# Composition (downward symlinks .opencode/<kind>/<X> -> personalities/<p>/<kind>/<X>)
 # ---------------------------------------------------------------------------
 
 
-_COMPOSED_KINDS = ("skills", "commands", "plugins")
+# Each personality has its own real subdir for these kinds. Capability
+# templates write the project-wide *globals* directly into
+# ``.opencode/<kind>/``; ``compose`` projects every per-personality
+# entry into ``.opencode/<kind>/<basename>`` as a relative symlink so
+# OpenCode discovers it from the same global scan.
+#
+# ``plugins/`` is intentionally not exposed per-personality — plugins
+# are project-wide hooks, not personality-scoped.
+_COMPOSED_KINDS = ("skills", "commands")
 
 
 @dataclass
 class ComposeConflict:
-    """A composition target we refused to overwrite.
+    """A downward-symlink target we refused to overwrite.
 
-    Raised by ``compose()`` when ``.opencode/<kind>/<name>`` is occupied
-    by content that doesn't carry an All-Might marker — i.e. the user
-    (or some other tool) authored the file. The agent resolves the
-    conflict during ``/sync``.
+    Raised by ``compose()`` when ``.opencode/<kind>/<basename>`` is
+    already occupied (by a capability-written global, by another
+    personality's symlink, or by user content) and we refuse to
+    silently replace it. The agent resolves the conflict during
+    ``/sync``.
 
     Attributes:
-        instance_name: Name of the personality instance that wanted to
-            contribute this entry.
-        kind: One of ``skills``, ``commands``, ``plugins``.
-        basename: Final path component (e.g. ``search.md``).
-        dst: Absolute path of the conflicted destination
+        instance_name: Name of the personality instance whose entry
+            we tried to project.
+        kind: One of ``skills`` or ``commands``.
+        basename: Final path component (e.g. ``stdcell-special.md``).
+        dst: Absolute path of the conflicted location
             (``.opencode/<kind>/<basename>``).
-        source: Absolute path of the entry we would have linked to
-            (``personalities/<instance>/<kind>/<basename>``).
+        source: Absolute path of the personality entry we wanted to
+            symlink to (``personalities/<p>/<kind>/<basename>``).
         existing: ``"file"``, ``"directory"``, or
             ``"symlink-to-elsewhere"`` — what currently occupies dst.
     """
@@ -243,39 +253,35 @@ def compose(
     *,
     force: bool = False,
 ) -> list[ComposeConflict]:
-    """Symlink an instance's skills/commands/plugins into ``.opencode/``.
+    """Project ``personalities/<p>/{skills,commands}/*`` into ``.opencode/``.
 
-    For each kind, every entry under ``personalities/<instance>/<kind>/``
-    is mirrored at ``.opencode/<kind>/<basename>`` as a relative
-    symlink pointing back to the instance.
+    Part-D model: capability templates write project-wide globals
+    (``search.md``, ``remember.md``, …) directly into ``.opencode/``.
+    Personalities own their own real ``commands/`` and ``skills/``
+    subdirs, where the agent may write personality-specific entries
+    at runtime. ``compose`` then projects every per-personality entry
+    into ``.opencode/<kind>/<basename>`` as a relative symlink so
+    OpenCode discovers it via its single ``.opencode/`` scan.
+
+    The personality dirs are created (empty) on every call so the
+    agent always has somewhere to write into.
 
     Conflict handling — never raises, returns conflicts instead:
 
-    * **Already correct** (symlink to our entry): idempotent, do nothing.
-    * **Symlink to elsewhere**: returned as a conflict; ``dst`` is left
-      untouched. ``force=True`` overrides and replaces it.
-    * **Regular file with an All-Might marker**: it's our own old
-      generated file — auto-resolve by deleting and re-symlinking.
-    * **Regular file without a marker**: user authored, returned as a
-      conflict; ``dst`` is preserved. ``force=True`` overrides.
-    * **Directory**: returned as a conflict (we never recursively
-      delete user content). ``force=True`` overrides only when the dir
-      is itself a stale All-Might-owned dir (any file with a marker).
-
-    The CLI passes the returned list to
-    :func:`stage_compose_conflicts` so ``/sync`` can resolve them.
+    * **Already correct** (symlink to our entry): idempotent.
+    * **Symlink to elsewhere**: conflict; ``force=True`` replaces.
+    * **Regular file with an All-Might marker**: stale, auto-resolved.
+    * **Regular file without a marker**: user/global authored —
+      conflict; ``force=True`` replaces.
+    * **Directory**: conflict (we never recursively delete user
+      content); ``force=True`` replaces only when the dir is itself
+      stale All-Might-owned.
     """
     from .markers import ALLMIGHT_MARKER_MD, ALLMIGHT_MARKER_TS, ALLMIGHT_MARKER_YAML
 
     markers = (ALLMIGHT_MARKER_MD, ALLMIGHT_MARKER_TS, ALLMIGHT_MARKER_YAML)
 
     def _looks_owned(path: Path) -> bool:
-        """True when ``path`` contains any All-Might marker token.
-
-        Used to distinguish *our* old generated content (safe to
-        overwrite) from *user* content (must be staged for ``/sync``).
-        Reads at most a few KB so we don't slurp huge files.
-        """
         try:
             head = path.read_bytes()[:4096].decode("utf-8", errors="replace")
         except OSError:
@@ -283,20 +289,26 @@ def compose(
         return any(m in head for m in markers)
 
     def _dir_looks_owned(path: Path) -> bool:
-        """True when any file inside ``path`` carries our marker."""
         for child in path.rglob("*"):
             if child.is_file() and _looks_owned(child):
                 return True
         return False
 
+    instance_root = instance.root
+    instance_root.mkdir(parents=True, exist_ok=True)
+
     conflicts: list[ComposeConflict] = []
 
     for kind in _COMPOSED_KINDS:
-        src_dir = instance.root / kind
-        if not src_dir.is_dir():
-            continue
+        # Personality's own real dir — initially empty; agent writes here.
+        src_dir = instance_root / kind
+        src_dir.mkdir(parents=True, exist_ok=True)
+
+        # Global .opencode/<kind>/ where capability writes globals
+        # and where we project personality entries via symlink.
         dst_dir = project_root / ".opencode" / kind
         dst_dir.mkdir(parents=True, exist_ok=True)
+
         for entry in sorted(src_dir.iterdir()):
             dst = dst_dir / entry.name
 
@@ -330,7 +342,11 @@ def compose(
                         ))
                         continue
                 else:
-                    if force or _looks_owned(dst):
+                    # Capability-written globals carry our marker. We
+                    # don't auto-delete those — different personalities
+                    # might want to define a same-named entry, but only
+                    # one wins at .opencode/<kind>/<basename>.
+                    if force:
                         dst.unlink()
                     else:
                         conflicts.append(ComposeConflict(
@@ -344,6 +360,8 @@ def compose(
                         continue
 
             dst.symlink_to(os.path.relpath(entry, dst_dir))
+
+    return conflicts
 
     return conflicts
 
@@ -367,14 +385,25 @@ def stage_compose_conflicts(
             path.unlink()
         return None
     path.parent.mkdir(parents=True, exist_ok=True)
+    def _rel(p: Path) -> str:
+        # ``source`` is the symlink target, which is intentionally relative
+        # in the upward-symlink model (e.g. ``../../.opencode/commands``).
+        # ``dst`` is the absolute personality dir we wanted to write into.
+        if p.is_absolute():
+            try:
+                return str(p.relative_to(project_root))
+            except ValueError:
+                return str(p)
+        return str(p)
+
     payload = {
         "compose_conflicts": [
             {
                 "instance": c.instance_name,
                 "kind": c.kind,
                 "basename": c.basename,
-                "dst": str(c.dst.relative_to(project_root)),
-                "source": str(c.source.relative_to(project_root)),
+                "dst": _rel(c.dst),
+                "source": _rel(c.source),
                 "existing": c.existing,
             }
             for c in conflicts
@@ -446,6 +475,13 @@ def write_init_scaffold(project_root: Path) -> None:
         pkg_json.write_text(_OPENCODE_PACKAGE_JSON)
 
     _write_role_load_plugin(project_root)
+
+    # Claude Code compatibility bridge — markdown surface via dir
+    # symlinks, agent context via @-import shim, runtime hooks for
+    # role-load (memory-load lives in the memory capability).
+    from .claude_bridge import write_claude_bridge
+
+    write_claude_bridge(project_root)
 
 
 # ---------------------------------------------------------------------------

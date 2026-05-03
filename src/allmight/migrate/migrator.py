@@ -138,8 +138,9 @@ def migrate(project_root: Path, *, dry_run: bool = False) -> MigrationPlan:
         new_entries = []
         for entry in entries:
             new_instance = plan.rename.get(entry.instance, entry.instance)
+            new_template = _LEGACY_TEMPLATE_NAMES.get(entry.template, entry.template)
             new_entries.append(RegistryEntry(
-                template=entry.template,
+                template=new_template,
                 instance=new_instance,
                 version=entry.version,
             ))
@@ -215,12 +216,21 @@ def _instance_for_kind(plan: MigrationPlan, kind: str) -> str | None:
 
 
 def _guess_template(instance_name: str, templates: dict):
-    """Heuristic: instance name == "knowledge" -> corpus, "memory" -> memory."""
+    """Heuristic: instance name == "knowledge" -> database, "memory" -> memory."""
     if instance_name == "knowledge":
-        return templates.get("corpus_keeper")
+        return templates.get("database")
     if instance_name == "memory":
-        return templates.get("memory_keeper")
+        return templates.get("memory")
     return None
+
+
+# Map legacy Part-A/B/C template names to the Part-D names so a registry
+# carrying ``template: corpus_keeper`` still resolves to the renamed
+# ``database`` template after Part-D is in place.
+_LEGACY_TEMPLATE_NAMES: dict[str, str] = {
+    "corpus_keeper": "database",
+    "memory_keeper": "memory",
+}
 
 
 def _split_legacy_agents_md(text: str) -> dict[str, str]:

@@ -1,6 +1,6 @@
 """Tests for `allmight clone` — read-only clone with symlinked workspaces.
 
-Clone creates a new All-Might project where knowledge_graph/ workspaces
+Clone creates a new All-Might project where database/ workspaces
 are symlinks to the source. The clone is always read-only.
 """
 
@@ -9,9 +9,9 @@ import os
 import pytest
 
 from allmight.clone.cloner import ProjectCloner
-from allmight.capabilities.corpus_keeper.initializer import ProjectInitializer
-from allmight.capabilities.corpus_keeper.scanner import ProjectScanner
-from allmight.capabilities.memory_keeper.initializer import MemoryInitializer
+from allmight.capabilities.database.initializer import ProjectInitializer
+from allmight.capabilities.database.scanner import ProjectScanner
+from allmight.capabilities.memory.initializer import MemoryInitializer
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def source_project(tmp_path):
     MemoryInitializer().initialize(source)
 
     # Create a fake workspace with config.yaml
-    ws = source / "knowledge_graph" / "rtl"
+    ws = source / "database" / "rtl"
     ws.mkdir(parents=True, exist_ok=True)
     (ws / "config.yaml").write_text("indices:\n  - name: rtl\n")
     (ws / "store").mkdir()
@@ -74,19 +74,19 @@ class TestCloneWorkspaces:
     def test_creates_symlinks(self, source_project, target_dir):
         """Workspaces in target are symlinks."""
         ProjectCloner().clone(source_project, target_dir)
-        ws = target_dir / "knowledge_graph" / "rtl"
+        ws = target_dir / "database" / "rtl"
         assert ws.is_symlink()
 
     def test_symlinks_point_to_source(self, source_project, target_dir):
         """Symlinks resolve to the source workspace directories."""
         ProjectCloner().clone(source_project, target_dir)
-        ws = target_dir / "knowledge_graph" / "rtl"
-        assert ws.resolve() == (source_project / "knowledge_graph" / "rtl").resolve()
+        ws = target_dir / "database" / "rtl"
+        assert ws.resolve() == (source_project / "database" / "rtl").resolve()
 
     def test_config_yaml_accessible(self, source_project, target_dir):
         """config.yaml in symlinked workspace is readable."""
         ProjectCloner().clone(source_project, target_dir)
-        config = target_dir / "knowledge_graph" / "rtl" / "config.yaml"
+        config = target_dir / "database" / "rtl" / "config.yaml"
         assert config.exists()
         assert "rtl" in config.read_text()
 
@@ -95,11 +95,11 @@ class TestCloneWorkspaces:
         report = ProjectCloner().clone(source_project, target_dir)
         assert "rtl" in report.workspaces_linked
 
-    def test_empty_knowledge_graph(self, tmp_path, target_dir):
-        """Source with empty knowledge_graph/ clones successfully."""
+    def test_empty_database(self, tmp_path, target_dir):
+        """Source with empty database/ clones successfully."""
         source = tmp_path / "empty_src"
         source.mkdir()
-        (source / "knowledge_graph").mkdir()
+        (source / "database").mkdir()
         (source / ".allmight").mkdir()
 
         report = ProjectCloner().clone(source, target_dir)
