@@ -724,6 +724,13 @@ class RegistryEntry:
     versions: dict[str, str] = field(default_factory=dict)
     role_summary: str = ""
 
+    # Part-E additions: bundle lineage (only populated for personalities
+    # imported from a bundle). Empty strings mean "locally created" or
+    # "legacy registry row".
+    imported_from_bundle_id: str = ""
+    bundle_version: str = ""
+    imported_at: str = ""
+
     def __post_init__(self) -> None:
         # Synthesise Part-D fields from Part-C inputs. Lets old call
         # sites construct rows without knowing about the new shape.
@@ -761,12 +768,17 @@ def read_registry(project_root: Path) -> list[RegistryEntry]:
     out: list[RegistryEntry] = []
     for row in rows:
         if "name" in row and "capabilities" in row:
-            # Part-D row.
+            # Part-D row, plus optional Part-E lineage fields.
             out.append(RegistryEntry(
                 instance=row["name"],
                 capabilities=list(row.get("capabilities") or []),
                 versions=dict(row.get("versions") or {}),
                 role_summary=row.get("role_summary", ""),
+                imported_from_bundle_id=row.get(
+                    "imported_from_bundle_id", "",
+                ),
+                bundle_version=row.get("bundle_version", ""),
+                imported_at=row.get("imported_at", ""),
             ))
         else:
             # Part-C row (or hand-edited mix). Required keys: template,
@@ -808,6 +820,14 @@ def _entry_to_row(entry: RegistryEntry) -> dict[str, Any]:
     }
     if entry.role_summary:
         row["role_summary"] = entry.role_summary
+    # Part-E lineage fields are only emitted when set, so locally-
+    # created personalities don't accumulate empty bookkeeping keys.
+    if entry.imported_from_bundle_id:
+        row["imported_from_bundle_id"] = entry.imported_from_bundle_id
+    if entry.bundle_version:
+        row["bundle_version"] = entry.bundle_version
+    if entry.imported_at:
+        row["imported_at"] = entry.imported_at
     return row
 
 

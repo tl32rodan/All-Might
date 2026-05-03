@@ -659,11 +659,25 @@ def import_personality(bundle: str, as_name: str | None, force: bool) -> None:
     conflicts = compose(project_root, instance, force=force)
     stage_compose_conflicts(project_root, conflicts)
 
+    # Lineage: capture bundle_id / bundle_version from manifest. Empty
+    # strings when the bundle was produced by a pre-Part-E exporter.
+    bundle_id = str(manifest_data.get("bundle_id") or "")
+    bundle_version = str(manifest_data.get("bundle_version") or "")
+    from datetime import datetime, timezone as _tz
+    imported_at_iso = (
+        datetime.now(tz=_tz.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
+
     new_entries = [e for e in existing_entries if e.instance != target_name]
     new_entries.append(RegistryEntry(
         instance=target_name,
         capabilities=[t.name for t in selected],
         versions={t.name: t.version for t in selected},
+        imported_from_bundle_id=bundle_id,
+        bundle_version=bundle_version,
+        imported_at=(imported_at_iso if bundle_id else ""),
     ))
     write_registry(project_root, new_entries)
 
