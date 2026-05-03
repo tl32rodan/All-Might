@@ -20,6 +20,7 @@ def test_team_share_doc_exists() -> None:
 
 
 @pytest.mark.parametrize("token", [
+    # Core concepts and patterns
     "Bundle share",
     "Instance share",
     "lessons_learned",
@@ -29,6 +30,12 @@ def test_team_share_doc_exists() -> None:
     "Single-writer",
     "share publish",
     "share pull",
+    # Part-F naming aliases (must be discoverable from the doc)
+    "/one-for-all",
+    "all-for-one",
+    "Scenario A",
+    "Scenario B",
+    "Scenario C",
 ])
 def test_team_share_doc_covers_core_concepts(token: str) -> None:
     body = (REPO_ROOT / "docs" / "team-share.md").read_text()

@@ -1,118 +1,164 @@
-# Team Share
+# Team Share — How To
 
-Two patterns for sharing All-Might across a team. They serve
-different needs and both are first-class.
+This is the how-to guide for sharing All-Might personalities across
+your team. It walks through three scenarios you'll actually hit.
+For deeper schema reference, jump to [Reference](#reference) at the
+end.
 
-| | Mode 1: Bundle share | Mode 2: Instance share |
+> **A note on names**: the export / import verbs also answer to
+> ``/one-for-all`` and ``allmight all-for-one``. The names mirror
+> the *direction* — One-for-All **passes** a personality on,
+> All-for-One **gathers** one in. Both old and new names are
+> first-class and stay forever. Use whichever reads better at the
+> call site. This guide uses the directional names where they're
+> clearer.
+
+---
+
+## Two patterns, in 60 seconds
+
+| Pattern | When | One-line summary |
 |---|---|---|
-| Unit | One personality, packaged | A whole All-Might project |
-| Use | Receiver imports + customises | Multiple users `cd` into the same path |
-| Transport | Git remote (NFS bare repo, internal Gerrit/Gitea, https/ssh) | Filesystem-shared NFS path |
-| Suits | General starter kits, individual personalities | Service-style roles (e.g. team review agent) |
+| **Bundle share** | A teammate wants their own copy of your personality | You publish a bundle to a git remote; they pull it down, customise it locally |
+| **Instance share** | The whole team uses the same review/CI/dispatcher personality | Everyone `cd`'s into one NFS-hosted All-Might project |
 
-## Mode 1 — Bundle share via git-as-hub
+Bundle share = "dotfiles for your role". Instance share = "one
+shared service, many users". They are independent — your project
+can use both at once for different personalities.
 
-### Setup
+---
 
-Pick any URL the local `git` can reach. The simplest is a bare repo
-on shared NFS:
+## Scenario A — You made a personality your teammates want
 
-```bash
-# One-time, on a host that can write to the team NFS:
-mkdir -p /nfs/team/personalities/stdcell_owner.git
-cd /nfs/team/personalities/stdcell_owner.git
-git init --bare --initial-branch=main
+You spent a week building the ``stdcell_owner`` role: agent
+prompts, knowledge in ``memory/understanding/``, the right SMAK
+indices wired up. Now Lin and Chen want to use it on their machines.
+
+### Step 1 — Bundle the personality (One-for-All)
+
+Inside Claude Code or OpenCode, ask the agent to export it:
+
+```
+> /one-for-all stdcell_owner
 ```
 
-Or skip the manual step — `allmight share publish` runs `git init
---bare` automatically when the target is a `file://` URL that
-doesn't yet exist.
+(or ``/export stdcell_owner`` — same procedure.) The agent walks
+your personality's data, applies per-capability rules, asks for
+your consent on anything that looks like PII (names, emails,
+hardcoded paths to your home directory), and writes a bundle
+directory at ``./stdcell_owner-export/``:
 
-### Publishing
+```
+stdcell_owner-export/
+├── manifest.yaml         # framework versions, capability versions, lineage,
+│                         # database subscriptions (if you opted-in)
+├── ROLE.md               # the role description
+├── database/
+│   └── config.yaml       # which SMAK indices the role uses (no store/)
+└── memory/
+    ├── understanding/    # agent-curated knowledge that survived your review
+    └── journal/          # only if you explicitly said yes
+```
 
-`/export` is the canonical way to produce a reviewed bundle. It is
-agent-driven so it can ask for consent on every file containing
-likely PII. The CLI's `share publish` is a pure transport — it
-takes an existing bundle directory and pushes it.
+The vector index (``memory/store/``, ``database/.../store/``) is
+intentionally absent — it's huge, machine-specific, and trivially
+rebuildable from the source files.
+
+### Step 2 — Push the bundle to a git remote
+
+The bundle is on your disk. To get it to teammates, push to any
+git URL the local ``git`` can reach. The simplest is a bare repo on
+shared NFS:
 
 ```bash
-# Inside Claude Code or OpenCode, run:
-> /export
-
-# That writes ./stdcell_owner-export/. Then on the shell:
 allmight share publish ./stdcell_owner-export/ \
     --to file:///nfs/team/personalities/stdcell_owner.git \
     --message "stdcell_owner v1.0"
 ```
 
-The publish step:
-1. Validates the bundle has a `manifest.yaml`.
-2. Initialises the bare repo if it's a local path that doesn't exist.
-3. Clones the remote, copies the bundle on top, commits, pushes.
-4. Records the upstream URL + bundle_id in
-   `.allmight/upstream.yaml` (per personality).
+If the bare repo doesn't exist yet, ``share publish`` runs
+``git init --bare`` automatically (for ``file://`` URLs). For SSH
+or HTTPS remotes, the repo must already exist; create it once on
+your git server.
 
-### Pulling
+After publish, ``.allmight/upstream.yaml`` records the URL +
+the bundle's ``bundle_id`` so future re-publishes carry lineage
+forward in ``derived_from``.
+
+### Step 3 — Tell your teammates
+
+Just tell them the URL. Their step is Scenario B below.
+
+---
+
+## Scenario B — A teammate made a personality you want
+
+Lin pings: "I published ``stdcell_owner`` at
+``file:///nfs/team/personalities/stdcell_owner.git``."
+
+### One command (All-for-One)
+
+In any All-Might project on your machine:
 
 ```bash
 allmight share pull file:///nfs/team/personalities/stdcell_owner.git
-allmight share pull file:///nfs/team/personalities/stdcell_owner.git \
-    --as stdcell_v2     # rename on import
 ```
 
-Pull is `git clone` + `allmight import` + upstream bookkeeping. The
-imported personality's lineage (`imported_from_bundle_id`,
-`bundle_version`, `imported_at`) lands in
-`.allmight/personalities.yaml` so re-exporting later carries the
-provenance forward in `derived_from`.
+This:
+1. ``git clone``s Lin's bundle to a temp dir.
+2. Calls ``allmight all-for-one`` (== ``allmight import``) against
+   the cloned tree.
+3. Records Lin's URL in your ``.allmight/upstream.yaml`` so you
+   can pull updates later.
 
-### Manifest schema (v2, with all Part-E fields)
+After pull:
 
-```yaml
-allmight_version: '0.1.0'
-schema_version: 2
-personality_name: stdcell_owner
-
-# Part-E lineage (all optional, omitted on first export)
-bundle_id: 7c4f3a2e-1111-2222-3333-444455556666     # uuid4, fresh per export
-bundle_version: 1.0.0                                # semver of THIS bundle's content
-derived_from:                                        # ancestry, may be empty
-  - 11111111-2222-3333-4444-555555555555
-
-capabilities:
-  database:
-    capability_version: 1.0.0
-  memory:
-    capability_version: 1.0.0
-
-exported_at: '2026-05-04T10:00:00Z'
-
-# Part-E shared-SMAK subscriptions (optional, omit if no shared SMAK)
-database_subscriptions:
-  - index: stdcell                                   # matches database/config.yaml entry
-    nfs_path: /nfs/smak/stdcell                      # where the shared SMAK index lives
-    last_validated_against: 2026-04-15
-    required: true                                   # warn loudly if missing on import
+```bash
+ls personalities/stdcell_owner/    # ROLE.md, memory/, database/, …
 ```
 
-The three Part-E version concepts are independent:
+Run ``/ingest`` once to rebuild your local SMAK store from the
+imported config. (Vector indices don't travel in bundles; you
+build your own from the source files the personality references.)
 
-* `allmight_version` — framework version
-* `capabilities.<cap>.capability_version` — per-template version
-* `bundle_version` — content-level semver of *this* bundle
+### Variations
 
-Bump `bundle_version` when the personality's content reaches a
-milestone. The framework does not auto-bump it.
+```bash
+# Rename on import (avoid collision with your own stdcell_owner)
+allmight share pull <url> --as stdcell_v2
 
-## Mode 2 — Instance share over NFS
+# Two-step if you want to inspect the bundle before importing
+git clone <url> /tmp/inspect-bundle
+ls /tmp/inspect-bundle              # eyeball it
+allmight all-for-one /tmp/inspect-bundle
+```
 
-### Layout
+### What if the personality depends on a SMAK index you can't reach?
 
-A team-shared All-Might project lives at a NFS path that all members
-can reach:
+If the bundle's ``manifest.yaml`` declares
+``database_subscriptions`` (e.g. ``/nfs/smak/stdcell``) and that
+path doesn't exist on your machine, ``share pull`` (and
+``allmight import``) emit a warning per missing path **but the
+import still succeeds**. You can then either mount the team NFS or
+edit ``personalities/stdcell_owner/database/config.yaml`` to point
+at a local index.
+
+---
+
+## Scenario C — The team uses one shared personality (instance share)
+
+This pattern is for service-style roles: one canonical "code
+review agent" that ten engineers all consult, the same way they'd
+all consult a shared CI server. Each engineer doesn't need their
+own customised copy — they need the same role to keep memory
+across all of them.
+
+### The setup
+
+A dedicated unix account owns an All-Might project on NFS:
 
 ```
-/nfs/team/review-allmight/                ← owned by a dedicated unix account
+/nfs/team/review-allmight/                ← owned by review-bot:review-team
 ├── AGENTS.md
 ├── MEMORY.md
 ├── .allmight/
@@ -121,129 +167,126 @@ can reach:
     └── review/
         ├── ROLE.md
         ├── memory/
-        │   ├── MEMORY.md                 ← canonical, curator-edited
-        │   ├── understanding/
-        │   ├── journal/
+        │   ├── understanding/            ← curator-edited canonical knowledge
+        │   ├── journal/                  ← session logs
         │   ├── lessons_learned/
-        │   │   ├── _inbox/               ← users write here during sessions
-        │   │   └── _reviewed/            ← curator's "kept after audit" landing
+        │   │   ├── _inbox/               ← engineers write here during sessions
+        │   │   └── _reviewed/            ← curator's audited landing
         │   └── store/
         └── database/
             └── config.yaml               ← points at /nfs/smak/<index>
 ```
 
-### Recommended permissions
+Recommended permissions:
 
 ```bash
-# Dedicated unix account owns the tree. Group write so members can
-# contribute to lessons_learned/_inbox/. Setgid bit on directories
-# keeps group ownership consistent on new files.
 chown -R review-bot:review-team /nfs/team/review-allmight
 chmod -R 770 /nfs/team/review-allmight
 find /nfs/team/review-allmight -type d -exec chmod g+s {} +
 ```
 
-The framework does not enforce these — it writes files; the user's
-umask and the dir's setgid bit own permissions.
+The setgid bit keeps group ownership consistent on new files.
+All-Might itself doesn't enforce these — your umask + the dir's
+setgid own permissions.
 
-### Lessons-learned curation workflow
+### The user's flow
 
-The split between `_inbox/` and `_reviewed/` exists because in a
-shared instance, every session writing into the canonical
-understanding/ surface would create wiki-style chaos with no audit
-trail.
+To consult the review agent, an engineer just `cd`'s in and starts
+their agent client:
 
-**Write-side** (during a user's session):
+```bash
+cd /nfs/team/review-allmight/
+opencode      # or: claude
+```
 
-The user runs `/remember` and the agent — guided by the memory
-keeper's ROLE.md — recognises that the observation is a
-"lesson-learned-worth-flagging-for-curator" rather than authoritative
-canonical knowledge. It writes:
+Their session sees the team's MEMORY.md, the review personality's
+ROLE.md, and the shared SMAK indices. When they're done, anything
+worth flagging for the curator goes to:
 
 ```
 memory/lessons_learned/_inbox/<ISO-8601>-<unix_user>.md
 ```
 
-The filename is per-user-per-timestamp, so concurrent reviewer
-sessions never collide on the same file. No file locks needed.
+The agent does this automatically when ``/remember`` recognises
+"this is a lesson worth flagging for the curator", per the
+routing rule in the memory keeper's ROLE.md. The filename is
+per-user-per-timestamp, so two engineers reviewing simultaneously
+never collide on the same file.
 
-**Audit-side** (curator's periodic job, project-side):
+### The curator's flow
 
-A periodic script (out of scope for All-Might itself) walks
-`_inbox/`, optionally cross-references with the SOS revision
-summary, and produces an audit packet for the curator to walk
-through. For each `_inbox/` entry:
+A weekly cron (or a manual session) sweeps ``_inbox/``, optionally
+cross-references with recent SOS revisions, and presents the
+curator with each entry. For each one:
 
-* **Keep**: move to `_reviewed/`
-* **Promote**: distill into `understanding/canonical.md`
+* **Keep**: move to ``_reviewed/``
+* **Promote**: distill into ``understanding/canonical.md``
 * **Discard**: delete
 
-The framework ships only the layout, not the audit job. A simple
-weekly cron + markdown report is enough to start.
+The framework ships only the layout and the routing rule. The
+audit job itself is a project-side script — All-Might doesn't
+prescribe what the audit packet looks like.
 
-### Concurrency
+### Why this avoids file locks
 
-The instance-share design sidesteps file-level locking by keeping
-write boundaries non-overlapping:
+The split between user-side ``_inbox/`` (per-user, append-only)
+and curator-side ``understanding/`` / ``MEMORY.md`` (single-writer,
+the curator) means **no two writers ever target the same file**.
+You don't need distributed locks; the design sidesteps the
+collision.
 
-| Action | Writer | Collision risk |
-|---|---|---|
-| `/remember` to lessons_learned/_inbox/ | per-user-per-timestamp file | none |
-| Append to journal/<workspace>/ | per-session timestamped file | none |
-| Edit canonical understanding/ files | curator only | none |
-| Search SMAK | read-only | none |
+---
 
-If a curator edits canonical files while a session is reading, the
-session sees a snapshot until its next read. Acceptable for the
-low-frequency human curation cycle this design assumes.
+## Sharing SMAK as the team's source of truth
 
-## Shared SMAK as source of truth
-
-The canonical pattern: one NFS-hosted SMAK index per team, written
-by a single dedicated unix account ("the bot"), read by everyone.
-Single-writer eliminates the multi-tenant SMAK problem at its root.
+Most chip-design teams want one canonical SMAK index per library
+(``stdcell``, ``io_phy``, ``pll``…), not one per engineer. The
+canonical pattern:
 
 ```
-/nfs/smak/<index>/                        ← bot writes, group reads
+/nfs/smak/<index>/                   ← bot writes, group reads
   ├── faiss.index
   ├── metadata.json
   └── ...
 ```
 
-The bot performs **atomic-rename ingest** to avoid partial reads:
+A dedicated unix account ("the bot") performs **atomic-rename
+ingest** to avoid partial reads:
 
 ```bash
-# In the bot's ingest job:
-ingest_to /nfs/smak/<index>.tmp/        # write to a side directory
+ingest_to /nfs/smak/<index>.tmp/         # write to a side directory
 mv /nfs/smak/<index> /nfs/smak/<index>.old
 mv /nfs/smak/<index>.tmp /nfs/smak/<index>
 rm -rf /nfs/smak/<index>.old
 ```
 
-Personality-side `database/config.yaml` points at the canonical
-path:
+POSIX `mv` is atomic on the same filesystem; readers holding old
+inodes finish their search against the old index, while new opens
+hit the new one. Single-writer eliminates the multi-tenant SMAK
+problem at its root.
+
+A personality that relies on a shared SMAK index records the
+dependency in its bundle manifest under
+``database_subscriptions``:
 
 ```yaml
-indices:
-  - name: stdcell
-    description: "Standard cell library characterisation data"
-    paths: ["/nfs/smak/stdcell"]
+database_subscriptions:
+  - index: stdcell
+    nfs_path: /nfs/smak/stdcell
+    last_validated_against: 2026-04-15
+    required: true        # warn loudly if missing on import
 ```
 
-When this personality is exported, the resulting `manifest.yaml`
-records the dependency under `database_subscriptions`. On import in
-a project that hasn't mounted the team NFS yet, the receiver sees a
-warning per missing subscription but the import still succeeds —
-the receiver can mount NFS and re-run `/ingest` later.
+When a teammate ``share pull``s the bundle on a machine that
+hasn't mounted ``/nfs/smak/``, they get a warning per missing
+path; the import still succeeds so they can mount NFS later.
 
-## SMAK update request schema
+### SMAK update request payload
 
-Personalities submit SMAK update requests when their reviewed
-content needs to make it into the canonical index. The framework
-documents the payload format but does **not** ship a generator —
-each personality author writes a skill that fits their review flow.
-
-Recommended Level-1 payload:
+When a personality finishes a review and wants its findings
+ingested into the canonical SMAK index, it submits a request to a
+**SMAK update service** (a separate repository — All-Might
+documents only the payload format):
 
 ```json
 {
@@ -253,26 +296,88 @@ Recommended Level-1 payload:
 }
 ```
 
-The receiver service (out of scope for All-Might — lives in a
-separate repo) takes this payload, fetches the named files from
-SOS, and appends to the bot's atomic-rename ingest queue.
-`review_id` lets the bot trace each ingestion back to the review
-session that produced it.
+The receiver fetches the named files from SOS and queues them for
+the bot's atomic-rename ingest. ``review_id`` lets the bot trace
+each ingestion back to the review session that produced it.
 
-## What's not covered yet
+The framework does **not** ship a generator for these requests —
+each personality author writes a skill that fits their specific
+review flow.
+
+---
+
+## Reference
+
+### Manifest schema (v2)
+
+Produced by ``/one-for-all`` (== ``/export``). Consumed by
+``allmight all-for-one`` (== ``allmight import``).
+
+```yaml
+allmight_version: '0.1.0'
+schema_version: 2
+personality_name: stdcell_owner
+exported_at: '2026-05-04T10:00:00Z'
+
+# Lineage (optional, omitted on first export)
+bundle_id: 7c4f3a2e-1111-2222-3333-444455556666     # uuid4, fresh per export
+bundle_version: 1.0.0                                # semver of THIS bundle's content
+derived_from:                                        # ancestry, may be empty
+  - 11111111-2222-3333-4444-555555555555
+
+# Capabilities the personality has (with template versions)
+capabilities:
+  database:
+    capability_version: 1.0.0
+  memory:
+    capability_version: 1.0.0
+
+# Shared-SMAK subscriptions (optional, omit if no shared SMAK)
+database_subscriptions:
+  - index: stdcell                                   # matches database/config.yaml entry
+    nfs_path: /nfs/smak/stdcell                      # where the shared SMAK index lives
+    last_validated_against: 2026-04-15
+    required: true                                   # warn loudly if missing on import
+```
+
+The three version concepts are independent:
+* ``allmight_version`` — framework version
+* ``capabilities.<cap>.capability_version`` — per-template version
+* ``bundle_version`` — content-level semver of *this* bundle
+
+Bump ``bundle_version`` when the personality's content reaches a
+milestone. The framework does not auto-bump it.
+
+### Command pairs
+
+| Mnemonic | Direction | Names |
+|---|---|---|
+| One-for-All | passes a personality on | ``/one-for-all``, ``/export`` (slash) |
+| All-for-One | gathers a personality | ``allmight all-for-one``, ``allmight import`` (CLI) |
+| Publish | pushes the bundle to git | ``allmight share publish`` |
+| Pull | clones bundle from git + imports | ``allmight share pull`` |
+
+### Files this guide references
+
+| File | Owner | Lifecycle |
+|---|---|---|
+| ``manifest.yaml`` (in bundle) | One-for-All / Export | Generated each export |
+| ``.allmight/upstream.yaml`` | ``share publish`` / ``share pull`` | Persists per-personality URL + last-seen bundle_id |
+| ``.allmight/personalities.yaml`` | ``allmight import`` / ``all-for-one`` | Records lineage on import |
+| ``personalities/<p>/memory/lessons_learned/_inbox/`` | User session ``/remember`` | Append-only, per-user-per-timestamp |
+| ``personalities/<p>/memory/lessons_learned/_reviewed/`` | Curator audit | Curator-only writer |
+
+### What's not covered yet
 
 These limitations are documented, not bugs:
 
-* **Audit packet generation**: project-side script, not in framework.
-* **Multi-user attribution in canonical memory**: `understanding/`
-  files are anonymous-to-the-role. Disagreement and provenance live
-  in journal narrative, not metadata.
-* **Conflict resolution UI for memory merges**: not provided.
-  Concurrent edits to the same canonical file are last-writer-wins;
-  the layout above sidesteps this in normal operation.
-* **Per-team SMAK partitioning**: the framework assumes whole-index
-  sharing. File-level filtering of an NFS-hosted index requires
-  SMAK-side namespace support that doesn't exist yet.
-* **Subscription-update notifications**: pulling a fresh upstream
-  bundle is a manual `allmight share pull --force`. There is no
-  push notification when an upstream personality changes.
+* **Audit packet generation** — project-side script.
+* **Multi-user attribution** in canonical memory — ``understanding/``
+  is anonymous-to-the-role; provenance lives in journal narrative.
+* **Conflict resolution UI for memory merges** — not needed in
+  practice because the design sidesteps overlapping writers.
+* **Per-team SMAK partitioning** — whole-index sharing only;
+  file-level filtering needs SMAK-side namespace support that
+  doesn't exist yet.
+* **Subscription-update notifications** — pulling a fresh upstream
+  is a manual ``allmight share pull --force``; no push.
