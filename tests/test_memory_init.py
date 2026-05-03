@@ -72,6 +72,43 @@ class TestMemoryInitializer:
         MemoryInitializer().initialize(project_root)
         assert (project_root / "memory" / "store").is_dir()
 
+    # -- Lessons-learned curator workflow (Mode-2 instance share) --------
+
+    def test_creates_lessons_learned_inbox(self, project_root):
+        """lessons_learned/_inbox/ created for user-side writes."""
+        MemoryInitializer().initialize(project_root)
+        assert (
+            project_root / "memory" / "lessons_learned" / "_inbox"
+        ).is_dir()
+
+    def test_creates_lessons_learned_reviewed(self, project_root):
+        """lessons_learned/_reviewed/ created as curator-audited landing."""
+        MemoryInitializer().initialize(project_root)
+        assert (
+            project_root / "memory" / "lessons_learned" / "_reviewed"
+        ).is_dir()
+
+    def test_remember_command_mentions_lessons_learned(self, project_root):
+        """/remember body documents the lessons_learned routing rule."""
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "commands" / "remember.md"
+        ).read_text()
+        # The scope table must list lessons_learned, and the body must
+        # explain the inbox-then-reviewed curation flow.
+        assert "lessons_learned/_inbox" in content
+        assert "_reviewed" in content
+        assert "Lesson Learned" in content
+
+    def test_role_md_mentions_lessons_learned(self, project_root, tmp_path):
+        """Memory keeper ROLE.md scope table references lessons_learned."""
+        instance_root = tmp_path / "personalities" / "demo"
+        MemoryInitializer().initialize(
+            project_root, instance_root=instance_root,
+        )
+        role_md = (instance_root / "ROLE.md").read_text()
+        assert "lessons_learned/_inbox" in role_md
+
     def test_creates_smak_config(self, project_root):
         """SMAK config generated for journal index."""
         MemoryInitializer().initialize(project_root)

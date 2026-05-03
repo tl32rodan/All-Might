@@ -102,6 +102,14 @@ class MemoryInitializer:
         if not skills_log.exists():
             skills_log.write_text(self._skills_log_template())
 
+        # 4d. Lessons-learned curator workflow:
+        # - _inbox/  : users write freely during sessions (Mode-2 instance share)
+        # - _reviewed/: curator (e.g. team lead) moves audited entries here
+        # See /remember "Lesson Learned" subsection for the routing rule.
+        lessons = memory_dir / "lessons_learned"
+        (lessons / "_inbox").mkdir(parents=True, exist_ok=True)
+        (lessons / "_reviewed").mkdir(parents=True, exist_ok=True)
+
         # 5. Generate memory commands (remember, recall, reflect)
         self._generate_memory_commands(root)
 
@@ -240,6 +248,10 @@ per-corpus, or a historical log before choosing where to write it.
   `<kind>/<workspace>.md` naming as `understanding/`. No directory
   needs to be declared up front.
 - `memory/journal/<workspace>/…` — searchable log, queried by `/recall`
+- `memory/lessons_learned/_inbox/<ts>-<unix-user>.md` — Mode-2
+  (shared instance) curator-audited memory: write freely during a
+  session; the curator periodically promotes / discards / moves
+  entries to `_reviewed/`
 
 When unsure, prefer **narrower scope**: a workspace file beats a
 project-wide file beats `journal/general/`.
@@ -829,6 +841,7 @@ Once you have something worth persisting, ask: **what is this about?**
 | Per-corpus knowledge | `memory/understanding/<workspace>.md` (L2) | architecture, key files, debug SOPs |
 | Per-corpus personal state | `memory/<kind>/<workspace>.md` | open TODOs, shortcuts, ad-hoc notes |
 | Historical / searchable | `memory/journal/<workspace>/…` (L3) | discoveries, decisions, session logs |
+| Lesson learned (Mode-2) | `memory/lessons_learned/_inbox/<ts>-<user>.md` | observation flagged for curator review |
 
 **Rule of thumb**: if it applies to one corpus only, put it under a
 per-corpus file keyed by workspace name. Never dump per-corpus content
@@ -840,6 +853,46 @@ list of preferred CLI flags, naming conventions), create
 `memory/<kind>/<workspace>.md` on demand — follow the same
 `<kind>/<workspace>.md` naming as `understanding/`. No new directory
 needs to be declared up front.
+
+## Lesson Learned (Mode-2 shared instance)
+
+When this All-Might project is shared across a team via a common NFS
+path (the **instance share** pattern), per-session writes to the
+canonical L1/L2 surface get noisy fast. The `lessons_learned/_inbox/`
+directory is the user-side write buffer for that case:
+
+- **When to use:** during a shared-instance session you want to flag
+  an observation for the personality's curator (a designated human or
+  bot) to audit later, but it isn't yet authoritative enough to live
+  in `understanding/` or `MEMORY.md`.
+- **Where to write:**
+  `memory/lessons_learned/_inbox/<ISO-8601>-<unix_user>.md`. The
+  filename is per-user-per-timestamp, so concurrent reviewers never
+  collide on the same file.
+- **What to write:** short markdown with v1-style frontmatter:
+
+```markdown
+---
+allmight_journal: v1
+type: lesson_learned
+submitter: <unix_user>
+created_at: <ISO-8601>
+tags: [<keywords>]
+---
+# <one-line title>
+
+<a few sentences on what was observed and why future reviews
+should know about it>
+```
+
+- **What NOT to put here:** stable knowledge belongs in
+  `understanding/`; running session log belongs in `journal/`.
+  `lessons_learned/_inbox/` is specifically the curator-audit queue.
+
+The curator periodically walks `_inbox/`, decides keep / promote /
+discard, and moves audited entries to `_reviewed/`. The framework
+ships only the directory layout and this routing rule; the audit
+loop itself lives outside All-Might (project-side script).
 
 ## What to remember
 
