@@ -520,13 +520,16 @@ class TestOpenCodeHooks:
         assert pkg.exists()
 
     def test_opencode_package_json_declares_plugin_runtime(self, project_root):
-        """Declares @opencode-ai/plugin, no devDependencies by default."""
+        """Runtime declares @opencode-ai/plugin; dev declares Node typings + tsc."""
         import json
         MemoryInitializer().initialize(project_root)
         pkg = json.loads((project_root / ".opencode" / "package.json").read_text())
         assert "@opencode-ai/plugin" in pkg["dependencies"]
-        # Bun runtime supplies fs/path natively — no type package needed
-        assert "devDependencies" not in pkg
+        # Tier 1 type-check infrastructure: Node built-ins (fs/path/process)
+        # need @types/node; pin a TypeScript major so CI's tsc output is
+        # reproducible. Bun still supplies the built-ins at runtime.
+        assert pkg.get("devDependencies", {}).get("@types/node")
+        assert pkg.get("devDependencies", {}).get("typescript")
 
     def test_opencode_package_json_idempotent(self, project_root):
         """Running init twice leaves package.json untouched (still has the dep)."""
@@ -609,6 +612,127 @@ class TestOpenCodeHooks:
         config = json.loads((project_root / ".opencode" / "opencode.json").read_text())
         assert config["myKey"] == "myVal"
         assert config["$schema"] == "https://opencode.ai/config.json"
+
+    # -- Tier 1: tsconfig.json for plugin type-check ------------------
+
+    def test_opencode_tsconfig_generated(self, project_root):
+        """init writes .opencode/tsconfig.json for ``tsc --noEmit``."""
+        import json
+        MemoryInitializer().initialize(project_root)
+        path = project_root / ".opencode" / "tsconfig.json"
+        assert path.is_file()
+        cfg = json.loads(path.read_text())
+        opts = cfg["compilerOptions"]
+        # Must declare the Node typings the plugins rely on, and silence
+        # transitive .d.ts noise from effect / fast-check that's not
+        # ours to fix.
+        assert "node" in opts.get("types", [])
+        assert opts["skipLibCheck"] is True
+        assert opts["noEmit"] is True
+        # Limit checking to the plugins we own.
+        assert "plugins/**/*.ts" in cfg["include"]
+
+    def test_opencode_tsconfig_preserves_user_edits(self, project_root):
+        """If the user wrote a tsconfig.json, init does not overwrite it."""
+        import json
+        (project_root / ".opencode").mkdir(exist_ok=True)
+        custom = {"compilerOptions": {"strict": False}, "include": ["my/**/*.ts"]}
+        (project_root / ".opencode" / "tsconfig.json").write_text(
+            json.dumps(custom),
+        )
+        MemoryInitializer().initialize(project_root)
+        cfg = json.loads(
+            (project_root / ".opencode" / "tsconfig.json").read_text()
+        )
+        # User's custom config survives.
+        assert cfg["compilerOptions"]["strict"] is False
+        assert cfg["include"] == ["my/**/*.ts"]
+
+    # -- Tier 1: --force regenerates plugins (closes the bug where -----
+    # -- a manually-edited plugin survived ``allmight init --force``)
+
+    def test_force_regenerates_plugin_without_marker(self, project_root):
+        """A user-edited plugin (no marker) gets regenerated under force=True."""
+        # First init lays down framework plugins.
+        MemoryInitializer().initialize(project_root)
+        plugin = project_root / ".opencode" / "plugins" / "memory-load.ts"
+        assert plugin.is_file()
+        # Simulate the user deleting the marker and editing the body.
+        plugin.write_text("// custom edit, no marker\nconsole.log('mine');\n")
+        # Without --force, the guard preserves the user version.
+        MemoryInitializer().initialize(project_root)
+        assert "// custom edit, no marker" in plugin.read_text()
+        # With --force, the framework body is restored.
+        MemoryInitializer().initialize(project_root, force=True)
+        assert "// custom edit, no marker" not in plugin.read_text()
+        assert "Memory L1 Loader" in plugin.read_text()
+
+    def test_force_does_not_touch_memory_md(self, project_root):
+        """``force=True`` regenerates framework files but never MEMORY.md."""
+        MemoryInitializer().initialize(project_root)
+        memory_md = project_root / "MEMORY.md"
+        memory_md.write_text("# CUSTOM\n\nMy hand-curated L1 content.\n")
+        MemoryInitializer().initialize(project_root, force=True)
+        assert memory_md.read_text() == "# CUSTOM\n\nMy hand-curated L1 content.\n"
+
+    def test_force_does_not_touch_journal_or_understanding(self, project_root):
+        """``force=True`` preserves agent-authored memory data."""
+        MemoryInitializer().initialize(project_root)
+        und = project_root / "memory" / "understanding" / "lens.md"
+        und.parent.mkdir(parents=True, exist_ok=True)
+        und.write_text("# LENS notes\nimportant content\n")
+        journal = project_root / "memory" / "journal" / "general" / "2026-05-04.md"
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        journal.write_text("---\nallmight_journal: v1\n---\n# session\n")
+        MemoryInitializer().initialize(project_root, force=True)
+        assert und.is_file()
+        assert "important content" in und.read_text()
+        assert journal.is_file()
+        assert "allmight_journal" in journal.read_text()
+
+    # -- Tier 1: regression guard for the SyncEvent.run sessionID error -
+
+    def test_every_parts_unshift_sets_sessionID_and_messageID(
+        self, project_root,
+    ) -> None:
+        """Every ``output.parts.unshift({...})`` in a generated plugin
+        must set ``sessionID`` and ``messageID`` on the inserted part.
+
+        OpenCode's ``Session.updatePart`` reads ``part.sessionID`` and
+        passes it as the SyncEvent aggregate. A part missing either
+        field crashes at runtime with::
+
+            SyncEvent.run: "sessionID" required but not found: {"part":...}
+
+        See packages/opencode/src/session/session.ts:updatePart in
+        the OpenCode source. Catch the regression at generation time
+        rather than after the user hits it in production.
+        """
+        import re
+        MemoryInitializer().initialize(project_root)
+        plugins_dir = project_root / ".opencode" / "plugins"
+        # Capture every object literal passed to .parts.unshift(...).
+        # The literal can span multiple lines, so use DOTALL and a
+        # non-greedy match up to the closing ``})``.
+        unshift_re = re.compile(
+            r"\.parts\.unshift\(\s*(\{.*?\})\s*\);", re.DOTALL,
+        )
+        any_seen = False
+        for ts in sorted(plugins_dir.glob("*.ts")):
+            for match in unshift_re.finditer(ts.read_text()):
+                any_seen = True
+                literal = match.group(1)
+                assert "sessionID:" in literal, (
+                    f"{ts.name}: parts.unshift literal missing sessionID:\n"
+                    f"{literal}"
+                )
+                assert "messageID:" in literal, (
+                    f"{ts.name}: parts.unshift literal missing messageID:\n"
+                    f"{literal}"
+                )
+        # Sanity: at least one plugin should have an unshift, otherwise
+        # the test asserts nothing.
+        assert any_seen, "no parts.unshift found across plugins/*.ts"
 
 
 class TestMemoryConfigManager:
