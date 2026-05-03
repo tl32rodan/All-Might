@@ -709,6 +709,191 @@ def import_personality(bundle: str, as_name: str | None, force: bool) -> None:
 
 
 # ------------------------------------------------------------------
+# Share (publish + pull personality bundles via git transport)
+# ------------------------------------------------------------------
+
+
+@main.group("share")
+def share() -> None:
+    """Publish and pull personality bundles through a git remote.
+
+    Mode-1 team-share transport: bundles travel through any git URL
+    All-Might can reach via the local git CLI (NFS-hosted bare repo,
+    internal Gerrit/Gitea, etc). Authentication is the user's
+    environment's responsibility.
+
+    Pre-built bundles come from ``/export``. The CLI is purely a
+    transport layer — it never edits memory or runs PII review.
+    """
+
+
+@share.command("publish")
+@click.argument("bundle_dir", type=click.Path(exists=True, file_okay=False))
+@click.option("--to", "git_url", required=True,
+              help="Git URL to push the bundle to (file://, ssh, https).")
+@click.option("--message", default=None,
+              help="Commit message. Defaults to 'publish bundle <id>'.")
+@click.option("--branch", default="main",
+              help="Branch to push to (default: main).")
+def share_publish(
+    bundle_dir: str, git_url: str,
+    message: str | None, branch: str,
+) -> None:
+    """Push a pre-built bundle directory to a git remote.
+
+    Workflow:
+      1. Run /export inside Claude Code / OpenCode to produce a
+         reviewed bundle directory.
+      2. allmight share publish <bundle-dir> --to <git-url>
+
+    The bundle dir must contain manifest.yaml. For first-time
+    publishes to a local file:// URL, the target bare repo is
+    initialised automatically.
+    """
+    from datetime import datetime, timezone as _tz
+    from pathlib import Path as P
+
+    from .share.git_share import (
+        GitShareError,
+        UpstreamRecord,
+        publish_bundle,
+        read_upstream,
+        write_upstream,
+    )
+
+    project_root = P(".").resolve()
+    if not (project_root / ".allmight").is_dir():
+        click.echo(
+            f"error: {project_root} is not an All-Might project "
+            "(no .allmight/). Run 'allmight init' first.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    bundle_path = P(bundle_dir).resolve()
+    try:
+        result = publish_bundle(
+            bundle_path, git_url, message=message, branch=branch,
+        )
+    except GitShareError as exc:
+        click.echo(f"error: {exc}", err=True)
+        raise SystemExit(1)
+
+    # Persist the upstream pointer keyed by personality name (read
+    # from the bundle manifest).
+    import yaml as _yaml
+    manifest = _yaml.safe_load(
+        (bundle_path / "manifest.yaml").read_text()
+    ) or {}
+    name = manifest.get("personality_name") or bundle_path.name
+    records = read_upstream(project_root)
+    rec = records.get(name) or UpstreamRecord()
+    rec.upstream = git_url
+    rec.last_published_bundle_id = result.bundle_id
+    rec.last_published_at = (
+        datetime.now(tz=_tz.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
+    records[name] = rec
+    write_upstream(project_root, records)
+
+    click.echo(
+        f"All-Might! Published '{name}' ({result.files_pushed} files) "
+        f"to {git_url} on branch {result.pushed_to_branch}."
+    )
+    if result.bundle_id:
+        click.echo(f"  bundle_id: {result.bundle_id}")
+
+
+@share.command("pull")
+@click.argument("git_url")
+@click.option("--as", "as_name", default=None,
+              help="Install the pulled personality under this name.")
+@click.option("--force", is_flag=True,
+              help="Overwrite an existing personality of the same name.")
+def share_pull(git_url: str, as_name: str | None, force: bool) -> None:
+    """Clone a bundle from a git remote and import it.
+
+    Equivalent to: ``git clone <url> <tmp> && allmight import <tmp>``,
+    plus persisting the upstream URL in ``.allmight/upstream.yaml``.
+    """
+    import shutil as _shutil
+    import tempfile as _tempfile
+    from datetime import datetime, timezone as _tz
+    from pathlib import Path as P
+
+    from .share.git_share import (
+        GitShareError,
+        UpstreamRecord,
+        pull_to_temp,
+        read_upstream,
+        write_upstream,
+    )
+
+    project_root = P(".").resolve()
+    if not (project_root / ".allmight").is_dir():
+        click.echo(
+            f"error: {project_root} is not an All-Might project "
+            "(no .allmight/). Run 'allmight init' first.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    tmpdir = P(_tempfile.mkdtemp(prefix="allmight-pull-"))
+    try:
+        try:
+            clone_dest = pull_to_temp(git_url, tmpdir / "bundle")
+        except GitShareError as exc:
+            click.echo(f"error: {exc}", err=True)
+            raise SystemExit(1)
+
+        # Reuse the existing import command's body via Click's
+        # invocation API.
+        ctx = click.get_current_context()
+        import_args = ["import", str(clone_dest)]
+        if as_name:
+            import_args.extend(["--as", as_name])
+        if force:
+            import_args.append("--force")
+        # Run the import command in the same Click context so error
+        # exits propagate; SystemExit is caught and re-raised.
+        sub = main.get_command(ctx, "import")
+        assert sub is not None, "import command must be registered"
+        try:
+            ctx.invoke(sub, bundle=str(clone_dest), as_name=as_name,
+                       force=force)
+        except SystemExit:
+            raise
+
+        # Read bundle_id from manifest for upstream record.
+        import yaml as _yaml
+        manifest = _yaml.safe_load(
+            (clone_dest / "manifest.yaml").read_text()
+        ) or {}
+        name = manifest.get("personality_name") or "(unknown)"
+        bundle_id = str(manifest.get("bundle_id") or "")
+
+        records = read_upstream(project_root)
+        rec = records.get(as_name or name) or UpstreamRecord()
+        rec.upstream = git_url
+        rec.last_pulled_bundle_id = bundle_id
+        rec.last_pulled_at = (
+            datetime.now(tz=_tz.utc)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z")
+        )
+        records[as_name or name] = rec
+        write_upstream(project_root, records)
+
+        click.echo(
+            f"  Recorded upstream: {git_url}"
+        )
+    finally:
+        _shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ------------------------------------------------------------------
 # Clone
 # ------------------------------------------------------------------
 
