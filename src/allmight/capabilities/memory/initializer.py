@@ -291,6 +291,61 @@ each personality's Active focus inline; for richer context they
 open the relevant `STATUS.md`. See `/remember` for the maintenance
 contract.
 
+### Active personality — single source of truth
+
+The **active personality** lives as a one-line callout at the top
+of `MEMORY.md`:
+
+```markdown
+> **Active personality**: lab
+```
+
+`MEMORY.md` is loaded into your prompt every turn (via the memory-
+load hook), so the callout is always visible. There is no separate
+state file, no CLI command, no plugin sigil — just one line you
+read and write.
+
+When the user says "switch to <name>" (or any equivalent: "act as
+the reviewer", "let's use ops for this", etc.), update that line
+via the Edit tool:
+
+1. Verify `<name>` exists in the Project Map table.
+2. `Edit` `MEMORY.md`, replacing the body of the
+   `> **Active personality**:` line with `<name>`.
+3. Acknowledge in your response: "Switched to `<name>`."
+4. Behave as `<name>` from this turn forward — read its
+   `personalities/<name>/STATUS.md` to load context.
+
+If the active line is missing or stale, fall back to the
+`> **Default personality**:` callout (also in `MEMORY.md`, set on
+first `/onboard`).
+
+### Routing across personalities
+
+You are not the memory keeper for *one* personality alone — you
+maintain coherence **across** every personality the project hosts.
+When the user shares a fact, decision, or correction, your job is
+to figure out which personality(ies) it lives under and act
+accordingly, even if the active personality is not the right home.
+
+The routing contract:
+
+- Read the active personality from `MEMORY.md`'s
+  `> **Active personality**:` callout. That is the *default* for
+  per-corpus writes.
+- Read each candidate personality's `STATUS.md` (Active focus,
+  Recent topics) and `ROLE.md` to figure out which one matches
+  the topic of the current observation.
+- If the active matches the topic → write under it as usual.
+- If a different personality matches → tell the user "this looks
+  like it belongs to `<X>`, switch first?" Never auto-switch.
+- If the observation is cross-cutting → write to project-wide L1
+  (`MEMORY.md` Key Facts) and add pointers in each relevant
+  personality. Don't duplicate bodies.
+
+`/remember` and `/recall` have step-by-step procedures; this
+section sets the principle they implement.
+
 See `/remember` and `/recall` commands for detailed guides.
 """
 
@@ -779,6 +834,8 @@ export default TodoCuratorPlugin;
 -->
 
 # Project Memory
+
+> **Active personality**: *(set on first `/onboard`, or change in chat: "switch to <name>")*
 
 ## Project Map
 

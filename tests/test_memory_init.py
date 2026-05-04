@@ -193,6 +193,48 @@ class TestMemoryInitializer:
         assert "Active focus" in body
         assert "Personality" in body
 
+    # -- Part-F: active personality via MEMORY.md callout ------------
+    # The active personality is a one-line callout at the top of
+    # MEMORY.md. No state file, no CLI, no plugin sigil — the agent
+    # reads and writes the callout via the existing memory-load hook
+    # + Edit tool. Plain language ("switch to lab") triggers the
+    # update; no special syntax required.
+
+    def test_l1_template_has_active_personality_callout(self, project_root):
+        """Fresh init's MEMORY.md carries the Active personality
+        callout. /onboard or first switch fills in the value.
+        """
+        MemoryInitializer().initialize(project_root)
+        body = (project_root / "MEMORY.md").read_text()
+        assert "**Active personality**" in body
+        # Callout style: blockquote starting with > on its own line.
+        assert "> **Active personality**" in body
+
+    def test_role_md_documents_active_personality_callout(
+        self, project_root, tmp_path,
+    ):
+        """Memory keeper ROLE.md teaches the agent the callout
+        convention: read from MEMORY.md, write via Edit tool, no
+        state file."""
+        instance_root = tmp_path / "personalities" / "demo"
+        MemoryInitializer().initialize(
+            project_root, instance_root=instance_root,
+        )
+        body = (instance_root / "ROLE.md").read_text()
+        assert "Active personality" in body
+        # The role explains how to switch — via Edit on MEMORY.md,
+        # not a CLI or state file.
+        assert "Edit" in body
+        assert "MEMORY.md" in body
+        # Explicit anti-state-file framing so future edits don't
+        # accidentally reintroduce the discarded design.
+        lower = body.lower()
+        assert (
+            "no separate state file" in lower
+            or "no state file" in lower
+            or "no cli command" in lower
+        )
+
     def test_creates_smak_config(self, project_root):
         """SMAK config generated for journal index."""
         MemoryInitializer().initialize(project_root)
