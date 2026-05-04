@@ -952,6 +952,56 @@ list of preferred CLI flags, naming conventions), create
 `<kind>/<workspace>.md` naming as `understanding/`. No new directory
 needs to be declared up front.
 
+## Routing across personalities
+
+If this project has more than one personality, also ask: **which
+personality** does this knowledge belong to? Bookkeeping the right
+home for each fact is one of the reasons the user trusts the agent
+as a secretary — don't shortcut it.
+
+1. **Read the active personality** from `MEMORY.md`'s
+   `> **Active personality**:` callout (loaded into your prompt
+   every turn). That's the *default* per-corpus scope.
+2. **Read each candidate personality's `STATUS.md`** (Active focus
+   + Recent topics). The topic of the current observation usually
+   lines up with one personality's recent activity.
+3. **If the active personality matches the topic** → write under
+   it as usual.
+4. **If a *different* personality matches better** → don't silently
+   write into the wrong one. Tell the user:
+
+   > "This looks like it belongs to `<X>`, not the active `<Y>`.
+   > Want me to switch first?"
+
+   Wait for confirmation. If they say yes, **`Edit` `MEMORY.md`**
+   to set the callout to `<X>`, then proceed with the write.
+   Never auto-switch without asking.
+5. **If the observation is genuinely cross-cutting** (a decision
+   that affects multiple personalities), write the canonical fact
+   to project-wide L1 (`MEMORY.md` → Key Facts) and add a one-line
+   pointer in each relevant personality's
+   `understanding/<topic>.md`. Don't duplicate the body — pointer
+   only.
+
+This routing rule is **soft** by design: you suggest, the user
+confirms. Auto-switching without the user's intent is a debugging
+trap.
+
+### Switching mid-conversation
+
+If the user says "switch to <name>" (or any equivalent — "act as
+the reviewer", "let's use ops for this"), do this:
+
+1. Verify `<name>` is in `MEMORY.md`'s Project Map.
+2. `Edit` `MEMORY.md`, replacing the body of the
+   `> **Active personality**:` callout with `<name>`.
+3. Acknowledge: "Switched to `<name>`."
+4. Read `personalities/<name>/STATUS.md` to load context.
+
+That's the whole protocol. No state file, no CLI command, no
+plugin parsing. The callout is loaded into every prompt via the
+memory-load hook so the next turn already sees the new value.
+
 ## Lesson Learned (Mode-2 shared instance)
 
 When this All-Might project is shared across a team via a common NFS
@@ -1302,6 +1352,23 @@ content, and relevance score.
 - Before making assumptions about user preferences.
 - When facing a problem that seems familiar.
 - When the user asks "did we discuss X before?" (step 4).
+
+## Switch hint — when results live under a different personality
+
+If the active personality (from `MEMORY.md`'s
+`> **Active personality**:` callout) is `<Y>` but the most relevant
+`/recall` results are in `<X>`'s journal/understanding, surface
+this to the user *before* showing the full results:
+
+> "Top hits are from `<X>`, not the active `<Y>`. Switch to `<X>`
+> for full context?"
+
+This is a **hint, not an action**. You never auto-switch. If the
+user accepts, `Edit` `MEMORY.md` to update the callout to `<X>`
+and proceed with the recall in that personality's context.
+
+If results are split roughly equally across personalities, present
+them grouped by personality and let the user pick.
 
 ## After recalling
 

@@ -235,6 +235,60 @@ class TestMemoryInitializer:
             or "no cli command" in lower
         )
 
+    # -- Part-F/4: cross-personality routing intelligence --------------
+
+    def test_remember_body_has_routing_across_personalities(
+        self, project_root,
+    ):
+        """/remember body documents how to choose which personality
+        a write belongs to, and how to switch via Edit on MEMORY.md.
+        """
+        MemoryInitializer().initialize(project_root)
+        body = (
+            project_root / ".opencode" / "commands" / "remember.md"
+        ).read_text()
+        assert "Routing across personalities" in body
+        # Must reference the MEMORY.md callout (not the dropped state file).
+        assert "Active personality" in body
+        assert "MEMORY.md" in body
+        # Switching mechanism: Edit tool, not CLI.
+        assert "Edit" in body
+        assert "switch to" in body.lower() or "Switching" in body
+        # Cross-cutting hint mentions L1 + pointer pattern.
+        assert "Key Facts" in body or "project-wide" in body.lower()
+
+    def test_remember_body_does_not_reference_dropped_state_file(
+        self, project_root,
+    ):
+        """The dropped state-file design (`.allmight/active-personality`)
+        and CLI (`allmight switch`) must not leak into /remember.
+        Catches accidental reintroduction during merges."""
+        MemoryInitializer().initialize(project_root)
+        body = (
+            project_root / ".opencode" / "commands" / "remember.md"
+        ).read_text()
+        assert ".allmight/active-personality" not in body
+        assert "allmight switch" not in body
+
+    def test_recall_body_has_switch_hint(self, project_root):
+        """/recall body teaches the agent to surface a switch
+        suggestion when results are concentrated in a different
+        personality."""
+        MemoryInitializer().initialize(project_root)
+        body = (
+            project_root / ".opencode" / "commands" / "recall.md"
+        ).read_text()
+        assert "Switch hint" in body or "switch hint" in body.lower()
+        # Must explicitly say it does NOT auto-switch.
+        lower = body.lower()
+        assert (
+            "auto-switch" in lower or "never auto" in lower
+            or "hint, not an action" in lower
+        )
+        # Switching mechanism: Edit on MEMORY.md.
+        assert "Edit" in body
+        assert "MEMORY.md" in body
+
     def test_creates_smak_config(self, project_root):
         """SMAK config generated for journal index."""
         MemoryInitializer().initialize(project_root)
