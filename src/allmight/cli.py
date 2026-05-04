@@ -496,16 +496,22 @@ def list_personalities() -> None:
 @click.option("--as", "as_name", default=None,
               help="Install the bundled personality under this new name "
                    "(instead of the manifest's personality_name).")
-@click.option("--force", is_flag=True,
-              help="Overwrite an existing personality of the same name.")
-def import_personality(bundle: str, as_name: str | None, force: bool) -> None:
-    """Restore a personality bundle into the current All-Might project.
+def import_personality(bundle: str, as_name: str | None) -> None:
+    """Restore a single personality bundle into the current All-Might project.
 
-    Reads ``manifest.yaml`` from the bundle, runs each named
-    capability's install hook (so the on-disk structure conforms to
-    the receiving project's allmight version), and copies the
-    bundle's data into ``personalities/<name>/``. Vector indices
-    (``store/``) are not in bundles; rebuild via ``/ingest`` afterward.
+    Mechanical, single-bundle install — the thin path for CI,
+    scripting, and fresh-project bootstrap. Reads ``manifest.yaml``
+    from the bundle, runs each named capability's install hook (so the
+    on-disk structure conforms to the receiving project's ``allmight``
+    version), and copies the bundle's data into
+    ``personalities/<name>/``. Vector indices (``store/``) are not in
+    bundles; rebuild via ``/ingest`` afterward.
+
+    If the target name already exists, this command fails. Anything
+    requiring merge — multiple bundles, fold-into-existing,
+    in-project consolidation — belongs to ``/all-for-one`` (the skill
+    invoked from the agent), which can dialog through the per-file
+    decisions a CLI flag cannot capture.
     """
     from pathlib import Path as P
     import shutil
@@ -513,6 +519,7 @@ def import_personality(bundle: str, as_name: str | None, force: bool) -> None:
     import yaml as _yaml
 
     from .core.personalities import (
+        DerivedFrom,
         InstallContext,
         Personality,
         RegistryEntry,
@@ -596,10 +603,14 @@ def import_personality(bundle: str, as_name: str | None, force: bool) -> None:
     target_root = project_root / "personalities" / target_name
     existing_entries = read_registry(project_root)
     existing_names = {e.instance for e in existing_entries}
-    if (target_root.exists() or target_name in existing_names) and not force:
+    if target_root.exists() or target_name in existing_names:
         click.echo(
             f"error: personality '{target_name}' already exists. "
-            "Use --force to overwrite.",
+            "To merge this bundle into it (or combine with other "
+            "sources), run /all-for-one in the agent — that skill "
+            "handles per-file conflicts and ROLE.md prose "
+            "reconciliation. To install under a different fresh "
+            "name, retry with '--as <new-name>'.",
             err=True,
         )
         raise SystemExit(1)
@@ -625,7 +636,7 @@ def import_personality(bundle: str, as_name: str | None, force: bool) -> None:
         project_root=project_root,
         manifest=project_manifest,
         staging=False,
-        force=force,
+        force=False,
     )
     instance = Personality(
         template=selected[0],
@@ -656,28 +667,37 @@ def import_personality(bundle: str, as_name: str | None, force: bool) -> None:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
 
-    conflicts = compose(project_root, instance, force=force)
+    conflicts = compose(project_root, instance, force=False)
     stage_compose_conflicts(project_root, conflicts)
 
-    # Lineage: capture bundle_id / bundle_version from manifest. Empty
-    # strings when the bundle was produced by a pre-Part-E exporter.
+    # Lineage: capture bundle_id / bundle_version from manifest into a
+    # single-entry derived_from list. Empty when the bundle predates
+    # the lineage schema; in that case we still record an empty
+    # ``derived_from`` so re-export by ``/one-for-all`` produces a
+    # well-formed manifest.
     bundle_id = str(manifest_data.get("bundle_id") or "")
     bundle_version = str(manifest_data.get("bundle_version") or "")
     from datetime import datetime, timezone as _tz
-    imported_at_iso = (
+    derived_at_iso = (
         datetime.now(tz=_tz.utc)
         .isoformat(timespec="seconds")
         .replace("+00:00", "Z")
     )
+    derived_from: list[DerivedFrom] = []
+    if bundle_id:
+        derived_from.append(DerivedFrom(
+            kind="bundle",
+            bundle_id=bundle_id,
+            bundle_version=bundle_version,
+        ))
 
     new_entries = [e for e in existing_entries if e.instance != target_name]
     new_entries.append(RegistryEntry(
         instance=target_name,
         capabilities=[t.name for t in selected],
         versions={t.name: t.version for t in selected},
-        imported_from_bundle_id=bundle_id,
-        bundle_version=bundle_version,
-        imported_at=(imported_at_iso if bundle_id else ""),
+        derived_from=derived_from,
+        derived_at=(derived_at_iso if derived_from else ""),
     ))
     write_registry(project_root, new_entries)
 
@@ -722,8 +742,8 @@ def share() -> None:
     internal Gerrit/Gitea, etc). Authentication is the user's
     environment's responsibility.
 
-    Pre-built bundles come from ``/export``. The CLI is purely a
-    transport layer — it never edits memory or runs PII review.
+    Pre-built bundles come from ``/one-for-all``. The CLI is purely
+    a transport layer — it never edits memory or runs PII review.
     """
 
 
@@ -742,8 +762,8 @@ def share_publish(
     """Push a pre-built bundle directory to a git remote.
 
     Workflow:
-      1. Run /export inside Claude Code / OpenCode to produce a
-         reviewed bundle directory.
+      1. Run /one-for-all inside Claude Code / OpenCode to produce
+         a reviewed bundle directory.
       2. allmight share publish <bundle-dir> --to <git-url>
 
     The bundle dir must contain manifest.yaml. For first-time
@@ -810,13 +830,16 @@ def share_publish(
 @click.argument("git_url")
 @click.option("--as", "as_name", default=None,
               help="Install the pulled personality under this name.")
-@click.option("--force", is_flag=True,
-              help="Overwrite an existing personality of the same name.")
-def share_pull(git_url: str, as_name: str | None, force: bool) -> None:
+def share_pull(git_url: str, as_name: str | None) -> None:
     """Clone a bundle from a git remote and import it.
 
     Equivalent to: ``git clone <url> <tmp> && allmight import <tmp>``,
     plus persisting the upstream URL in ``.allmight/upstream.yaml``.
+
+    Inherits ``allmight import``'s collision behaviour: if the target
+    name already exists, the pull fails and asks the user to either
+    retry with ``--as <new-name>`` or run ``/all-for-one`` in the
+    agent to merge.
     """
     import shutil as _shutil
     import tempfile as _tempfile
@@ -849,20 +872,14 @@ def share_pull(git_url: str, as_name: str | None, force: bool) -> None:
             raise SystemExit(1)
 
         # Reuse the existing import command's body via Click's
-        # invocation API.
+        # invocation API. Collision-on-target is reported by import
+        # itself (and includes a /all-for-one redirect message); we
+        # let SystemExit propagate so the user sees the same error.
         ctx = click.get_current_context()
-        import_args = ["import", str(clone_dest)]
-        if as_name:
-            import_args.extend(["--as", as_name])
-        if force:
-            import_args.append("--force")
-        # Run the import command in the same Click context so error
-        # exits propagate; SystemExit is caught and re-raised.
         sub = main.get_command(ctx, "import")
         assert sub is not None, "import command must be registered"
         try:
-            ctx.invoke(sub, bundle=str(clone_dest), as_name=as_name,
-                       force=force)
+            ctx.invoke(sub, bundle=str(clone_dest), as_name=as_name)
         except SystemExit:
             raise
 

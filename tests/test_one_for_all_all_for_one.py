@@ -1,15 +1,25 @@
-"""``/export`` skill + ``allmight import`` CLI (Part-D commit 10).
+"""``/one-for-all`` and ``/all-for-one`` skills + ``allmight import`` CLI.
 
-Per-personality portability:
+Per-personality portability. The skill pair replaces the legacy
+``/export`` / ``allmight import`` split:
 
-* **Export** is agent-driven (PII review, per-capability rules).
-  The bundled ``/export`` skill instructs the agent how to walk a
-  chosen personality's data, apply per-capability export rules,
-  obtain user consent for sensitive content, and write a bundle.
-* **Import** is mechanical-via-CLI: ``allmight import <bundle>
-  [--as <name>]`` reads ``manifest.yaml``, runs each capability's
-  install (so the directory structure conforms to the current
-  ``allmight`` version), and copies the bundle's data into place.
+* **/one-for-all** is agent-driven (PII review, per-capability rules).
+  The bundled skill instructs the agent how to walk a chosen
+  personality's data, apply per-capability export rules, obtain user
+  consent for sensitive content, and write a directory bundle. 1
+  personality → 1 bundle.
+
+* **/all-for-one** is agent-driven (per-file dialog). The bundled
+  skill instructs the agent how to absorb N source personalities
+  (bundles or in-project) into 1 target (new or existing). It owns
+  every merge decision: workspace clashes, understanding overwrites,
+  ROLE.md prose reconciliation. N → 1.
+
+* **allmight import <bundle> [--as <name>]** is mechanical and CLI-only.
+  Reads ``manifest.yaml``, runs each capability's install (so the
+  directory structure conforms to the current ``allmight`` version),
+  and copies the bundle's data into place. Refuses on collision and
+  redirects the user to ``/all-for-one``. No ``--force`` flag.
 """
 
 from __future__ import annotations
@@ -49,7 +59,7 @@ def initted_project(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def sample_bundle(tmp_path: Path) -> Path:
-    """A minimal valid export bundle for ``stdcell_owner``."""
+    """A minimal valid bundle for ``stdcell_owner``."""
     bundle = tmp_path / "stdcell_owner-export"
     bundle.mkdir()
     (bundle / "manifest.yaml").write_text(
@@ -75,22 +85,24 @@ def sample_bundle(tmp_path: Path) -> Path:
 
 
 # -----------------------------------------------------------------------
-# /export skill content
+# /one-for-all skill content
 # -----------------------------------------------------------------------
 
 
-class TestExportSkillBody:
+class TestOneForAllSkillBody:
     def test_skill_body_imports(self) -> None:
-        from allmight.capabilities.database.export_skill_content import (
-            EXPORT_COMMAND_BODY,
-            EXPORT_SKILL_BODY,
+        from allmight.capabilities.database.one_for_all_skill_content import (
+            ONE_FOR_ALL_COMMAND_BODY,
+            ONE_FOR_ALL_SKILL_BODY,
         )
-        assert EXPORT_SKILL_BODY
-        assert EXPORT_COMMAND_BODY
+        assert ONE_FOR_ALL_SKILL_BODY
+        assert ONE_FOR_ALL_COMMAND_BODY
 
     def test_skill_body_describes_per_capability_rules(self) -> None:
-        from allmight.capabilities.database.export_skill_content import EXPORT_SKILL_BODY
-        body = EXPORT_SKILL_BODY
+        from allmight.capabilities.database.one_for_all_skill_content import (
+            ONE_FOR_ALL_SKILL_BODY,
+        )
+        body = ONE_FOR_ALL_SKILL_BODY
         # database/ rules
         assert "database" in body
         assert "config.yaml" in body
@@ -101,32 +113,144 @@ class TestExportSkillBody:
         assert "MEMORY.md" in body
 
     def test_skill_body_describes_pii_review(self) -> None:
-        from allmight.capabilities.database.export_skill_content import EXPORT_SKILL_BODY
-        body_lower = EXPORT_SKILL_BODY.lower()
+        from allmight.capabilities.database.one_for_all_skill_content import (
+            ONE_FOR_ALL_SKILL_BODY,
+        )
+        body_lower = ONE_FOR_ALL_SKILL_BODY.lower()
         assert "pii" in body_lower or "sensitive" in body_lower
         assert "consent" in body_lower or "ask" in body_lower
 
     def test_skill_body_describes_manifest(self) -> None:
-        from allmight.capabilities.database.export_skill_content import EXPORT_SKILL_BODY
-        body = EXPORT_SKILL_BODY
+        from allmight.capabilities.database.one_for_all_skill_content import (
+            ONE_FOR_ALL_SKILL_BODY,
+        )
+        body = ONE_FOR_ALL_SKILL_BODY
         assert "manifest.yaml" in body
         assert "allmight_version" in body
         assert "personality_name" in body
         assert "capabilities" in body
 
+    def test_skill_body_cardinality_callout(self) -> None:
+        """The skill body must explicitly state the 1→1 cardinality and
+        point to /all-for-one for the inverse, so an agent reading it
+        cold knows when to switch surfaces."""
+        from allmight.capabilities.database.one_for_all_skill_content import (
+            ONE_FOR_ALL_SKILL_BODY,
+        )
+        body = ONE_FOR_ALL_SKILL_BODY
+        assert "1 personality" in body or "one personality" in body.lower()
+        assert "/all-for-one" in body
 
-class TestExportSkillIsInstalled:
-    def test_export_skill_present_after_init(self, initted_project: Path) -> None:
-        skill = initted_project / ".opencode" / "skills" / "export" / "SKILL.md"
+
+class TestOneForAllSkillIsInstalled:
+    def test_skill_present_after_init(self, initted_project: Path) -> None:
+        skill = initted_project / ".opencode" / "skills" / "one-for-all" / "SKILL.md"
         assert skill.exists()
 
-    def test_export_command_present_after_init(self, initted_project: Path) -> None:
-        cmd = initted_project / ".opencode" / "commands" / "export.md"
+    def test_command_present_after_init(self, initted_project: Path) -> None:
+        cmd = initted_project / ".opencode" / "commands" / "one-for-all.md"
+        assert cmd.exists()
+
+    def test_legacy_export_files_absent(self, initted_project: Path) -> None:
+        """The renamed surface must fully replace the old one — no
+        ``export/SKILL.md`` or ``export.md`` lingering after init."""
+        assert not (initted_project / ".opencode" / "skills" / "export").exists()
+        assert not (initted_project / ".opencode" / "commands" / "export.md").exists()
+
+
+# -----------------------------------------------------------------------
+# /all-for-one skill content
+# -----------------------------------------------------------------------
+
+
+class TestAllForOneSkillBody:
+    def test_skill_body_imports(self) -> None:
+        from allmight.capabilities.database.all_for_one_skill_content import (
+            ALL_FOR_ONE_COMMAND_BODY,
+            ALL_FOR_ONE_SKILL_BODY,
+        )
+        assert ALL_FOR_ONE_SKILL_BODY
+        assert ALL_FOR_ONE_COMMAND_BODY
+
+    def test_skill_body_describes_source_kinds(self) -> None:
+        """Sources can be bundles or in-project personalities; the
+        skill body must teach the agent both."""
+        from allmight.capabilities.database.all_for_one_skill_content import (
+            ALL_FOR_ONE_SKILL_BODY,
+        )
+        body = ALL_FOR_ONE_SKILL_BODY
+        assert "bundle" in body.lower()
+        assert "in-project" in body.lower() or "personality name" in body.lower()
+
+    def test_skill_body_describes_target_kinds(self) -> None:
+        """Targets can be a new name or an existing personality."""
+        from allmight.capabilities.database.all_for_one_skill_content import (
+            ALL_FOR_ONE_SKILL_BODY,
+        )
+        body = ALL_FOR_ONE_SKILL_BODY
+        assert "new" in body.lower()
+        assert "existing" in body.lower()
+
+    def test_skill_body_describes_per_capability_merge(self) -> None:
+        from allmight.capabilities.database.all_for_one_skill_content import (
+            ALL_FOR_ONE_SKILL_BODY,
+        )
+        body = ALL_FOR_ONE_SKILL_BODY
+        # database workspace merge
+        assert "workspace" in body.lower()
+        assert "config.yaml" in body
+        # store/ never copied
+        assert "store" in body
+        # memory: understanding (per-file) and journal (append/dedupe)
+        assert "understanding" in body
+        assert "journal" in body
+        assert "dedupe" in body.lower() or "deduplicate" in body.lower()
+        # ROLE.md prose merge
+        assert "ROLE.md" in body
+        assert "confirm" in body.lower()
+
+    def test_skill_body_describes_registry_update(self) -> None:
+        """The skill must teach the agent to write a ``derived_from``
+        list with one entry per source."""
+        from allmight.capabilities.database.all_for_one_skill_content import (
+            ALL_FOR_ONE_SKILL_BODY,
+        )
+        body = ALL_FOR_ONE_SKILL_BODY
+        assert "derived_from" in body
+        assert "kind: bundle" in body
+        assert "kind: personality" in body
+
+    def test_skill_body_describes_source_disposition(self) -> None:
+        """In-project sources default to ``keep`` (git-merge --squash
+        style), with a yes/no prompt for removal."""
+        from allmight.capabilities.database.all_for_one_skill_content import (
+            ALL_FOR_ONE_SKILL_BODY,
+        )
+        body = ALL_FOR_ONE_SKILL_BODY
+        assert "keep" in body.lower()
+        assert "remove" in body.lower()
+
+    def test_skill_body_cardinality_callout(self) -> None:
+        from allmight.capabilities.database.all_for_one_skill_content import (
+            ALL_FOR_ONE_SKILL_BODY,
+        )
+        body = ALL_FOR_ONE_SKILL_BODY
+        assert "N" in body
+        assert "/one-for-all" in body
+
+
+class TestAllForOneSkillIsInstalled:
+    def test_skill_present_after_init(self, initted_project: Path) -> None:
+        skill = initted_project / ".opencode" / "skills" / "all-for-one" / "SKILL.md"
+        assert skill.exists()
+
+    def test_command_present_after_init(self, initted_project: Path) -> None:
+        cmd = initted_project / ".opencode" / "commands" / "all-for-one.md"
         assert cmd.exists()
 
 
 # -----------------------------------------------------------------------
-# allmight import CLI
+# allmight import CLI (single-bundle thin path)
 # -----------------------------------------------------------------------
 
 
@@ -184,13 +308,27 @@ class TestImportCli:
         result = _invoke_in(loose, ["import", str(sample_bundle)])
         assert result.exit_code != 0
 
-    def test_duplicate_name_without_force_errors(
+    def test_duplicate_name_redirects_to_all_for_one(
         self, initted_project: Path, sample_bundle: Path,
     ) -> None:
+        """Collision behaviour replaces the old ``--force`` flag: import
+        always refuses on collision and the error must point the user
+        at ``/all-for-one`` (the surface that can dialog through merges).
+        """
         first = _invoke_in(initted_project, ["import", str(sample_bundle)])
         assert first.exit_code == 0
         second = _invoke_in(initted_project, ["import", str(sample_bundle)])
         assert second.exit_code != 0
+        assert "/all-for-one" in second.output
+        assert "already exists" in second.output
+
+    def test_no_force_flag(self) -> None:
+        """The ``--force`` flag was deliberately removed — ensure it
+        no longer exists on the import command."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["import", "--help"])
+        assert result.exit_code == 0
+        assert "--force" not in result.output
 
 
 def _bundle_with_subscriptions(
@@ -226,14 +364,14 @@ def _bundle_with_subscriptions(
 class TestImportDatabaseSubscriptions:
     """Manifest schema v2: database_subscriptions field."""
 
-    def test_export_skill_documents_subscriptions_field(self) -> None:
-        from allmight.capabilities.database.export_skill_content import (
-            EXPORT_SKILL_BODY,
+    def test_skill_documents_subscriptions_field(self) -> None:
+        from allmight.capabilities.database.one_for_all_skill_content import (
+            ONE_FOR_ALL_SKILL_BODY,
         )
         # Manifest example must show the new field, and the procedure
         # must include the populate step (5b).
-        assert "database_subscriptions" in EXPORT_SKILL_BODY
-        assert "5b" in EXPORT_SKILL_BODY or "Populate" in EXPORT_SKILL_BODY
+        assert "database_subscriptions" in ONE_FOR_ALL_SKILL_BODY
+        assert "5b" in ONE_FOR_ALL_SKILL_BODY or "Populate" in ONE_FOR_ALL_SKILL_BODY
 
     def test_import_warns_on_missing_required_subscription(
         self, initted_project: Path, tmp_path: Path,
@@ -288,14 +426,19 @@ def _bundle_with_lineage(
     *,
     bundle_id: str,
     bundle_version: str = "0.1.0",
-    derived_from: list[str] | None = None,
+    derived_from: list[dict] | None = None,
 ) -> Path:
-    """Build a bundle whose manifest carries Part-E lineage fields."""
+    """Build a bundle whose manifest carries lineage fields.
+
+    ``derived_from`` is the schema_version 3 shape: a list of
+    ``{kind, ...}`` dicts. Each entry is either ``{kind: bundle,
+    bundle_id, bundle_version}`` or ``{kind: personality, name}``.
+    """
     bundle = base / "stdcell_owner-export"
     bundle.mkdir()
     manifest = {
         "allmight_version": "0.1.0",
-        "schema_version": 2,
+        "schema_version": 3,
         "personality_name": "stdcell_owner",
         "bundle_id": bundle_id,
         "bundle_version": bundle_version,
@@ -315,14 +458,17 @@ def _bundle_with_lineage(
 
 
 class TestBundleLineage:
-    """Manifest schema v2: bundle_id, bundle_version, derived_from."""
+    """Manifest lineage: bundle_id, bundle_version, derived_from."""
 
-    def test_export_skill_documents_lineage_fields(self) -> None:
-        from allmight.capabilities.database.export_skill_content import (
-            EXPORT_SKILL_BODY,
+    def test_skill_documents_lineage_fields(self) -> None:
+        from allmight.capabilities.database.one_for_all_skill_content import (
+            ONE_FOR_ALL_SKILL_BODY,
         )
         for token in ("bundle_id", "bundle_version", "derived_from"):
-            assert token in EXPORT_SKILL_BODY, f"missing {token}"
+            assert token in ONE_FOR_ALL_SKILL_BODY, f"missing {token}"
+        # Schema v3 shape must be documented (per-source kind tags).
+        assert "kind: bundle" in ONE_FOR_ALL_SKILL_BODY
+        assert "kind: personality" in ONE_FOR_ALL_SKILL_BODY
 
     def test_import_records_lineage_in_registry(
         self, initted_project: Path, tmp_path: Path,
@@ -342,17 +488,21 @@ class TestBundleLineage:
                 if (r.get("name") or r.get("instance")) == "stdcell_owner"]
         assert rows, "personality row missing from registry"
         row = rows[0]
-        assert row["imported_from_bundle_id"] == \
-            "7c4f3a2e-1111-2222-3333-444455556666"
-        assert row["bundle_version"] == "1.2.3"
-        assert row["imported_at"], "imported_at should be populated"
+        derived_from = row["derived_from"]
+        assert isinstance(derived_from, list) and len(derived_from) == 1
+        src = derived_from[0]
+        assert src["kind"] == "bundle"
+        assert src["bundle_id"] == "7c4f3a2e-1111-2222-3333-444455556666"
+        assert src["bundle_version"] == "1.2.3"
+        assert row["derived_at"], "derived_at should be populated"
 
     def test_legacy_bundle_does_not_pollute_registry_with_empty_keys(
         self, initted_project: Path, sample_bundle: Path,
     ) -> None:
         # sample_bundle has no lineage fields. The registry row must
-        # NOT carry imported_from_bundle_id / bundle_version / imported_at
-        # as empty strings — they should be omitted entirely.
+        # NOT carry derived_from / derived_at as empty values — they
+        # should be omitted entirely so locally-created (or
+        # legacy-imported) personalities have a clean row.
         _invoke_in(initted_project, ["import", str(sample_bundle)])
         registry = yaml.safe_load(
             (initted_project / ".allmight" / "personalities.yaml").read_text()
@@ -361,7 +511,7 @@ class TestBundleLineage:
                 if (r.get("name") or r.get("instance")) == "stdcell_owner"]
         assert rows
         row = rows[0]
-        for key in ("imported_from_bundle_id", "bundle_version", "imported_at"):
+        for key in ("derived_from", "derived_at"):
             assert key not in row, (
                 f"legacy import should not emit {key} in registry"
             )
@@ -384,7 +534,9 @@ class TestBundleLineage:
             (e for e in entries if e.instance == "stdcell_owner"), None,
         )
         assert match is not None
-        assert match.imported_from_bundle_id == \
-            "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-        assert match.bundle_version == "2.0.0"
-        assert match.imported_at
+        assert len(match.derived_from) == 1
+        src = match.derived_from[0]
+        assert src.kind == "bundle"
+        assert src.bundle_id == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        assert src.bundle_version == "2.0.0"
+        assert match.derived_at

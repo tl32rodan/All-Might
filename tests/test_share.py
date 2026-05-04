@@ -160,8 +160,8 @@ class TestPublishBundleLibrary:
         url = f"file://{tmp_path}/team.git"
         publish_bundle(sample_bundle, url, message="v1")
 
-        # Modify the bundle (simulate a second /export with new
-        # content) and re-publish.
+        # Modify the bundle (simulate a second /one-for-all with
+        # new content) and re-publish.
         (sample_bundle / "ROLE.md").write_text(
             "<!-- all-might generated -->\n# stdcell_owner\nUpdated.\n",
         )
@@ -226,13 +226,18 @@ class TestShareCli:
         assert result.exit_code == 0, result.output
         target = initted_project / "personalities" / "stdcell_owner"
         assert (target / "ROLE.md").is_file()
-        # Lineage propagated.
+        # Lineage propagated as a single-entry derived_from list
+        # (kind=bundle), matching the schema_version 3 registry shape.
         registry = yaml.safe_load(
             (initted_project / ".allmight" / "personalities.yaml").read_text()
         )
         rows = [r for r in registry["personalities"]
                 if (r.get("name") or r.get("instance")) == "stdcell_owner"]
-        assert rows[0]["imported_from_bundle_id"] == \
+        derived_from = rows[0]["derived_from"]
+        assert isinstance(derived_from, list) and len(derived_from) == 1
+        src = derived_from[0]
+        assert src["kind"] == "bundle"
+        assert src["bundle_id"] == \
             "11111111-2222-3333-4444-555555555555"
         # Upstream YAML records the pull.
         records = read_upstream(initted_project)

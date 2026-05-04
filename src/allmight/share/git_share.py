@@ -3,7 +3,7 @@
 Two operations:
 
 * :func:`publish_bundle` — take an existing bundle dir (produced by
-  ``/export``) and push it to a git URL.
+  ``/one-for-all``) and push it to a git URL.
 * :func:`pull_to_temp` — clone a git URL to a temp dir so the caller
   can run ``allmight import`` against the cloned tree.
 
@@ -184,7 +184,7 @@ def publish_bundle(
     message: str | None = None,
     branch: str = "main",
 ) -> PublishResult:
-    """Push *bundle_dir* (a directory produced by ``/export``) to *git_url*.
+    """Push *bundle_dir* (a directory produced by ``/one-for-all``) to *git_url*.
 
     The bundle is copied into a fresh clone of the remote, committed,
     and pushed to *branch*. If the remote is a local bare-repo path

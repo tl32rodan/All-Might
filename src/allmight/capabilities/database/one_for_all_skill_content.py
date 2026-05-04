@@ -1,30 +1,42 @@
-"""Bundled /export skill and command content (Part-D commit 10).
+"""Bundled ``/one-for-all`` skill and command content.
 
-``/export`` is agent-driven because export decisions are
-inherently judgement calls — what counts as PII, what's worth
-sharing — and have to be confirmed with the user. The skill body
-is the procedure the agent follows to walk one personality's
-data, apply per-capability rules, obtain consent, and write a
-portable bundle that ``allmight import`` can later restore.
+``/one-for-all`` is the agent-driven personality export skill. Named
+after All-Might's iconic quirk, which transfers one being's power to
+a chosen successor — the cardinality is **1 personality → 1 bundle**.
+The complementary ``/all-for-one`` skill handles the inverse,
+many-to-one absorption.
+
+Export remains agent-driven (rather than a CLI command) because the
+decisions are inherently judgement calls — what counts as PII, what's
+worth sharing — and have to be confirmed with the user. The skill body
+is the procedure the agent follows to walk one personality's data,
+apply per-capability rules, obtain consent, and write a portable
+bundle that ``allmight import`` (single-bundle install) or
+``/all-for-one`` (merge) can later restore.
 
 Why ``database`` owns it: same reason it owns ``/onboard`` — a
-cross-capability skill needs one home, and ``database`` is the
-lead capability during bootstrap. (The skill itself iterates over
-every capability the chosen personality has installed.)
+cross-capability skill needs one home, and ``database`` is the lead
+capability during bootstrap. (The skill itself iterates over every
+capability the chosen personality has installed.)
 """
 
-EXPORT_SKILL_BODY = """\
-# Export — bundle a personality for transfer to another project
+ONE_FOR_ALL_SKILL_BODY = """\
+# One For All — bundle a personality for transfer to another project
 
-> Run this skill when the user asks to export a personality. The
-> agent applies per-capability export rules, asks for consent on
-> sensitive content, and writes a directory bundle that
-> ``allmight import`` can later restore in another project.
+> Run this skill when the user asks to export a personality (e.g.
+> "export stdcell_owner", "share my pll_owner"). The agent applies
+> per-capability export rules, asks for consent on sensitive content,
+> and writes a directory bundle that ``allmight import`` or
+> ``/all-for-one`` can later restore.
+>
+> Cardinality: **one personality → one bundle**. To absorb multiple
+> sources into one personality, use ``/all-for-one`` (the inverse
+> skill).
 
 ## When to use
 
 - The user explicitly asks: "export ``stdcell_owner``", "share my
-  pll_owner with the other team", etc.
+  pll_owner with the other team", "one-for-all stdcell_owner", etc.
 - Before deleting a project but wanting to keep one personality.
 
 ## Procedure
@@ -91,12 +103,16 @@ Layout:
 
 ```yaml
 allmight_version: '<current package version>'
-schema_version: 2
+schema_version: 3
 personality_name: <name>
 bundle_id: <fresh uuid4>               # generated at every export
 bundle_version: 0.1.0                  # semver of THIS bundle's content
-derived_from:                          # bundle_ids this is forked/derived from
-  - <prior_bundle_id>                  # carried over from the registry on re-export
+derived_from:                          # source descriptors this bundle was built from
+  - kind: bundle                       # entry per prior bundle ancestor
+    bundle_id: <prior_bundle_id>
+    bundle_version: <prior_version>
+  - kind: personality                  # entry per in-project source (if any)
+    name: <source_personality_name>
 capabilities:
   <capname>:
     capability_version: <X.Y.Z>
@@ -118,13 +134,15 @@ database_subscriptions:                # optional; omit if no shared SMAK
   ``capability_version`` (per-capability template). When unsure, keep
   it at ``0.1.0`` — the user can bump explicitly when their bundle's
   content reaches a milestone.
-- ``derived_from``: a list of prior ``bundle_id`` strings that this
-  bundle is descended from. When exporting a personality that was
-  itself imported, read
-  ``.allmight/personalities.yaml::imported_from_bundle_id`` and add
-  it (preserving any existing entries from a multi-step lineage).
-  Personalities created locally (never imported) start with
-  ``derived_from: []``.
+- ``derived_from``: a **list of source descriptors** that this bundle
+  was built from. Each entry is either ``{kind: bundle, bundle_id,
+  bundle_version}`` (a prior bundle ancestor) or ``{kind: personality,
+  name}`` (an in-project source consumed during ``/all-for-one``).
+  When exporting a personality that was itself imported, copy the
+  ``derived_from`` list from
+  ``.allmight/personalities.yaml::derived_from`` (preserving the full
+  multi-step lineage). Personalities created locally and never derived
+  from anything start with ``derived_from: []``.
 
 Read the current ``allmight`` package version with
 ``python -c "import allmight; print(allmight.__version__)"`` (or
@@ -151,22 +169,21 @@ Procedure:
    (warn quietly).
 4. Emit one entry under ``database_subscriptions`` per
    user-confirmed index. If the user says no for every index, omit
-   the field entirely (legacy bundle shape).
+   the field entirely.
 
 If the source personality is a fully-local installation (no NFS
 sharing at all), skip this section — the manifest's
-``database_subscriptions`` stays absent, and the bundle behaves
-exactly like a Part-D bundle.
+``database_subscriptions`` stays absent.
 
 ### 6. Tell the user what you wrote
 
 Short summary:
 
-> Exported ``<name>`` to ``<path>``. Capabilities: database, memory.
-> Files included: ROLE.md, database/config.yaml, memory/understanding
-> (3 files), memory/journal (skipped — user opted out).
-> The vector index (``store/``) is not exported — re-run ``/ingest``
-> after import to rebuild it.
+> One For All! Exported ``<name>`` to ``<path>``. Capabilities:
+> database, memory. Files included: ROLE.md, database/config.yaml,
+> memory/understanding (3 files), memory/journal (skipped — user opted
+> out). The vector index (``store/``) is not exported — re-run
+> ``/ingest`` after import to rebuild it.
 
 ## Important
 
@@ -177,15 +194,19 @@ Short summary:
 - The bundle is a directory, not a tarball — keep file names
   obvious so the receiving user can inspect before importing.
 - After writing the bundle, do **not** modify the source
-  personality. Export is read-only.
+  personality. One For All is read-only with respect to its source.
 """
 
-EXPORT_COMMAND_BODY = """\
-Export a personality bundle for transfer to another All-Might project.
+ONE_FOR_ALL_COMMAND_BODY = """\
+Bundle a personality for transfer to another All-Might project.
 
 Run this command when the user asks to export a personality. The
 agent applies per-capability rules, reviews content for PII, asks
 for user consent on sensitive files, and writes a directory bundle.
+
+Named after All-Might's quirk: **one personality → one bundle**.
+For the inverse (absorb multiple sources into one personality), use
+``/all-for-one``.
 
 ## What happens
 
@@ -197,21 +218,27 @@ for user consent on sensitive files, and writes a directory bundle.
    - ``memory``: ``understanding/`` with review; ``journal/`` only
      with explicit yes; ``store/`` no.
 4. Reviews every file for PII; asks user about each hit.
-5. Writes ``manifest.yaml`` (version + capabilities) plus the
-   approved files.
+5. Writes ``manifest.yaml`` (version + capabilities + ``derived_from``
+   lineage list) plus the approved files.
 6. Prints a one-line summary of what was bundled and what was
    skipped.
 
 ## How to execute
 
-Load the ``export`` skill and follow its procedure. The skill body
-covers each step (capability rules, PII review, manifest format,
-bundle layout) and what to ask the user.
+Load the ``one-for-all`` skill and follow its procedure. The skill
+body covers each step (capability rules, PII review, manifest
+format, bundle layout) and what to ask the user.
 
 ## Receiving end
 
-Run ``allmight import <bundle>`` in the target project to restore.
-``allmight import`` re-runs each capability's install so the
-imported structure conforms to the receiving project's
-``allmight`` version, then copies the bundle's data into place.
+Two paths on the receiver side, depending on what the receiver wants
+to do:
+
+- **Single-bundle install into a fresh name** — run ``allmight
+  import <bundle>`` (CLI). Mechanical, no merge, fails if the target
+  name already exists.
+- **Merge into an existing personality, or combine multiple
+  bundles, or fold a bundle in with an existing personality** — run
+  ``/all-for-one`` (skill) in the agent. Handles per-file conflicts
+  and ROLE.md prose reconciliation.
 """

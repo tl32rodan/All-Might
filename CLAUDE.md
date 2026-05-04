@@ -38,7 +38,7 @@ When the task requires designing before coding:
 All-Might/                          ← This repo (the framework)
 ├── src/allmight/                    ← Framework source code
 │   ├── capabilities/                ← Built-in capability templates
-│   │   ├── database/                ← knowledge-graph workspaces + /search /enrich /ingest /sync /onboard /export
+│   │   ├── database/                ← knowledge-graph workspaces + /search /enrich /ingest /sync /onboard /one-for-all /all-for-one
 │   │   └── memory/                  ← L1/L2/L3 agent memory + /remember (Record + Reflect) + /recall
 │   ├── personalities/               ← Deprecation shim only — re-exports allmight.capabilities
 │   ├── bridge/                      ← SMAK CLI subprocess wrapper (internal)
@@ -47,7 +47,6 @@ All-Might/                          ← This repo (the framework)
 │   │   └── routing.py               ← ROUTING_PREAMBLE for command bodies
 │   ├── enrichment/                  ← Enrichment policy (advisory)
 │   ├── migrate/                     ← One-shot upgrader for pre-Part-C projects
-│   ├── one_for_all/                 ← Skill template generator
 │   ├── hub/                         ← Multi-workspace hub templates
 │   └── cli.py                       ← CLI entry: init, add, list, import, clone, migrate, memory
 ├── tests/                           ← Test suite
@@ -61,14 +60,14 @@ All-Might/                          ← This repo (the framework)
 | `core/personalities.py` | Capability framework: Template, Personality, registry, `compose` (downward symlinks for personality-specific entries), `compose_agents_md`, `slugify_instance_name`, `role-load.ts` scaffold |
 | `core/routing.py` | `ROUTING_PREAMBLE` prepended to every routed command body |
 | `capabilities/database/__init__.py` | TEMPLATE (cli_options for --sos/--writable; default_instance_name = `knowledge`) |
-| `capabilities/database/initializer.py` | `database/` data dir, globals in `.opencode/`, `ROLE.md`, installs `/onboard`, `/export`, `/sync` skills |
+| `capabilities/database/initializer.py` | `database/` data dir, globals in `.opencode/`, `ROLE.md`, installs `/onboard`, `/one-for-all`, `/all-for-one`, `/sync` skills |
 | `capabilities/database/onboard_skill_content.py` | The `/onboard` skill body + command body (Part-D: classify personalities, write ROLE.md, set default-personality callout) |
-| `capabilities/database/export_skill_content.py` | The `/export` skill body + command body (per-capability rules, PII review) |
+| `capabilities/database/one_for_all_skill_content.py` | The `/one-for-all` skill body + command body (1 personality → 1 bundle, PII review, manifest with `derived_from` lineage) |
+| `capabilities/database/all_for_one_skill_content.py` | The `/all-for-one` skill body + command body (N sources → 1 target, per-capability merge with dialog, ROLE.md prose reconciliation) |
 | `capabilities/memory/__init__.py` | TEMPLATE (no cli_options; default_instance_name = `memory`) |
 | `capabilities/memory/initializer.py` | MEMORY.md (L1), understanding/ (L2), journal/ (L3), `/remember` (Record + Reflect modes), `/recall`, OpenCode plugins |
 | `capabilities/database/scanner.py` | Detects languages, frameworks, proposes indices |
 | `migrate/migrator.py` | One-shot upgrader for pre-Part-C projects |
-| `one_for_all/templates/skill-base.md.j2` | The one-for-all SKILL.md |
 
 ## Personality Platform Conventions (Part D)
 
@@ -141,11 +140,30 @@ rejected before and will be rejected again.
   body has two top-level sections (`# Record` and `# Reflect`);
   the agent picks based on trigger context. Do not re-introduce
   a separate `/reflect` command.
-- **`merge` is removed.** Cross-project moves go through
-  `/export` (skill, agent-driven, with PII review) and
-  `allmight import` (CLI, mechanical via per-capability install).
-  Bundle layout: `manifest.yaml` + `ROLE.md` + per-capability
-  data dirs minus `store/`. Do not re-introduce `allmight merge`.
+- **Personality transfer is themed One For All / All For One.**
+  Cross-project moves go through three surfaces, each with a
+  specific scope:
+  - `/one-for-all` (skill, agent-driven, with PII review) — bundle
+    a single personality outward (1 → 1). Writes a directory bundle
+    with `manifest.yaml` (including a `derived_from` lineage list),
+    `ROLE.md`, and per-capability data dirs minus `store/`.
+  - `/all-for-one` (skill, agent-driven, with per-file dialog) —
+    absorb N sources (bundles or in-project personalities) into 1
+    target (new or existing). Owns all merge semantics:
+    `database/` workspace name clashes, `memory/understanding/`
+    overwrites, `memory/journal/` append + dedupe, ROLE.md prose
+    reconciliation. Records every source in the target's
+    `derived_from` registry list.
+  - `allmight import <bundle>` (CLI, mechanical) — single-bundle
+    install into a fresh target name. Refuses on collision and
+    redirects the user to `/all-for-one`. Reserved for CI /
+    scripting / fresh-project bootstrap. Has no `--force` flag —
+    overwrites and merges belong to the agent surface that can
+    dialog through them.
+
+  Do not re-introduce `allmight merge`, a CLI `--force` overwrite,
+  or a separate `/export` / `/import` skill pair — the OFA / AFO
+  asymmetry is the design.
 
 ## Architecture Layers
 
@@ -233,7 +251,8 @@ my-chip-project/                          ← One All-Might project
 │   ├── package.json                      ← @opencode-ai/plugin (init scaffold)
 │   ├── skills/
 │   │   ├── onboard/SKILL.md              ← real file (capability-written)
-│   │   ├── export/SKILL.md
+│   │   ├── one-for-all/SKILL.md
+│   │   ├── all-for-one/SKILL.md
 │   │   └── sync/SKILL.md
 │   ├── commands/
 │   │   ├── search.md                     ← real file (capability global)
@@ -242,7 +261,8 @@ my-chip-project/                          ← One All-Might project
 │   │   ├── remember.md
 │   │   ├── recall.md
 │   │   ├── onboard.md
-│   │   ├── export.md
+│   │   ├── one-for-all.md
+│   │   ├── all-for-one.md
 │   │   ├── sync.md
 │   │   └── stdcell-special.md            ← downward symlink → personalities/stdcell_owner/commands/...
 │   └── plugins/{role-load,memory-load,remember-trigger,todo-curator,trajectory-writer,usage-logger}.ts
@@ -327,14 +347,18 @@ installed.)
 allmight init [--yes] [path]                       Bootstrap: creates one personality (project-root dir name) with all capabilities.
 allmight add <name> [--capabilities a,b,c]         Add another personality with the requested capability subset.
 allmight list                                      Print a table of installed personalities.
-allmight import <bundle> [--as <new-name>]         Restore a personality bundle written by /export.
+allmight import <bundle> [--as <new-name>]         Single-bundle install (no merge). Refuses on collision and redirects to /all-for-one.
 allmight clone <source>                            Read-only clone with symlinked database/.
 allmight migrate                                   One-shot upgrade for pre-Part-C projects.
 allmight memory init / memory export               Memory-specific lifecycle.
 ```
 
-**`/export` is a skill, not a CLI command.** Export is agent-driven
-because it needs PII review and per-file consent.
+**`/one-for-all` and `/all-for-one` are skills, not CLI commands.**
+Export (one-for-all) is agent-driven because it needs PII review
+and per-file consent. Merge (all-for-one) is agent-driven because
+it needs per-file conflict dialog and ROLE.md prose reconciliation
+that no CLI flag can capture. `allmight import` exists only as the
+narrow mechanical path for the single-bundle, no-collision case.
 
 The agent calls `smak` CLI directly (taught by skills), NOT
 `allmight` wrappers.
