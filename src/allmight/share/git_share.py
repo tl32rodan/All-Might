@@ -36,8 +36,23 @@ class GitShareError(RuntimeError):
 
 
 def _run_git(args: list[str], cwd: Path | None = None) -> str:
-    """Run ``git <args>`` and return stdout. Raises on non-zero exit."""
-    cmd = ["git", *args]
+    """Run ``git <args>`` and return stdout. Raises on non-zero exit.
+
+    Bundle-transport commits are bookkeeping (publishing the same
+    reviewed bundle to a git remote), not user-authored content, so
+    they must never be GPG-signed. Signing config that requires an
+    external signer (sandboxes, signing-server setups, hardware
+    tokens) would otherwise fail every ``git commit`` here. We
+    inject ``-c commit.gpgsign=false -c tag.gpgsign=false`` for
+    every git invocation — harmless for read-only commands, and the
+    only way to opt out of a global ``commit.gpgsign = true``.
+    """
+    cmd = [
+        "git",
+        "-c", "commit.gpgsign=false",
+        "-c", "tag.gpgsign=false",
+        *args,
+    ]
     try:
         proc = subprocess.run(
             cmd,
