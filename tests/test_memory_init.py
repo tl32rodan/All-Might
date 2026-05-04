@@ -727,6 +727,76 @@ class TestOpenCodeHooks:
         assert journal.is_file()
         assert "allmight_journal" in journal.read_text()
 
+    # -- ROLE.md is write-once even under --force ----------------------
+
+    def test_role_md_is_not_overwritten_on_reinit(self, tmp_path):
+        """A ROLE.md edited by /onboard (or by hand) must survive a
+        plain re-init. Pre-fix, write_guarded saw the marker on
+        line 1 and overwrote on every init.
+        """
+        instance_root = tmp_path / "personalities" / "lab"
+        instance_root.mkdir(parents=True)
+        # First init: framework writes the starter ROLE.md.
+        MemoryInitializer().initialize(tmp_path, instance_root=instance_root)
+        role = instance_root / "ROLE.md"
+        assert role.is_file()
+        # /onboard rewrites the body; agents typically keep the marker
+        # comment on line 1.
+        role.write_text(
+            "<!-- all-might generated -->\n"
+            "# lab\n\n"
+            "You are a **PoC executor**. Brian brings ideas; together "
+            "you agree on a proof-of-concept ...\n",
+        )
+        # Re-init must NOT clobber the user-edited body.
+        MemoryInitializer().initialize(tmp_path, instance_root=instance_root)
+        assert "PoC executor" in role.read_text(), (
+            "ROLE.md was overwritten on plain re-init"
+        )
+
+    def test_role_md_is_not_overwritten_under_force(self, tmp_path):
+        """Same protection as above, but under ``--force``. This is
+        the specific regression introduced by PR #33's force plumbing
+        and surfaced in production when re-init clobbered Brian's
+        custom 'PoC executor' role description with the Memory Keeper
+        starter.
+        """
+        instance_root = tmp_path / "personalities" / "lab"
+        instance_root.mkdir(parents=True)
+        MemoryInitializer().initialize(tmp_path, instance_root=instance_root)
+        role = instance_root / "ROLE.md"
+        # Hand-edited content with the marker preserved on line 1 —
+        # the same shape /onboard produces.
+        role.write_text(
+            "<!-- all-might generated -->\n"
+            "# lab\n\n"
+            "PoC executor — researches, proposes experiment configs, "
+            "runs them, hands back reproducible results.\n",
+        )
+        MemoryInitializer().initialize(
+            tmp_path, instance_root=instance_root, force=True,
+        )
+        body = role.read_text()
+        assert "PoC executor" in body, (
+            "ROLE.md was overwritten under --force (PR #33 regression)"
+        )
+        # And the framework starter must NOT have been spliced in.
+        assert "Memory Keeper" not in body
+
+    def test_role_md_emitted_on_first_init(self, tmp_path):
+        """Sanity counter-test: ROLE.md *is* emitted when no file
+        exists. Otherwise the write-once guard is over-protective
+        and a fresh project gets no starter at all.
+        """
+        instance_root = tmp_path / "personalities" / "lab"
+        instance_root.mkdir(parents=True)
+        # No ROLE.md yet.
+        assert not (instance_root / "ROLE.md").exists()
+        MemoryInitializer().initialize(tmp_path, instance_root=instance_root)
+        role = instance_root / "ROLE.md"
+        assert role.is_file()
+        assert "Memory Keeper" in role.read_text()
+
     # -- Tier 1: regression guard for the SyncEvent.run sessionID error -
 
     def test_every_parts_unshift_sets_sessionID_and_messageID(
