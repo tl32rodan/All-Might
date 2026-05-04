@@ -118,6 +118,12 @@ class MemoryInitializer:
         (lessons / "_inbox").mkdir(parents=True, exist_ok=True)
         (lessons / "_reviewed").mkdir(parents=True, exist_ok=True)
 
+        # 4e. Personality STATUS.md (Part-F): rolling per-personality
+        # state (active focus, recent topics, open threads, last
+        # activity). Maintained by /remember; the framework only
+        # writes the empty starter on first init.
+        self._write_status_md()
+
         # 5. Generate memory commands (remember, recall, reflect)
         self._generate_memory_commands(root, force=force)
 
@@ -267,6 +273,78 @@ per-corpus, or a historical log before choosing where to write it.
 
 When unsure, prefer **narrower scope**: a workspace file beats a
 project-wide file beats `journal/general/`.
+
+### STATUS.md — rolling personality state
+
+Beside this `ROLE.md` lives `STATUS.md`: the personality's *current*
+state surface (Active focus, Recent topics, Open threads,
+last_activity). Treat it as the personality's **dashboard**:
+
+- The frontmatter `last_activity` is bumped on every `/remember`.
+- Active focus is one line; the long form lives in journal entries.
+- Recent topics is FIFO ~5 entries.
+- Open threads carry across sessions; the agent reads them at
+  session start to know "what's still open under this role".
+
+Other personalities reading the project map (in `MEMORY.md`) see
+each personality's Active focus inline; for richer context they
+open the relevant `STATUS.md`. See `/remember` for the maintenance
+contract.
+
+### Active personality — single source of truth
+
+The **active personality** lives as a one-line callout at the top
+of `MEMORY.md`:
+
+```markdown
+> **Active personality**: lab
+```
+
+`MEMORY.md` is loaded into your prompt every turn (via the memory-
+load hook), so the callout is always visible. There is no separate
+state file, no CLI command, no plugin sigil — just one line you
+read and write.
+
+When the user says "switch to <name>" (or any equivalent: "act as
+the reviewer", "let's use ops for this", etc.), update that line
+via the Edit tool:
+
+1. Verify `<name>` exists in the Project Map table.
+2. `Edit` `MEMORY.md`, replacing the body of the
+   `> **Active personality**:` line with `<name>`.
+3. Acknowledge in your response: "Switched to `<name>`."
+4. Behave as `<name>` from this turn forward — read its
+   `personalities/<name>/STATUS.md` to load context.
+
+If the active line is missing or stale, fall back to the
+`> **Default personality**:` callout (also in `MEMORY.md`, set on
+first `/onboard`).
+
+### Routing across personalities
+
+You are not the memory keeper for *one* personality alone — you
+maintain coherence **across** every personality the project hosts.
+When the user shares a fact, decision, or correction, your job is
+to figure out which personality(ies) it lives under and act
+accordingly, even if the active personality is not the right home.
+
+The routing contract:
+
+- Read the active personality from `MEMORY.md`'s
+  `> **Active personality**:` callout. That is the *default* for
+  per-corpus writes.
+- Read each candidate personality's `STATUS.md` (Active focus,
+  Recent topics) and `ROLE.md` to figure out which one matches
+  the topic of the current observation.
+- If the active matches the topic → write under it as usual.
+- If a different personality matches → tell the user "this looks
+  like it belongs to `<X>`, switch first?" Never auto-switch.
+- If the observation is cross-cutting → write to project-wide L1
+  (`MEMORY.md` Key Facts) and add pointers in each relevant
+  personality. Don't duplicate bodies.
+
+`/remember` and `/recall` have step-by-step procedures; this
+section sets the principle they implement.
 
 See `/remember` and `/recall` commands for detailed guides.
 """
@@ -757,13 +835,19 @@ export default TodoCuratorPlugin;
 
 # Project Memory
 
+> **Active personality**: *(set on first `/onboard`, or change in chat: "switch to <name>")*
+
 ## Project Map
 
-| Workspace | Description |
-|-----------|-------------|
-| *(no workspaces yet — run `/ingest` after creating one)* | |
+| Personality | Capabilities | Scope | Active focus |
+|-------------|--------------|-------|--------------|
+| *(no personalities yet — run `/onboard` after `allmight init`)* | | | |
 
-See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
+See each personality's `STATUS.md` for richer rolling state
+(active focus, recent topics, open threads). The "Active focus"
+column above is a one-line summary; STATUS.md has the long form.
+See `memory/understanding/<workspace>.md` for detailed per-corpus
+knowledge.
 
 ## User Preferences
 
@@ -867,6 +951,56 @@ list of preferred CLI flags, naming conventions), create
 `memory/<kind>/<workspace>.md` on demand — follow the same
 `<kind>/<workspace>.md` naming as `understanding/`. No new directory
 needs to be declared up front.
+
+## Routing across personalities
+
+If this project has more than one personality, also ask: **which
+personality** does this knowledge belong to? Bookkeeping the right
+home for each fact is one of the reasons the user trusts the agent
+as a secretary — don't shortcut it.
+
+1. **Read the active personality** from `MEMORY.md`'s
+   `> **Active personality**:` callout (loaded into your prompt
+   every turn). That's the *default* per-corpus scope.
+2. **Read each candidate personality's `STATUS.md`** (Active focus
+   + Recent topics). The topic of the current observation usually
+   lines up with one personality's recent activity.
+3. **If the active personality matches the topic** → write under
+   it as usual.
+4. **If a *different* personality matches better** → don't silently
+   write into the wrong one. Tell the user:
+
+   > "This looks like it belongs to `<X>`, not the active `<Y>`.
+   > Want me to switch first?"
+
+   Wait for confirmation. If they say yes, **`Edit` `MEMORY.md`**
+   to set the callout to `<X>`, then proceed with the write.
+   Never auto-switch without asking.
+5. **If the observation is genuinely cross-cutting** (a decision
+   that affects multiple personalities), write the canonical fact
+   to project-wide L1 (`MEMORY.md` → Key Facts) and add a one-line
+   pointer in each relevant personality's
+   `understanding/<topic>.md`. Don't duplicate the body — pointer
+   only.
+
+This routing rule is **soft** by design: you suggest, the user
+confirms. Auto-switching without the user's intent is a debugging
+trap.
+
+### Switching mid-conversation
+
+If the user says "switch to <name>" (or any equivalent — "act as
+the reviewer", "let's use ops for this"), do this:
+
+1. Verify `<name>` is in `MEMORY.md`'s Project Map.
+2. `Edit` `MEMORY.md`, replacing the body of the
+   `> **Active personality**:` callout with `<name>`.
+3. Acknowledge: "Switched to `<name>`."
+4. Read `personalities/<name>/STATUS.md` to load context.
+
+That's the whole protocol. No state file, no CLI command, no
+plugin parsing. The callout is loaded into every prompt via the
+memory-load hook so the next turn already sees the new value.
 
 ## Lesson Learned (Mode-2 shared instance)
 
@@ -1010,7 +1144,20 @@ writes `memory/.l1-over-cap` to nudge the next turn into the
 <ISO-8601> remember scope=<project|workspace> workspace=<name|-> kind=<understanding|todos|journal|…> "<brief>"
 ```
 
-2. Run `smak ingest --config memory/smak_config.yaml` periodically to
+2. **Keep STATUS.md current** — see `personalities/<active>/STATUS.md`.
+   Update what changed:
+   - **Always**: bump `last_activity` in the YAML frontmatter to now.
+   - **If your write changed the personality's current focus**: rewrite the **Active focus** line.
+   - **Add the topic to Recent topics** (keep ~5 entries, FIFO; drop the oldest).
+   - **If you opened a new long-running thread** (a TODO you can't close in this session): add it to **Open threads**. If you closed one, remove it.
+
+   STATUS.md is the rolling state surface that other sessions
+   (and the human) consult to know "what is this personality
+   currently doing?" without reading every journal entry. The
+   project map in `MEMORY.md` may also have an "Active focus"
+   column reflecting this — keep them consistent if both exist.
+
+3. Run `smak ingest --config memory/smak_config.yaml` periodically to
    re-index the journal for `/recall` searches.
 
 ## What NOT to remember
@@ -1206,6 +1353,23 @@ content, and relevance score.
 - When facing a problem that seems familiar.
 - When the user asks "did we discuss X before?" (step 4).
 
+## Switch hint — when results live under a different personality
+
+If the active personality (from `MEMORY.md`'s
+`> **Active personality**:` callout) is `<Y>` but the most relevant
+`/recall` results are in `<X>`'s journal/understanding, surface
+this to the user *before* showing the full results:
+
+> "Top hits are from `<X>`, not the active `<Y>`. Switch to `<X>`
+> for full context?"
+
+This is a **hint, not an action**. You never auto-switch. If the
+user accepts, `Edit` `MEMORY.md` to update the callout to `<X>`
+and proceed with the recall in that personality's context.
+
+If results are split roughly equally across personalities, present
+them grouped by personality and let the user pick.
+
 ## After recalling
 
 Log the recall to `memory/usage.log`:
@@ -1278,6 +1442,61 @@ Log the recall to `memory/usage.log`:
             agents_md.write_text(content)
         else:
             agents_md.write_text(f"# Project\n\n{section}")
+
+    # ------------------------------------------------------------------
+    # STATUS.md (Part-F: rolling per-personality state)
+    # ------------------------------------------------------------------
+
+    def _write_status_md(self) -> None:
+        """Write a starter ``personalities/<p>/STATUS.md`` if missing.
+
+        STATUS.md captures the personality's *current* state — active
+        focus, recent topics, open threads, last activity — and is
+        maintained by ``/remember`` over time. The framework only
+        seeds the empty template; once anything is written, the file
+        is user-/agent-owned and never overwritten on re-init (same
+        write-once contract as ``ROLE.md``).
+
+        No-op for legacy callers that don't pass an
+        ``instance_root``: STATUS.md only makes sense per personality.
+        """
+        if self._instance_root is None or self._instance_root == self._instance_root.parent.parent:
+            # Defensive: a missing or root-equal instance_root means
+            # we're in the legacy single-instance layout. Skip — the
+            # caller hasn't asked for per-personality state.
+            return
+        target = self._instance_root / "STATUS.md"
+        if target.exists():
+            return  # write-once
+        self._instance_root.mkdir(parents=True, exist_ok=True)
+        target.write_text(self._status_md_template())
+
+    def _status_md_template(self) -> str:
+        """Return the empty STATUS.md starter body.
+
+        Schema is v1, frontmatter-fenced, three rolling sections.
+        Agents fill these in via ``/remember``; humans can read or
+        edit any section directly.
+        """
+        from datetime import datetime, timezone
+        iso = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+        return (
+            f"{ALLMIGHT_MARKER_MD}\n"
+            "---\n"
+            "allmight_status: v1\n"
+            f"last_activity: {iso}\n"
+            "---\n"
+            f"# {self._instance_root.name if self._instance_root else 'personality'} — Status\n"
+            "\n"
+            "## Active focus\n"
+            "*(no focus yet — agent updates this on /remember)*\n"
+            "\n"
+            "## Recent topics\n"
+            "*(none yet — keep ~5 most recent, FIFO)*\n"
+            "\n"
+            "## Open threads\n"
+            "*(none yet — long-running TODOs the agent should resume)*\n"
+        )
 
     # ------------------------------------------------------------------
     # OpenCode compatibility

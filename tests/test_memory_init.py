@@ -109,6 +109,186 @@ class TestMemoryInitializer:
         role_md = (instance_root / "ROLE.md").read_text()
         assert "lessons_learned/_inbox" in role_md
 
+    # -- Part-F: STATUS.md per-personality rolling state --------------
+
+    def test_status_md_created_on_first_init(self, tmp_path):
+        """STATUS.md starter is written next to ROLE.md on first init."""
+        instance_root = tmp_path / "personalities" / "lab"
+        instance_root.mkdir(parents=True)
+        MemoryInitializer().initialize(tmp_path, instance_root=instance_root)
+        status = instance_root / "STATUS.md"
+        assert status.is_file(), "STATUS.md should be emitted on first init"
+
+    def test_status_md_template_has_required_sections(self, tmp_path):
+        """The starter template carries the v1 frontmatter and the
+        three rolling sections agents will keep in sync via /remember.
+        """
+        instance_root = tmp_path / "personalities" / "lab"
+        instance_root.mkdir(parents=True)
+        MemoryInitializer().initialize(tmp_path, instance_root=instance_root)
+        body = (instance_root / "STATUS.md").read_text()
+        assert "allmight_status: v1" in body
+        assert "last_activity:" in body
+        assert "## Active focus" in body
+        assert "## Recent topics" in body
+        assert "## Open threads" in body
+        # Personality name should appear in the title heading.
+        assert "lab" in body
+
+    def test_status_md_is_write_once(self, tmp_path):
+        """A STATUS.md edited by the agent (or hand) survives re-init.
+        Same write-once contract as ROLE.md.
+        """
+        instance_root = tmp_path / "personalities" / "lab"
+        instance_root.mkdir(parents=True)
+        MemoryInitializer().initialize(tmp_path, instance_root=instance_root)
+        status = instance_root / "STATUS.md"
+        status.write_text(
+            "<!-- all-might generated -->\n"
+            "---\n"
+            "allmight_status: v1\n"
+            "last_activity: 2026-05-04T12:00:00Z\n"
+            "---\n"
+            "# lab — Status\n\n"
+            "## Active focus\nPart F implementation — F.2 STATUS.md\n\n"
+            "## Recent topics\n- Part E\n- Part F naming\n\n"
+            "## Open threads\n- TSMC air-gap end-to-end validation\n",
+        )
+        # Re-init should NOT clobber the agent's curated state.
+        MemoryInitializer().initialize(tmp_path, instance_root=instance_root)
+        body = status.read_text()
+        assert "Part F implementation" in body
+        assert "TSMC air-gap" in body
+
+    def test_remember_command_mentions_status_md(self, project_root):
+        """/remember body documents the STATUS.md maintenance contract."""
+        MemoryInitializer().initialize(project_root)
+        body = (
+            project_root / ".opencode" / "commands" / "remember.md"
+        ).read_text()
+        # Must reference STATUS.md and its update fields.
+        assert "STATUS.md" in body
+        assert "Active focus" in body
+        assert "Recent topics" in body
+        assert "Open threads" in body
+        assert "last_activity" in body
+
+    def test_role_md_mentions_status_md(self, project_root, tmp_path):
+        """Memory keeper ROLE.md teaches agents about STATUS.md."""
+        instance_root = tmp_path / "personalities" / "demo"
+        MemoryInitializer().initialize(
+            project_root, instance_root=instance_root,
+        )
+        body = (instance_root / "ROLE.md").read_text()
+        assert "STATUS.md" in body
+        assert "Active focus" in body
+
+    def test_l1_template_has_active_focus_column(self, project_root):
+        """L1 MEMORY.md project map gains an Active focus column on
+        fresh init. Existing projects keep their map shape; agents
+        edit in the column themselves on the next /remember.
+        """
+        MemoryInitializer().initialize(project_root)
+        body = (project_root / "MEMORY.md").read_text()
+        assert "Active focus" in body
+        assert "Personality" in body
+
+    # -- Part-F: active personality via MEMORY.md callout ------------
+    # The active personality is a one-line callout at the top of
+    # MEMORY.md. No state file, no CLI, no plugin sigil — the agent
+    # reads and writes the callout via the existing memory-load hook
+    # + Edit tool. Plain language ("switch to lab") triggers the
+    # update; no special syntax required.
+
+    def test_l1_template_has_active_personality_callout(self, project_root):
+        """Fresh init's MEMORY.md carries the Active personality
+        callout. /onboard or first switch fills in the value.
+        """
+        MemoryInitializer().initialize(project_root)
+        body = (project_root / "MEMORY.md").read_text()
+        assert "**Active personality**" in body
+        # Callout style: blockquote starting with > on its own line.
+        assert "> **Active personality**" in body
+
+    def test_role_md_documents_active_personality_callout(
+        self, project_root, tmp_path,
+    ):
+        """Memory keeper ROLE.md teaches the agent the callout
+        convention: read from MEMORY.md, write via Edit tool, no
+        state file."""
+        instance_root = tmp_path / "personalities" / "demo"
+        MemoryInitializer().initialize(
+            project_root, instance_root=instance_root,
+        )
+        body = (instance_root / "ROLE.md").read_text()
+        assert "Active personality" in body
+        # The role explains how to switch — via Edit on MEMORY.md,
+        # not a CLI or state file.
+        assert "Edit" in body
+        assert "MEMORY.md" in body
+        # Explicit anti-state-file framing so future edits don't
+        # accidentally reintroduce the discarded design.
+        lower = body.lower()
+        assert (
+            "no separate state file" in lower
+            or "no state file" in lower
+            or "no cli command" in lower
+        )
+
+    # -- Part-F/4: cross-personality routing intelligence --------------
+
+    def test_remember_body_has_routing_across_personalities(
+        self, project_root,
+    ):
+        """/remember body documents how to choose which personality
+        a write belongs to, and how to switch via Edit on MEMORY.md.
+        """
+        MemoryInitializer().initialize(project_root)
+        body = (
+            project_root / ".opencode" / "commands" / "remember.md"
+        ).read_text()
+        assert "Routing across personalities" in body
+        # Must reference the MEMORY.md callout (not the dropped state file).
+        assert "Active personality" in body
+        assert "MEMORY.md" in body
+        # Switching mechanism: Edit tool, not CLI.
+        assert "Edit" in body
+        assert "switch to" in body.lower() or "Switching" in body
+        # Cross-cutting hint mentions L1 + pointer pattern.
+        assert "Key Facts" in body or "project-wide" in body.lower()
+
+    def test_remember_body_does_not_reference_dropped_state_file(
+        self, project_root,
+    ):
+        """The dropped state-file design (`.allmight/active-personality`)
+        and CLI (`allmight switch`) must not leak into /remember.
+        Catches accidental reintroduction during merges."""
+        MemoryInitializer().initialize(project_root)
+        body = (
+            project_root / ".opencode" / "commands" / "remember.md"
+        ).read_text()
+        assert ".allmight/active-personality" not in body
+        assert "allmight switch" not in body
+
+    def test_recall_body_has_switch_hint(self, project_root):
+        """/recall body teaches the agent to surface a switch
+        suggestion when results are concentrated in a different
+        personality."""
+        MemoryInitializer().initialize(project_root)
+        body = (
+            project_root / ".opencode" / "commands" / "recall.md"
+        ).read_text()
+        assert "Switch hint" in body or "switch hint" in body.lower()
+        # Must explicitly say it does NOT auto-switch.
+        lower = body.lower()
+        assert (
+            "auto-switch" in lower or "never auto" in lower
+            or "hint, not an action" in lower
+        )
+        # Switching mechanism: Edit on MEMORY.md.
+        assert "Edit" in body
+        assert "MEMORY.md" in body
+
     def test_creates_smak_config(self, project_root):
         """SMAK config generated for journal index."""
         MemoryInitializer().initialize(project_root)
