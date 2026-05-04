@@ -109,6 +109,90 @@ class TestMemoryInitializer:
         role_md = (instance_root / "ROLE.md").read_text()
         assert "lessons_learned/_inbox" in role_md
 
+    # -- Part-F: STATUS.md per-personality rolling state --------------
+
+    def test_status_md_created_on_first_init(self, tmp_path):
+        """STATUS.md starter is written next to ROLE.md on first init."""
+        instance_root = tmp_path / "personalities" / "lab"
+        instance_root.mkdir(parents=True)
+        MemoryInitializer().initialize(tmp_path, instance_root=instance_root)
+        status = instance_root / "STATUS.md"
+        assert status.is_file(), "STATUS.md should be emitted on first init"
+
+    def test_status_md_template_has_required_sections(self, tmp_path):
+        """The starter template carries the v1 frontmatter and the
+        three rolling sections agents will keep in sync via /remember.
+        """
+        instance_root = tmp_path / "personalities" / "lab"
+        instance_root.mkdir(parents=True)
+        MemoryInitializer().initialize(tmp_path, instance_root=instance_root)
+        body = (instance_root / "STATUS.md").read_text()
+        assert "allmight_status: v1" in body
+        assert "last_activity:" in body
+        assert "## Active focus" in body
+        assert "## Recent topics" in body
+        assert "## Open threads" in body
+        # Personality name should appear in the title heading.
+        assert "lab" in body
+
+    def test_status_md_is_write_once(self, tmp_path):
+        """A STATUS.md edited by the agent (or hand) survives re-init.
+        Same write-once contract as ROLE.md.
+        """
+        instance_root = tmp_path / "personalities" / "lab"
+        instance_root.mkdir(parents=True)
+        MemoryInitializer().initialize(tmp_path, instance_root=instance_root)
+        status = instance_root / "STATUS.md"
+        status.write_text(
+            "<!-- all-might generated -->\n"
+            "---\n"
+            "allmight_status: v1\n"
+            "last_activity: 2026-05-04T12:00:00Z\n"
+            "---\n"
+            "# lab — Status\n\n"
+            "## Active focus\nPart F implementation — F.2 STATUS.md\n\n"
+            "## Recent topics\n- Part E\n- Part F naming\n\n"
+            "## Open threads\n- TSMC air-gap end-to-end validation\n",
+        )
+        # Re-init should NOT clobber the agent's curated state.
+        MemoryInitializer().initialize(tmp_path, instance_root=instance_root)
+        body = status.read_text()
+        assert "Part F implementation" in body
+        assert "TSMC air-gap" in body
+
+    def test_remember_command_mentions_status_md(self, project_root):
+        """/remember body documents the STATUS.md maintenance contract."""
+        MemoryInitializer().initialize(project_root)
+        body = (
+            project_root / ".opencode" / "commands" / "remember.md"
+        ).read_text()
+        # Must reference STATUS.md and its update fields.
+        assert "STATUS.md" in body
+        assert "Active focus" in body
+        assert "Recent topics" in body
+        assert "Open threads" in body
+        assert "last_activity" in body
+
+    def test_role_md_mentions_status_md(self, project_root, tmp_path):
+        """Memory keeper ROLE.md teaches agents about STATUS.md."""
+        instance_root = tmp_path / "personalities" / "demo"
+        MemoryInitializer().initialize(
+            project_root, instance_root=instance_root,
+        )
+        body = (instance_root / "ROLE.md").read_text()
+        assert "STATUS.md" in body
+        assert "Active focus" in body
+
+    def test_l1_template_has_active_focus_column(self, project_root):
+        """L1 MEMORY.md project map gains an Active focus column on
+        fresh init. Existing projects keep their map shape; agents
+        edit in the column themselves on the next /remember.
+        """
+        MemoryInitializer().initialize(project_root)
+        body = (project_root / "MEMORY.md").read_text()
+        assert "Active focus" in body
+        assert "Personality" in body
+
     def test_creates_smak_config(self, project_root):
         """SMAK config generated for journal index."""
         MemoryInitializer().initialize(project_root)

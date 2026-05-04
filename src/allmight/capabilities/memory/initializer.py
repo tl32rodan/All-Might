@@ -118,6 +118,12 @@ class MemoryInitializer:
         (lessons / "_inbox").mkdir(parents=True, exist_ok=True)
         (lessons / "_reviewed").mkdir(parents=True, exist_ok=True)
 
+        # 4e. Personality STATUS.md (Part-F): rolling per-personality
+        # state (active focus, recent topics, open threads, last
+        # activity). Maintained by /remember; the framework only
+        # writes the empty starter on first init.
+        self._write_status_md()
+
         # 5. Generate memory commands (remember, recall, reflect)
         self._generate_memory_commands(root, force=force)
 
@@ -267,6 +273,23 @@ per-corpus, or a historical log before choosing where to write it.
 
 When unsure, prefer **narrower scope**: a workspace file beats a
 project-wide file beats `journal/general/`.
+
+### STATUS.md — rolling personality state
+
+Beside this `ROLE.md` lives `STATUS.md`: the personality's *current*
+state surface (Active focus, Recent topics, Open threads,
+last_activity). Treat it as the personality's **dashboard**:
+
+- The frontmatter `last_activity` is bumped on every `/remember`.
+- Active focus is one line; the long form lives in journal entries.
+- Recent topics is FIFO ~5 entries.
+- Open threads carry across sessions; the agent reads them at
+  session start to know "what's still open under this role".
+
+Other personalities reading the project map (in `MEMORY.md`) see
+each personality's Active focus inline; for richer context they
+open the relevant `STATUS.md`. See `/remember` for the maintenance
+contract.
 
 See `/remember` and `/recall` commands for detailed guides.
 """
@@ -759,11 +782,15 @@ export default TodoCuratorPlugin;
 
 ## Project Map
 
-| Workspace | Description |
-|-----------|-------------|
-| *(no workspaces yet — run `/ingest` after creating one)* | |
+| Personality | Capabilities | Scope | Active focus |
+|-------------|--------------|-------|--------------|
+| *(no personalities yet — run `/onboard` after `allmight init`)* | | | |
 
-See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
+See each personality's `STATUS.md` for richer rolling state
+(active focus, recent topics, open threads). The "Active focus"
+column above is a one-line summary; STATUS.md has the long form.
+See `memory/understanding/<workspace>.md` for detailed per-corpus
+knowledge.
 
 ## User Preferences
 
@@ -1010,7 +1037,20 @@ writes `memory/.l1-over-cap` to nudge the next turn into the
 <ISO-8601> remember scope=<project|workspace> workspace=<name|-> kind=<understanding|todos|journal|…> "<brief>"
 ```
 
-2. Run `smak ingest --config memory/smak_config.yaml` periodically to
+2. **Keep STATUS.md current** — see `personalities/<active>/STATUS.md`.
+   Update what changed:
+   - **Always**: bump `last_activity` in the YAML frontmatter to now.
+   - **If your write changed the personality's current focus**: rewrite the **Active focus** line.
+   - **Add the topic to Recent topics** (keep ~5 entries, FIFO; drop the oldest).
+   - **If you opened a new long-running thread** (a TODO you can't close in this session): add it to **Open threads**. If you closed one, remove it.
+
+   STATUS.md is the rolling state surface that other sessions
+   (and the human) consult to know "what is this personality
+   currently doing?" without reading every journal entry. The
+   project map in `MEMORY.md` may also have an "Active focus"
+   column reflecting this — keep them consistent if both exist.
+
+3. Run `smak ingest --config memory/smak_config.yaml` periodically to
    re-index the journal for `/recall` searches.
 
 ## What NOT to remember
@@ -1263,6 +1303,61 @@ Log the recall to `memory/usage.log`:
             agents_md.write_text(content)
         else:
             agents_md.write_text(f"# Project\n\n{section}")
+
+    # ------------------------------------------------------------------
+    # STATUS.md (Part-F: rolling per-personality state)
+    # ------------------------------------------------------------------
+
+    def _write_status_md(self) -> None:
+        """Write a starter ``personalities/<p>/STATUS.md`` if missing.
+
+        STATUS.md captures the personality's *current* state — active
+        focus, recent topics, open threads, last activity — and is
+        maintained by ``/remember`` over time. The framework only
+        seeds the empty template; once anything is written, the file
+        is user-/agent-owned and never overwritten on re-init (same
+        write-once contract as ``ROLE.md``).
+
+        No-op for legacy callers that don't pass an
+        ``instance_root``: STATUS.md only makes sense per personality.
+        """
+        if self._instance_root is None or self._instance_root == self._instance_root.parent.parent:
+            # Defensive: a missing or root-equal instance_root means
+            # we're in the legacy single-instance layout. Skip — the
+            # caller hasn't asked for per-personality state.
+            return
+        target = self._instance_root / "STATUS.md"
+        if target.exists():
+            return  # write-once
+        self._instance_root.mkdir(parents=True, exist_ok=True)
+        target.write_text(self._status_md_template())
+
+    def _status_md_template(self) -> str:
+        """Return the empty STATUS.md starter body.
+
+        Schema is v1, frontmatter-fenced, three rolling sections.
+        Agents fill these in via ``/remember``; humans can read or
+        edit any section directly.
+        """
+        from datetime import datetime, timezone
+        iso = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+        return (
+            f"{ALLMIGHT_MARKER_MD}\n"
+            "---\n"
+            "allmight_status: v1\n"
+            f"last_activity: {iso}\n"
+            "---\n"
+            f"# {self._instance_root.name if self._instance_root else 'personality'} — Status\n"
+            "\n"
+            "## Active focus\n"
+            "*(no focus yet — agent updates this on /remember)*\n"
+            "\n"
+            "## Recent topics\n"
+            "*(none yet — keep ~5 most recent, FIFO)*\n"
+            "\n"
+            "## Open threads\n"
+            "*(none yet — long-running TODOs the agent should resume)*\n"
+        )
 
     # ------------------------------------------------------------------
     # OpenCode compatibility
