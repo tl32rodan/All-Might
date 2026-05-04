@@ -160,8 +160,8 @@ class TestPublishBundleLibrary:
         url = f"file://{tmp_path}/team.git"
         publish_bundle(sample_bundle, url, message="v1")
 
-        # Modify the bundle (simulate a second /export with new
-        # content) and re-publish.
+        # Modify the bundle (simulate a second /one-for-all with
+        # new content) and re-publish.
         (sample_bundle / "ROLE.md").write_text(
             "<!-- all-might generated -->\n# stdcell_owner\nUpdated.\n",
         )
@@ -202,10 +202,16 @@ class TestShareCli:
     def test_publish_to_bad_url_errors(
         self, initted_project: Path, sample_bundle: Path,
     ) -> None:
+        # Path under ``/dev/null`` is unreachable for ``mkdir -p``
+        # regardless of user permissions (``/dev/null`` is a char
+        # device, not a directory), so ``_ensure_local_bare_repo``
+        # raises and the publish fails. Picking an arbitrary
+        # ``/nonexistent/...`` would silently succeed when the test
+        # runs as root.
         result = _invoke_in(
             initted_project,
             ["share", "publish", str(sample_bundle),
-             "--to", "file:///nonexistent/path/cant/init/here.git"],
+             "--to", "file:///dev/null/cant/init/here.git"],
         )
         # Either the init or the push should fail; either way exit
         # non-zero.
@@ -226,13 +232,18 @@ class TestShareCli:
         assert result.exit_code == 0, result.output
         target = initted_project / "personalities" / "stdcell_owner"
         assert (target / "ROLE.md").is_file()
-        # Lineage propagated.
+        # Lineage propagated as a single-entry derived_from list
+        # (kind=bundle), matching the schema_version 3 registry shape.
         registry = yaml.safe_load(
             (initted_project / ".allmight" / "personalities.yaml").read_text()
         )
         rows = [r for r in registry["personalities"]
                 if (r.get("name") or r.get("instance")) == "stdcell_owner"]
-        assert rows[0]["imported_from_bundle_id"] == \
+        derived_from = rows[0]["derived_from"]
+        assert isinstance(derived_from, list) and len(derived_from) == 1
+        src = derived_from[0]
+        assert src["kind"] == "bundle"
+        assert src["bundle_id"] == \
             "11111111-2222-3333-4444-555555555555"
         # Upstream YAML records the pull.
         records = read_upstream(initted_project)
@@ -266,3 +277,63 @@ class TestShareCli:
             ["share", "publish", str(sample_bundle), "--to", bare_repo_url],
         )
         assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Internal: _run_git always disables commit / tag signing
+# ---------------------------------------------------------------------------
+
+
+class TestRunGitDisablesSigning:
+    """Pin the contract that bundle-transport git invocations never
+    sign. Removing the ``-c commit.gpgsign=false`` injection breaks
+    every All-Might user whose host enforces ``commit.gpgsign = true``
+    (sandboxes with signing servers, hardware-token setups, corporate
+    CI policies)."""
+
+    def test_run_git_command_includes_signing_overrides(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from types import SimpleNamespace
+        from allmight.share import git_share
+
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, **kw):  # type: ignore[no-untyped-def]
+            captured.append(list(cmd))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(git_share.subprocess, "run", fake_run)
+        git_share._run_git(["commit", "-m", "anything"])
+
+        assert captured, "_run_git should have invoked subprocess.run"
+        cmd = captured[0]
+        assert cmd[0] == "git"
+        # The -c overrides must come before the subcommand. Pinning the
+        # exact prefix catches accidental reordering or removal.
+        assert cmd[1:5] == [
+            "-c", "commit.gpgsign=false",
+            "-c", "tag.gpgsign=false",
+        ]
+        # The original args still follow.
+        assert cmd[5:] == ["commit", "-m", "anything"]
+
+    def test_publish_bundle_succeeds_with_global_signing_required(
+        self, sample_bundle: Path, tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """End-to-end proof: even when the test environment forces
+        ``commit.gpgsign = true`` via ``GIT_CONFIG_*`` env vars, the
+        publish round-trips. (On the sandbox this is also true of the
+        real ``/root/.gitconfig``; we still set it explicitly here so
+        the test passes on developer boxes that lack the global
+        setting.)
+        """
+        monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+        monkeypatch.setenv("GIT_CONFIG_KEY_0", "commit.gpgsign")
+        monkeypatch.setenv("GIT_CONFIG_VALUE_0", "true")
+
+        url = f"file://{tmp_path}/team.git"
+        result = publish_bundle(sample_bundle, url, message="signed-env")
+        assert result.bundle_id == \
+            "11111111-2222-3333-4444-555555555555"

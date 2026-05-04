@@ -30,14 +30,14 @@ doesn't yet exist.
 
 ### Publishing
 
-`/export` is the canonical way to produce a reviewed bundle. It is
-agent-driven so it can ask for consent on every file containing
-likely PII. The CLI's `share publish` is a pure transport — it
-takes an existing bundle directory and pushes it.
+`/one-for-all` is the canonical way to produce a reviewed bundle.
+It is agent-driven so it can ask for consent on every file
+containing likely PII. The CLI's `share publish` is a pure
+transport — it takes an existing bundle directory and pushes it.
 
 ```bash
 # Inside Claude Code or OpenCode, run:
-> /export
+> /one-for-all
 
 # That writes ./stdcell_owner-export/. Then on the shell:
 allmight share publish ./stdcell_owner-export/ \
@@ -61,23 +61,38 @@ allmight share pull file:///nfs/team/personalities/stdcell_owner.git \
 ```
 
 Pull is `git clone` + `allmight import` + upstream bookkeeping. The
-imported personality's lineage (`imported_from_bundle_id`,
-`bundle_version`, `imported_at`) lands in
-`.allmight/personalities.yaml` so re-exporting later carries the
-provenance forward in `derived_from`.
+imported personality's lineage lands in
+`.allmight/personalities.yaml` as a single-entry `derived_from`
+list (`kind: bundle`, with `bundle_id` and `bundle_version`).
+Re-exporting via `/one-for-all` carries that ancestry forward into
+the new bundle's `derived_from` field, so multi-hop provenance is
+preserved across teams.
 
-### Manifest schema (v2, with all Part-E fields)
+If the receiver wants to fold the bundle into an existing
+personality instead of installing it under a fresh name, `share
+pull` will fail (it inherits `allmight import`'s collision
+behaviour) and the receiver should run `/all-for-one` in the agent
+to perform the merge — that skill takes the bundle path plus the
+existing personality's name and dialogs through the per-file
+conflicts.
+
+### Manifest schema (schema_version 3)
 
 ```yaml
 allmight_version: '0.1.0'
-schema_version: 2
+schema_version: 3
 personality_name: stdcell_owner
 
-# Part-E lineage (all optional, omitted on first export)
+# Lineage (all optional, omitted on first export from a freshly-
+# created personality with no derivation history)
 bundle_id: 7c4f3a2e-1111-2222-3333-444455556666     # uuid4, fresh per export
 bundle_version: 1.0.0                                # semver of THIS bundle's content
-derived_from:                                        # ancestry, may be empty
-  - 11111111-2222-3333-4444-555555555555
+derived_from:                                        # source descriptors, may be empty
+  - kind: bundle                                     # prior bundle ancestor
+    bundle_id: 11111111-2222-3333-4444-555555555555
+    bundle_version: 0.9.0
+  - kind: personality                                # in-project source consumed by /all-for-one
+    name: pll_owner
 
 capabilities:
   database:
@@ -87,7 +102,7 @@ capabilities:
 
 exported_at: '2026-05-04T10:00:00Z'
 
-# Part-E shared-SMAK subscriptions (optional, omit if no shared SMAK)
+# Shared-SMAK subscriptions (optional, omit if no shared SMAK)
 database_subscriptions:
   - index: stdcell                                   # matches database/config.yaml entry
     nfs_path: /nfs/smak/stdcell                      # where the shared SMAK index lives
@@ -95,7 +110,7 @@ database_subscriptions:
     required: true                                   # warn loudly if missing on import
 ```
 
-The three Part-E version concepts are independent:
+The three version concepts are independent:
 
 * `allmight_version` — framework version
 * `capabilities.<cap>.capability_version` — per-template version
