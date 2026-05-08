@@ -20,10 +20,10 @@ one needs:
 A single project can hold one personality (the default after
 `allmight init`) or many (`allmight add` adds more). All personalities
 share **one** flat slash-command surface — `/search`, `/remember`,
-`/recall`, `/enrich`, `/ingest`, `/onboard`, `/export`, `/sync` — and
-the agent decides which personality to act for from conversation
-context plus a `> **Default personality**: <name>` hint at the top of
-`MEMORY.md`.
+`/recall`, `/enrich`, `/ingest`, `/onboard`, `/one-for-all`,
+`/all-for-one`, `/sync` — and the agent decides which personality to
+act for from conversation context plus a `> **Default personality**:
+<name>` hint at the top of `MEMORY.md`.
 
 ## Setup
 
@@ -76,9 +76,9 @@ my-chip-project/
 ├── AGENTS.md                            ← composed from each ROLE.md
 ├── MEMORY.md                            ← project map + default-personality hint
 ├── .opencode/                           ← Claude Code / OpenCode picks this up
-│   ├── commands/                        ← /search, /remember, /export, …
-│   ├── plugins/                         ← memory hooks, role loader
-│   └── skills/                          ← /onboard, /export, /sync
+│   ├── commands/                        ← /search, /remember, /one-for-all, …
+│   ├── plugins/                         ← memory hooks, role loader, memory-history
+│   └── skills/                          ← /onboard, /one-for-all, /all-for-one, /sync
 └── personalities/
     ├── my-chip-project/
     │   ├── ROLE.md
@@ -119,16 +119,25 @@ command against that personality's data dir.
 | `/ingest`   | "Build the search index" |
 | `/remember` | "Remember that ..." (records *or* reviews — agent picks based on trigger) |
 | `/recall`   | "What do you know about ...?" |
-| `/export`   | "Export `<name>` so I can share it" — agent applies per-capability rules and reviews for PII |
+| `/one-for-all` | "Export `<name>` so I can share it" — agent applies per-capability rules and reviews for PII (1 personality → 1 bundle) |
+| `/all-for-one` | "Merge these into one personality" — fold multiple bundles or in-project personalities into one target (N → 1) with per-file dialog |
 | `/sync`     | Merge staged template updates after re-init / resolve compose conflicts |
 
 ## Sharing personalities between projects
 
-`/export` writes a directory bundle:
+Two skills, themed after All-Might's quirks. Use **`/one-for-all`**
+to export one personality outward (1 → 1) and **`/all-for-one`** to
+absorb sources into one (N → 1):
+
+### Export: `/one-for-all`
+
+The agent walks the personality's data, applies per-capability rules,
+reviews every file for likely PII, and asks for consent on sensitive
+content before writing a directory bundle:
 
 ```
 stdcell_owner-export/
-├── manifest.yaml                   ← allmight version + capability versions
+├── manifest.yaml                   ← allmight version + capabilities + lineage
 ├── ROLE.md
 ├── database/
 │   └── config.yaml                 ← (no store/ — vector index is rebuilt)
@@ -137,22 +146,39 @@ stdcell_owner-export/
     └── journal/                    ← only if the user opted in
 ```
 
-The agent walks each capability's data, applies per-capability
-export rules (`store/` is never bundled), reviews every file for
-likely PII, and asks for explicit consent on sensitive content
-before writing the bundle.
+`store/` is never bundled — the receiver runs `/ingest` to rebuild it.
 
-`allmight import <bundle>` restores it in another project:
+### Import (single bundle, no merge): `allmight import`
 
 ```bash
 allmight import ./stdcell_owner-export/
 allmight import ./stdcell_owner-export/ --as stdcell_v2  # rename
 ```
 
-`import` runs each capability's install (so the directory structure
-matches the receiving project's `allmight` version) and copies the
-bundled files into place. After import, run `/ingest` to rebuild the
-search index.
+Mechanical install — runs each capability's install hook, copies
+the bundled files, records lineage. **Refuses if a personality of
+the same name already exists** and points you at `/all-for-one` to
+merge instead. Reserved for CI / scripting / fresh-project bootstrap.
+
+### Merge (multiple sources, or fold-into-existing): `/all-for-one`
+
+Run this skill in the agent when you want to:
+
+- Combine multiple bundles into one personality
+- Fold a bundle into an existing personality (`allmight import`
+  refused on collision)
+- Consolidate two in-project personalities (`stdcell_owner` +
+  `pll_owner` → `eda_owner`) — sources don't have to be bundles
+
+The agent walks per-capability merge rules: workspace-name clashes,
+`memory/understanding/` overwrites, `memory/journal/` append + dedupe,
+`ROLE.md` prose reconciliation. Each conflict is resolved with a
+short dialog. By default the source personalities are kept after the
+merge (the agent asks before removing them). Lineage from every
+source is recorded in the target's `derived_from` list.
+
+After any import or merge, run `/ingest` in the merged workspaces to
+rebuild SMAK indices.
 
 ## Team Share
 
@@ -164,7 +190,7 @@ Two patterns for sharing All-Might across a team:
   that get customised per project.
 
   ```bash
-  # On the source project (after running /export to produce the bundle):
+  # On the source project (after running /one-for-all to produce the bundle):
   allmight share publish ./stdcell_owner-export/ --to file:///nfs/team/stdcell_owner.git
 
   # On a receiving project:
@@ -212,6 +238,25 @@ interactively.
 
 `--force` overwrites everything. `MEMORY.md` is never overwritten —
 it's agent-authored from `/onboard` onward.
+
+## Recovering from accidental memory edits
+
+Every memory write is auto-snapshotted into a local git mirror at
+`.allmight/memory-history/` (separate from your project's main
+`.git`). Accidental deletes or overwrites are recoverable:
+
+```bash
+allmight memory log                          # see snapshots
+allmight memory log --personality stdcell_owner -n 5
+allmight memory diff <sha>                   # what changed
+allmight memory restore MEMORY.md --rev HEAD~1
+allmight memory restore personalities/stdcell_owner/memory/understanding/stdcell.md
+```
+
+Snapshots fire automatically after every agent turn (and on session
+end / pre-compaction). You can also run `allmight memory snapshot`
+by hand. SMAK vector indices (`store/`) are excluded from the
+mirror — they're rebuilt by `/ingest`.
 
 ## Glossary
 
