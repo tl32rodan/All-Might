@@ -113,6 +113,7 @@ def _init_callback(
         write_init_scaffold,
         write_registry,
     )
+    from .core.state import read_onboard, write_onboard
     from .capabilities.database.scanner import ProjectScanner
 
     root = P(path).resolve()
@@ -129,8 +130,7 @@ def _init_callback(
     # onboard.yaml exists, reuse what was captured before so re-init
     # never asks the user again. Otherwise prompt (or use the
     # project-root dir name under --yes).
-    onboard_path = allmight_dir / "onboard.yaml"
-    captured = _read_onboard_yaml(onboard_path)
+    captured = read_onboard(root)
     if captured is None:
         captured = _collect_onboard_answers(templates, manifest, interactive=not yes)
 
@@ -190,7 +190,7 @@ def _init_callback(
     ]
     captured.setdefault("folders", [])
     captured.setdefault("onboarded", False)
-    _write_onboard_yaml(onboard_path, captured)
+    write_onboard(root, captured)
 
     writable = bool(template_options.get("writable"))
     mode_label = "writable" if writable else "read-only"
@@ -283,30 +283,6 @@ def _collect_onboard_answers(
         ],
         "folders": [],
     }
-
-
-def _read_onboard_yaml(path) -> dict | None:
-    """Return the captured onboarding state, or ``None`` if absent."""
-    import yaml
-
-    if not path.exists():
-        return None
-    try:
-        data = yaml.safe_load(path.read_text()) or {}
-    except (yaml.YAMLError, OSError):
-        return None
-    data.setdefault("onboarded", False)
-    data.setdefault("personalities", [])
-    data.setdefault("folders", [])
-    return data
-
-
-def _write_onboard_yaml(path, data: dict) -> None:
-    """Persist onboarding state for the agent-side /onboard skill."""
-    import yaml
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(data, sort_keys=False))
 
 
 main.add_command(_build_init_command())

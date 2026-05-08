@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ...core.markers import ALLMIGHT_MARKER_MD, ALLMIGHT_MARKER_TS
 from ...core.safe_write import write_guarded
+from ...core.skill_io import install_skill
 from .config import MemoryConfigManager
 
 
@@ -191,33 +192,20 @@ class MemoryInitializer:
             )
 
     def _install_recover_skill(self, root: Path, force: bool = False) -> None:
-        """Install the ``/recover`` SKILL.md.
-
-        Companion to the ``/recover`` command body (written by
-        ``_write_memory_command_content``). The skill body teaches
-        the agent how to walk the user through picking the right
-        revision and restoring it via ``allmight memory log/diff/
-        restore``. Idempotent and runs on every ``initialize()`` so
-        re-init picks it up too.
-        """
+        """Install the ``/recover`` SKILL.md (command body lives in
+        ``_write_memory_command_content``)."""
         from .recover_skill_content import RECOVER_SKILL_BODY
 
-        skills_dir = root / ".opencode" / "skills" / "recover"
-        skills_dir.mkdir(parents=True, exist_ok=True)
-        frontmatter = (
-            "---\n"
-            "name: recover\n"
-            "description: Restore memory data from the .allmight/memory-history/ "
-            "snapshot mirror. Use when the user wants to undo an accidental "
-            "memory edit, restore a deleted file, or roll back to an earlier "
-            "state.\n"
-            "---\n\n"
-        )
-        content = frontmatter + ALLMIGHT_MARKER_MD + "\n\n" + RECOVER_SKILL_BODY
-        write_guarded(
-            skills_dir / "SKILL.md",
-            content,
-            ALLMIGHT_MARKER_MD,
+        install_skill(
+            root,
+            name="recover",
+            description=(
+                "Restore memory data from the .allmight/memory-history/ "
+                "snapshot mirror. Use when the user wants to undo an "
+                "accidental memory edit, restore a deleted file, or roll "
+                "back to an earlier state."
+            ),
+            skill_body=RECOVER_SKILL_BODY,
             force=force,
         )
 

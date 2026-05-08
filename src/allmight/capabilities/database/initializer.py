@@ -13,6 +13,7 @@ from pathlib import Path
 from ...core.domain import ProjectManifest
 from ...core.markers import ALLMIGHT_MARKER_MD
 from ...core.safe_write import write_guarded
+from ...core.skill_io import install_skill
 
 
 class ProjectInitializer:
@@ -175,118 +176,78 @@ class ProjectInitializer:
             )
 
     def _install_sync_skill(self, root: Path) -> None:
-        """Install /sync skill and command directly (not staged).
-
-        Writes inside the instance dir (``skills/`` and ``commands/``);
-        composition then symlinks them under root ``.opencode/``. When
-        the legacy fallback is active (``instance_root == root``), the
-        old ``.opencode/`` paths are used directly.
-        """
+        """Install /sync skill + command (project-wide; not staged)."""
         from .sync_skill_content import SYNC_SKILL_BODY, SYNC_COMMAND_BODY
 
-        skill_dir, commands_dir = self._agent_surface_dirs(root)
-        self._write_skill(
-            skill_dir / "sync" / "SKILL.md",
+        install_skill(
+            root,
             name="sync",
             description=(
                 "Reconcile staged All-Might templates with user-customized "
                 "files. Run after allmight init on a re-initialized project."
             ),
-            body=SYNC_SKILL_BODY,
+            skill_body=SYNC_SKILL_BODY,
+            command_body=SYNC_COMMAND_BODY,
         )
-        commands_dir.mkdir(parents=True, exist_ok=True)
-        write_guarded(commands_dir / "sync.md", SYNC_COMMAND_BODY, ALLMIGHT_MARKER_MD)
 
     def _install_one_for_all_skill(self, root: Path, *, force: bool = False) -> None:
-        """Install /one-for-all skill + command.
-
-        ``/one-for-all`` is the agent-driven personality export skill
-        (PII review, per-capability rules). 1 personality → 1 bundle.
-        Companion to ``/all-for-one`` (the inverse N-to-1 merge).
-        """
+        """Install /one-for-all skill + command (1 personality → 1 bundle)."""
         from .one_for_all_skill_content import (
             ONE_FOR_ALL_COMMAND_BODY,
             ONE_FOR_ALL_SKILL_BODY,
         )
 
-        skill_dir, commands_dir = self._agent_surface_dirs(root)
-        self._write_skill(
-            skill_dir / "one-for-all" / "SKILL.md",
+        install_skill(
+            root,
             name="one-for-all",
             description=(
                 "Bundle a personality for transfer to another All-Might "
                 "project (1 → 1). Applies per-capability export rules "
                 "and reviews content for PII before writing the bundle."
             ),
-            body=ONE_FOR_ALL_SKILL_BODY,
-        )
-        commands_dir.mkdir(parents=True, exist_ok=True)
-        write_guarded(
-            commands_dir / "one-for-all.md",
-            ONE_FOR_ALL_COMMAND_BODY,
-            ALLMIGHT_MARKER_MD,
+            skill_body=ONE_FOR_ALL_SKILL_BODY,
+            command_body=ONE_FOR_ALL_COMMAND_BODY,
             force=force,
         )
 
     def _install_all_for_one_skill(self, root: Path, *, force: bool = False) -> None:
-        """Install /all-for-one skill + command.
-
-        ``/all-for-one`` is the agent-driven personality merge skill
-        (N sources → 1 target). Sources can be ``/one-for-all``
-        bundles or in-project personalities; targets can be new or
-        existing personalities. Companion to ``/one-for-all`` (the
-        inverse 1-to-1 export).
-        """
+        """Install /all-for-one skill + command (N sources → 1 target)."""
         from .all_for_one_skill_content import (
             ALL_FOR_ONE_COMMAND_BODY,
             ALL_FOR_ONE_SKILL_BODY,
         )
 
-        skill_dir, commands_dir = self._agent_surface_dirs(root)
-        self._write_skill(
-            skill_dir / "all-for-one" / "SKILL.md",
+        install_skill(
+            root,
             name="all-for-one",
             description=(
                 "Absorb multiple personalities (bundles or in-project) "
                 "into a single target (N → 1). Handles per-capability "
                 "merge conflicts and ROLE.md prose reconciliation."
             ),
-            body=ALL_FOR_ONE_SKILL_BODY,
-        )
-        commands_dir.mkdir(parents=True, exist_ok=True)
-        write_guarded(
-            commands_dir / "all-for-one.md",
-            ALL_FOR_ONE_COMMAND_BODY,
-            ALLMIGHT_MARKER_MD,
+            skill_body=ALL_FOR_ONE_SKILL_BODY,
+            command_body=ALL_FOR_ONE_COMMAND_BODY,
             force=force,
         )
 
     def _install_onboard_skill(self, root: Path, *, force: bool = False) -> None:
         """Install /onboard skill + command on every fresh init.
 
-        Unlike /sync (only useful on re-init), /onboard is the
-        agent-side stage 2 of bootstrap and must exist immediately
-        after the first ``allmight init`` so the user has somewhere to
-        run it.
+        Stage 2 of bootstrap; must exist immediately after the first
+        ``allmight init`` so the user has somewhere to run it.
         """
         from .onboard_skill_content import ONBOARD_SKILL_BODY, ONBOARD_COMMAND_BODY
 
-        skill_dir, commands_dir = self._agent_surface_dirs(root)
-        self._write_skill(
-            skill_dir / "onboard" / "SKILL.md",
+        install_skill(
+            root,
             name="onboard",
             description=(
                 "Finish All-Might setup: capture user intent in each "
                 "personality's ROLE.md and classify the folders listed "
                 "during init."
             ),
-            body=ONBOARD_SKILL_BODY,
-        )
-        commands_dir.mkdir(parents=True, exist_ok=True)
-        write_guarded(
-            commands_dir / "onboard.md",
-            ONBOARD_COMMAND_BODY,
-            ALLMIGHT_MARKER_MD,
+            skill_body=ONBOARD_SKILL_BODY,
+            command_body=ONBOARD_COMMAND_BODY,
             force=force,
         )
 
@@ -699,33 +660,4 @@ Use `--dry-run` with the `cliosoft-sos` MCP tools to enrich safely:
 - After check-in, re-ingest to update the search index
 """
         return ROUTING_PREAMBLE + base + sos_section
-
-    def _write_skill(
-        self,
-        path: Path,
-        name: str,
-        description: str,
-        body: str,
-        disable_model_invocation: bool = False,
-    ) -> None:
-        """Write a SKILL.md file with YAML frontmatter."""
-        frontmatter_lines = [
-            "---",
-            f"name: {name}",
-            f"description: {description}",
-        ]
-        if disable_model_invocation:
-            frontmatter_lines.append("disable-model-invocation: true")
-        frontmatter_lines.append("---")
-
-        # Marker goes after the frontmatter so OpenCode still parses the
-        # leading "---"; write_guarded sees it and won't re-prepend.
-        content = (
-            "\n".join(frontmatter_lines)
-            + "\n\n"
-            + ALLMIGHT_MARKER_MD
-            + "\n\n"
-            + body
-        )
-        write_guarded(path, content, ALLMIGHT_MARKER_MD)
 
