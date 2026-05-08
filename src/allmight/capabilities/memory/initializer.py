@@ -96,8 +96,12 @@ class MemoryInitializer:
         """
         self._instance_root = instance_root
         self._instance_rel = self._compute_instance_rel(root, instance_root)
+
         if staging:
             self._stage_memory_templates(root)
+            # Bookkeeping mirror runs on the staging path too — see
+            # the call after the direct branch for the rationale.
+            self._init_memory_history(root)
             return
 
         # --- Direct init (first time or force) ---
@@ -162,26 +166,71 @@ class MemoryInitializer:
         #     ``Stop`` event in .claude/settings.json.
         self._write_claude_memory_history_hook(root, force=force)
 
+        # 9c. Install the /recover skill — wraps the memory-history
+        #     CLI for the typical "undo this accidental edit" moment.
+        self._install_recover_skill(root, force=force)
+
         # 10. Initialise the memory-history mirror at
-        #     ``.allmight/memory-history/``. Idempotent — re-runs of
-        #     ``allmight init`` only sync drift; the .git layout is
-        #     preserved across reinits. Failures here must not block
-        #     init (the user's project still works without recovery).
+        #     ``.allmight/memory-history/``. Runs LAST so the seed
+        #     commit captures everything we just wrote (MEMORY.md,
+        #     ROLE.md, plugins, command files, etc.). Idempotent —
+        #     re-init of an already-mirrored project just syncs
+        #     drift. Failures are non-fatal: the project still works
+        #     without recovery.
+        self._init_memory_history(root)
+
+    def _init_memory_history(self, root: Path) -> None:
+        """Idempotently initialise ``.allmight/memory-history/``.
+
+        Runs on every ``initialize()`` call (including the staging
+        path) so projects that were init'd before this feature
+        shipped pick up the recovery mirror on their next ``allmight
+        init`` without needing ``--force``. Failures must not block
+        init — surface as a warning and continue.
+        """
         try:
             from .history import MemoryHistory
 
             MemoryHistory().init(root)
         except Exception as exc:
-            # Surface as a warning; init continues so the user gets
-            # a working project even if git isn't on PATH or the
-            # disk is read-only.
             import sys
             print(
                 f"warning: memory-history init failed ({exc}); "
                 "auto-recovery snapshots will not be available. "
-                "Run `allmight memory init` after fixing.",
+                "Run `allmight memory snapshot` after fixing.",
                 file=sys.stderr,
             )
+
+    def _install_recover_skill(self, root: Path, force: bool = False) -> None:
+        """Install the ``/recover`` SKILL.md.
+
+        Companion to the ``/recover`` command body (written by
+        ``_write_memory_command_content``). The skill body teaches
+        the agent how to walk the user through picking the right
+        revision and restoring it via ``allmight memory log/diff/
+        restore``. Idempotent and runs on every ``initialize()`` so
+        re-init picks it up too.
+        """
+        from .recover_skill_content import RECOVER_SKILL_BODY
+
+        skills_dir = root / ".opencode" / "skills" / "recover"
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        frontmatter = (
+            "---\n"
+            "name: recover\n"
+            "description: Restore memory data from the .allmight/memory-history/ "
+            "snapshot mirror. Use when the user wants to undo an accidental "
+            "memory edit, restore a deleted file, or roll back to an earlier "
+            "state.\n"
+            "---\n\n"
+        )
+        content = frontmatter + ALLMIGHT_MARKER_MD + "\n\n" + RECOVER_SKILL_BODY
+        write_guarded(
+            skills_dir / "SKILL.md",
+            content,
+            ALLMIGHT_MARKER_MD,
+            force=force,
+        )
 
     # ------------------------------------------------------------------
     # Instance-root helpers
@@ -259,13 +308,21 @@ class MemoryInitializer:
     def _write_memory_command_content(
         self, commands_dir: Path, force: bool = False,
     ) -> None:
-        """Write memory command content (just /remember and /recall).
+        """Write memory command content (``/remember``, ``/recall``, ``/recover``).
 
         ``/reflect`` is no longer a separate command — its end-of-session
         review work folds into ``/remember`` under a ``## Reflect``
         section, since both flows touch the same memory layers and the
         agent picks the mode based on trigger context.
+
+        ``/recover`` wraps the ``allmight memory log/diff/restore`` CLI
+        with the dialog needed to pick the right snapshot when a user
+        wants to undo an accidental memory edit. The CLI stays
+        available for scripting; ``/recover`` is the human-friendly
+        facade.
         """
+        from .recover_skill_content import RECOVER_COMMAND_BODY
+
         write_guarded(
             commands_dir / "remember.md",
             self._remember_command_body(),
@@ -275,6 +332,12 @@ class MemoryInitializer:
         write_guarded(
             commands_dir / "recall.md",
             self._recall_command_body(),
+            ALLMIGHT_MARKER_MD,
+            force=force,
+        )
+        write_guarded(
+            commands_dir / "recover.md",
+            RECOVER_COMMAND_BODY,
             ALLMIGHT_MARKER_MD,
             force=force,
         )

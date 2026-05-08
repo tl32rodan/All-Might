@@ -88,6 +88,31 @@ class TestInit:
         history.init(initted_project)  # second call
         assert (initted_project / HISTORY_REL / ".git").is_dir()
 
+    def test_reinit_creates_mirror_when_missing(
+        self, initted_project: Path,
+    ) -> None:
+        """Regression: projects init'd before the memory-history
+        feature shipped run ``allmight init`` without ``--force``,
+        which goes through the staging branch. The mirror MUST
+        still be created on that path — otherwise pre-feature
+        projects never get recovery without the user knowing to
+        ``--force``.
+        """
+        import shutil
+        history_path = initted_project / HISTORY_REL
+        # Simulate a pre-feature project: wipe the mirror entirely.
+        shutil.rmtree(history_path)
+        assert not history_path.exists()
+
+        # Plain ``allmight init`` (no --force). This goes through the
+        # re-init / staging branch.
+        result = _invoke_in(initted_project, ["init", "--yes", "."])
+        assert result.exit_code == 0, result.output
+
+        # Mirror restored.
+        assert history_path.is_dir()
+        assert (history_path / ".git").is_dir()
+
 
 # ----------------------------------------------------------------------
 # Sync — copy live tree into mirror
@@ -429,3 +454,68 @@ class TestTrackedGlobs:
             assert "store/" not in pat, (
                 f"glob {pat!r} would pull in derived SMAK index data"
             )
+
+
+# ----------------------------------------------------------------------
+# /recover skill + command (skill-level wrapper around the CLI)
+# ----------------------------------------------------------------------
+
+
+class TestRecoverSurface:
+    """``/recover`` is the agent-friendly facade over ``allmight memory
+    log/diff/restore``. Pin: skill + command installed, body covers
+    the procedure, and key trigger / safety cues are present."""
+
+    def test_recover_command_installed(self, initted_project: Path) -> None:
+        cmd = initted_project / ".opencode" / "commands" / "recover.md"
+        assert cmd.is_file()
+
+    def test_recover_skill_installed(self, initted_project: Path) -> None:
+        skill = initted_project / ".opencode" / "skills" / "recover" / "SKILL.md"
+        assert skill.is_file()
+
+    def test_recover_skill_has_frontmatter(self, initted_project: Path) -> None:
+        body = (
+            initted_project / ".opencode" / "skills" / "recover" / "SKILL.md"
+        ).read_text()
+        # YAML frontmatter so OpenCode + Claude Code both parse it.
+        assert body.startswith("---\n")
+        assert "name: recover" in body
+        assert "description:" in body
+
+    def test_recover_skill_documents_cli_calls(
+        self, initted_project: Path,
+    ) -> None:
+        """The skill body must teach the agent the actual CLI it
+        wraps — otherwise the agent can't act on it."""
+        body = (
+            initted_project / ".opencode" / "skills" / "recover" / "SKILL.md"
+        ).read_text()
+        for token in (
+            "allmight memory log",
+            "allmight memory diff",
+            "allmight memory restore",
+        ):
+            assert token in body, f"skill body missing CLI hint: {token}"
+
+    def test_recover_skill_calls_out_safety(
+        self, initted_project: Path,
+    ) -> None:
+        """The skill must remind the agent to confirm with the user
+        and to prompt /ingest when database files are restored."""
+        body = (
+            initted_project / ".opencode" / "skills" / "recover" / "SKILL.md"
+        ).read_text().lower()
+        assert "confirm" in body
+        assert "/ingest" in body
+
+    def test_recover_command_points_at_skill(
+        self, initted_project: Path,
+    ) -> None:
+        body = (
+            initted_project / ".opencode" / "commands" / "recover.md"
+        ).read_text()
+        assert "recover" in body.lower()
+        # Command body should reference the skill so the agent loads
+        # the longer procedure from there.
+        assert "skill" in body.lower()
