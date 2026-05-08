@@ -25,6 +25,26 @@ from ...core.personalities import (
 from .initializer import ProjectInitializer
 
 
+def _install_globals(ctx: InstallContext) -> None:
+    """Project-wide install — skills, commands, ``.allmight/`` setup.
+
+    Reads ``writable`` and ``sos`` from ``ctx.options`` (CLI flag
+    values). No ``Personality`` instance exists at this stage —
+    per-personality writes happen later in :func:`_install` when the
+    user runs ``allmight add`` (or ``/onboard`` shells out to ``add``).
+    """
+    if ctx.options.get("sos"):
+        ctx.manifest.has_path_env = True
+    writable = bool(ctx.options.get("writable", False))
+    ProjectInitializer().initialize_globals(
+        ctx.project_root,
+        ctx.manifest,
+        force=ctx.force,
+        writable=writable,
+        staging=ctx.staging,
+    )
+
+
 def _install(ctx: InstallContext, instance: Personality) -> InstallResult:
     """Bootstrap one database capability instance.
 
@@ -87,5 +107,6 @@ TEMPLATE = PersonalityTemplate(
         ),
     ],
     install=_install,
+    install_globals=_install_globals,
     status=_status,
 )

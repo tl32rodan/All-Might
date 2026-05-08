@@ -43,12 +43,14 @@ class TestCliWritableFlag(unittest.TestCase):
         self.assertIn("--writable", result.output)
 
     def test_init_readonly_default_message(self) -> None:
-        """Default init (read-only) should NOT mention /ingest or /enrich."""
+        """Default init (read-only) labels the project read-only and points
+        the user at /onboard. Detailed command suggestions live inside
+        /onboard now, not the CLI tail.
+        """
         import tempfile
         import os
 
         with tempfile.TemporaryDirectory() as td:
-            # Create minimal project
             os.makedirs(os.path.join(td, "src"))
             with open(os.path.join(td, "src", "main.py"), "w") as f:
                 f.write("def hello(): pass\n")
@@ -56,12 +58,11 @@ class TestCliWritableFlag(unittest.TestCase):
             runner = CliRunner()
             result = runner.invoke(main, ["init", td])
             self.assertEqual(result.exit_code, 0)
-            self.assertNotIn("/ingest", result.output)
-            self.assertNotIn("/enrich", result.output)
-            self.assertIn("/search", result.output)
+            self.assertIn("read-only", result.output)
+            self.assertIn("/onboard", result.output)
 
     def test_init_writable_message(self) -> None:
-        """Writable init should mention /ingest and /enrich."""
+        """Writable init labels the project writable and points the user at /onboard."""
         import tempfile
         import os
 
@@ -73,8 +74,8 @@ class TestCliWritableFlag(unittest.TestCase):
             runner = CliRunner()
             result = runner.invoke(main, ["init", "--writable", td])
             self.assertEqual(result.exit_code, 0)
-            self.assertIn("/ingest", result.output)
-            self.assertIn("/enrich", result.output)
+            self.assertIn("writable", result.output)
+            self.assertIn("/onboard", result.output)
 
 
 class TestCliCloneCommand(unittest.TestCase):

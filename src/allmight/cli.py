@@ -87,34 +87,31 @@ def _init_callback(
     yes: bool = False,
     **template_options: object,
 ) -> None:
-    """Run the registry-driven init flow.
+    """Run the scaffold-only init flow.
 
     ``template_options`` is the raw dict of every CliOption value. Each
-    template's ``install`` reads what it cares about; the CLI never
-    interprets the contents.
+    template's ``install_globals`` reads what it cares about; the CLI
+    never interprets the contents.
 
-    When ``yes`` is False (default) and stdin is a TTY, the CLI prompts
-    for the instance name of each personality and an optional list of
-    project folders to register. The captured answers land in
-    ``.allmight/onboard.yaml`` so the agent's ``/onboard`` skill can
-    finish the qualitative setup later.
+    No personality is created at install time — ``allmight init`` writes
+    the project-wide ``.opencode/`` globals, ``AGENTS.md``,
+    ``MEMORY.md``, an empty registry, and a personality suggestion
+    catalog at ``.allmight/suggestions/personalities/``. The
+    agent-side ``/onboard`` skill then proposes from the catalog and
+    shells out to ``allmight add`` for whatever the user picks.
     """
     from pathlib import Path as P
 
     from .core.personalities import (
         InstallContext,
-        Personality,
-        RegistryEntry,
-        compose,
         compose_agents_md,
         discover,
-        slugify_instance_name,
-        stage_compose_conflicts,
         write_init_scaffold,
         write_registry,
     )
     from .core.state import read_onboard, write_onboard
     from .capabilities.database.scanner import ProjectScanner
+    from .capabilities.database.personality_suggestions import seed_suggestions
 
     root = P(path).resolve()
     scanner = ProjectScanner()
@@ -124,23 +121,15 @@ def _init_callback(
     is_reinit = allmight_dir.is_dir() and not force
 
     templates = discover()
-    template_by_name = {t.name: t for t in templates}
 
-    # Decide the single personality name + its capability set. If
-    # onboard.yaml exists, reuse what was captured before so re-init
-    # never asks the user again. Otherwise prompt (or use the
-    # project-root dir name under --yes).
-    captured = read_onboard(root)
-    if captured is None:
-        captured = _collect_onboard_answers(templates, manifest, interactive=not yes)
-
-    rows = captured.get("personalities", [])
-    if not rows:
-        raise RuntimeError("onboard.yaml has no personalities entry")
-    row = rows[0]
-    personality_name = row.get("name") or row.get("instance")
-    wanted_caps = row.get("capabilities") or [row.get("template")]
-    selected_templates = [template_by_name[c] for c in wanted_caps if c in template_by_name]
+    # Captured onboard.yaml is preserved across re-init so /onboard
+    # state survives. On first init we just seed the empty shape —
+    # /onboard fills personalities[] later when the user picks.
+    captured = read_onboard(root) or {
+        "onboarded": False,
+        "personalities": [],
+        "folders": [],
+    }
 
     write_init_scaffold(root)
 
@@ -149,48 +138,29 @@ def _init_callback(
         manifest=manifest,
         staging=is_reinit,
         force=force,
-    )
-    instance = Personality(
-        template=selected_templates[0],
-        project_root=root,
-        name=personality_name,
         options=dict(template_options),
-        capabilities=[t.name for t in selected_templates],
     )
-    notes: list[str] = []
-    for template in selected_templates:
-        result = template.install(ctx, instance)
-        notes.extend(result.notes)
-    instances: list[Personality] = [instance]
+    for template in templates:
+        if template.install_globals is not None:
+            template.install_globals(ctx)
 
-    # Compose .opencode/ symlinks from each instance's surface.
-    # Conflicts (user-authored files at our target paths) are NOT
-    # silently overwritten — they're collected and staged so /sync can
-    # walk the user through resolution.
-    all_conflicts = []
-    for instance in instances:
-        all_conflicts.extend(compose(root, instance, force=force))
-    stage_compose_conflicts(root, all_conflicts)
+    # Empty AGENTS.md compose — no personalities yet, but the file
+    # must exist so OpenCode can pick it up. /onboard + allmight add
+    # populate it via compose_agents_md once personalities exist.
+    compose_agents_md(root, [], project_name=manifest.name)
 
-    # Stitch every instance's ROLE.md into the single root AGENTS.md.
-    compose_agents_md(root, instances, project_name=manifest.name)
+    # Empty registry — allmight add will append.
+    write_registry(root, [])
 
-    # Persist the registry so allmight list/status can find it again.
-    write_registry(root, [
-        RegistryEntry(
-            instance=instance.name,
-            capabilities=list(instance.capabilities),
-            versions={t.name: t.version for t in selected_templates},
-        ),
-    ])
-
-    # Persist onboarding answers for the agent-side /onboard skill.
-    captured["personalities"] = [
-        {"name": instance.name, "capabilities": list(instance.capabilities)},
-    ]
-    captured.setdefault("folders", [])
+    # Persist the (possibly preserved) onboard state.
     captured.setdefault("onboarded", False)
+    captured.setdefault("personalities", [])
+    captured.setdefault("folders", [])
     write_onboard(root, captured)
+
+    # Seed the personality suggestion catalog so /onboard has a
+    # deterministic list to propose from.
+    seed_suggestions(root, force=force)
 
     writable = bool(template_options.get("writable"))
     mode_label = "writable" if writable else "read-only"
@@ -200,89 +170,16 @@ def _init_callback(
         file_count = sum(1 for _ in tpl_dir.rglob("*") if _.is_file()) if tpl_dir.exists() else 0
         click.echo(f"All-Might! Project '{manifest.name}' — new templates staged.")
         click.echo(f"  Templates:  .allmight/templates/ ({file_count} files)")
-        if all_conflicts:
-            click.echo(f"  Conflicts:  {len(all_conflicts)} (.opencode/ entries you authored)")
         click.echo("")
         click.echo("  Run /sync in your agent to merge with your customizations.")
         click.echo("  Or run 'allmight init --force' to overwrite everything.")
     else:
         click.echo(f"All-Might! Project '{manifest.name}' initialized ({mode_label}).")
-        click.echo(f"  Languages:    {', '.join(manifest.languages) or 'none detected'}")
-        click.echo(f"  Corpora:      {len(manifest.indices)}")
-        click.echo(f"  Personalities: {', '.join(i.name for i in instances)}")
-        if all_conflicts:
-            click.echo("")
-            click.echo(
-                f"  Heads up: {len(all_conflicts)} .opencode/ entries already exist "
-                "and were not touched."
-            )
-            for c in all_conflicts:
-                click.echo(f"    - {c.dst.relative_to(root)} ({c.existing})")
-            click.echo(
-                "  Manifest staged at .allmight/templates/conflicts.yaml — "
-                "run /sync to resolve."
-            )
+        click.echo(f"  Languages:  {', '.join(manifest.languages) or 'none detected'}")
         click.echo("")
         click.echo("What's next:")
-        click.echo("  1. Open this folder in Claude Code or OpenCode")
-        click.echo("  2. Run /onboard to finish setup (role descriptions, folder classification)")
-        if writable:
-            click.echo("  3. Run /ingest to build the search index")
-            click.echo("  4. Run /search \"<query>\" to explore your codebase")
-            click.echo("  5. Run /enrich to annotate symbols as you learn")
-        else:
-            click.echo("  3. Run /search \"<query>\" to explore the codebase")
-        click.echo("")
-        click.echo("All-Might skills auto-load — just start asking questions.")
-
-
-def _collect_onboard_answers(
-    templates,
-    manifest,
-    *,
-    interactive: bool,
-) -> dict:
-    """Gather the single personality name + its capabilities.
-
-    Part-D commit 7: ``allmight init`` creates ONE personality with
-    ALL discovered capabilities. The previous flow (one prompt per
-    template + folder list) is gone — folder classification is
-    deferred entirely to the agent-side ``/onboard`` skill.
-
-    Always returns the same dict shape — uses the project-root dir
-    name as the default under ``--yes`` / non-TTY, prompts otherwise.
-    """
-    import sys
-
-    from .core.personalities import slugify_instance_name
-
-    is_tty = sys.stdin.isatty() and sys.stdout.isatty()
-    do_prompt = interactive and is_tty
-
-    default_name = slugify_instance_name(manifest.root_path.name) or "main"
-
-    if do_prompt:
-        raw = click.prompt(
-            "  Personality name",
-            default=default_name,
-            show_default=True,
-        )
-        slug = slugify_instance_name(raw) or default_name
-        if slug != raw:
-            click.echo(f"    → using slug: {slug}")
-    else:
-        slug = default_name
-
-    return {
-        "onboarded": False,
-        "personalities": [
-            {
-                "name": slug,
-                "capabilities": [t.name for t in templates],
-            },
-        ],
-        "folders": [],
-    }
+        click.echo("  Run /onboard in your agent to set up your first personality,")
+        click.echo("  or just start asking questions.")
 
 
 main.add_command(_build_init_command())

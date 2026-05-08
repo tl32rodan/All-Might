@@ -68,6 +68,32 @@ class MemoryInitializer:
         self._instance_root: Path | None = None
         self._instance_rel: str = ""
 
+    def initialize_globals(
+        self,
+        root: Path,
+        *,
+        force: bool = False,
+        staging: bool = False,
+    ) -> None:
+        """Project-wide install — root MEMORY.md, ``.opencode/`` commands +
+        plugins, recover skill, memory-history mirror.
+
+        Per-personality data (``personalities/<n>/memory/``, ROLE.md,
+        STATUS.md) lives in :meth:`initialize`. The memory-history
+        mirror is initialised here on the global state; :meth:`initialize`
+        re-syncs it after per-instance writes so any drift from
+        ROLE.md / STATUS.md / config.yaml lands in the seed commit too.
+        Both calls are idempotent.
+        """
+        if staging:
+            self._stage_memory_templates(root)
+        else:
+            self._create_memory_md(root)
+            self._generate_memory_commands(root, force=force)
+            self._generate_opencode_json(root, force=force)
+            self._install_recover_skill(root, force=force)
+        self._init_memory_history(root)
+
     def initialize(
         self,
         root: Path,
@@ -75,98 +101,71 @@ class MemoryInitializer:
         instance_root: Path | None = None,
         force: bool = False,
     ) -> None:
-        """Bootstrap the memory subsystem at *root*.
+        """Bootstrap globals + one personality's memory subtree.
 
         Args:
-            root: Project root path. Always holds ``MEMORY.md`` and
-                ``AGENTS.md`` regardless of layout.
+            root: Project root path. Always holds ``MEMORY.md``.
             staging: If True, stage templates to .allmight/templates/
                      instead of writing to working locations.
             instance_root: Personality instance directory under
-                ``personalities/<name>/``. The memory data dir,
-                commands, and plugins live here. When ``None`` (legacy
-                callers) writes go under ``root`` to preserve the
-                pre-personalities layout.
+                ``personalities/<name>/``. The memory data dir lives
+                here. When ``None`` (legacy callers) writes go under
+                ``root`` to preserve the pre-personalities layout.
             force: If True, regenerate framework-owned files
-                (``.opencode/plugins/*.ts``, the Claude Code memory
-                hook, generated commands, ROLE.md) even when the on-
-                disk file is missing the All-Might marker. **Never
-                touches user data**: ``MEMORY.md``, ``memory/journal/``,
+                (``.opencode/plugins/*.ts``, generated commands,
+                ROLE.md) even when the on-disk file is missing the
+                All-Might marker. **Never touches user data**:
+                ``MEMORY.md``, ``memory/journal/``,
                 ``memory/understanding/``, ``memory/store/``, and
                 ``memory/usage.log`` always preserve existing content.
         """
         self._instance_root = instance_root
         self._instance_rel = self._compute_instance_rel(root, instance_root)
 
+        # Project-wide writes (idempotent — also seeds memory-history)
+        self.initialize_globals(root, force=force, staging=staging)
+
         if staging:
-            self._stage_memory_templates(root)
-            # Bookkeeping mirror runs on the staging path too — see
-            # the call after the direct branch for the rationale.
-            self._init_memory_history(root)
             return
 
-        # --- Direct init (first time or force) ---
-
+        # Per-instance writes
         memory_dir = self._memory_dir(root)
 
         # 1. Create memory config (defines journal store + SMAK config)
         cfg_mgr = MemoryConfigManager(root, memory_root=memory_dir)
         cfg_mgr.initialize()
 
-        # 2. Create L1: MEMORY.md at project root
-        self._create_memory_md(root)
-
-        # 3. Create L2: understanding/ directory
+        # 2. L2: understanding/
         (memory_dir / "understanding").mkdir(parents=True, exist_ok=True)
 
-        # 4. Create L3: journal/ directory + store/
+        # 3. L3: journal/ + store/
         (memory_dir / "journal").mkdir(parents=True, exist_ok=True)
         (memory_dir / "store").mkdir(parents=True, exist_ok=True)
 
-        # 4b. Create usage.log for feedback loop
+        # 4. usage.log for feedback loop
         usage_log = memory_dir / "usage.log"
         if not usage_log.exists():
             usage_log.write_text("")
 
-        # 4c. Skills log — trace of self-authored skills/plugins
+        # 5. skills-log.md — trace of self-authored skills/plugins
         skills_log = memory_dir / "skills-log.md"
         if not skills_log.exists():
             skills_log.write_text(self._skills_log_template())
 
-        # 4d. Lessons-learned curator workflow:
-        # - _inbox/  : users write freely during sessions (Mode-2 instance share)
-        # - _reviewed/: curator (e.g. team lead) moves audited entries here
-        # See /remember "Lesson Learned" subsection for the routing rule.
+        # 6. Lessons-learned curator workflow (_inbox/, _reviewed/)
         lessons = memory_dir / "lessons_learned"
         (lessons / "_inbox").mkdir(parents=True, exist_ok=True)
         (lessons / "_reviewed").mkdir(parents=True, exist_ok=True)
 
-        # 4e. Personality STATUS.md (Part-F): rolling per-personality
-        # state (active focus, recent topics, open threads, last
-        # activity). Maintained by /remember; the framework only
-        # writes the empty starter on first init.
+        # 7. STATUS.md — rolling per-personality state
         self._write_status_md()
 
-        # 5. Generate memory commands (remember, recall, reflect)
-        self._generate_memory_commands(root, force=force)
-
-        # 7. Write ROLE.md (root AGENTS.md is composed by the registry)
+        # 8. ROLE.md
         self._write_role_md(root, force=force)
 
-        # 8. Generate opencode.json with hooks for OpenCode
-        self._generate_opencode_json(root, force=force)
-
-        # 9. Install the /recover skill — wraps the memory-history
-        #    CLI for the typical "undo this accidental edit" moment.
-        self._install_recover_skill(root, force=force)
-
-        # 10. Initialise the memory-history mirror at
-        #     ``.allmight/memory-history/``. Runs LAST so the seed
-        #     commit captures everything we just wrote (MEMORY.md,
-        #     ROLE.md, plugins, command files, etc.). Idempotent —
-        #     re-init of an already-mirrored project just syncs
-        #     drift. Failures are non-fatal: the project still works
-        #     without recovery.
+        # 9. Memory-history mirror runs LAST so the seed commit captures
+        #    everything we just wrote (MEMORY.md, ROLE.md, plugins,
+        #    command files, etc.). Idempotent. Failures are non-fatal.
         self._init_memory_history(root)
 
     def _init_memory_history(self, root: Path) -> None:

@@ -26,6 +26,57 @@ class ProjectInitializer:
         # called.
         self._instance_root: Path | None = None
 
+    def initialize_globals(
+        self,
+        root: Path,
+        manifest: ProjectManifest,
+        *,
+        force: bool = False,
+        writable: bool = False,
+        staging: bool = False,
+    ) -> None:
+        """Project-wide install — skills, commands, ``.allmight/`` setup.
+
+        Called once per init (no ``Personality`` instance involved).
+        Per-personality writes (instance dir, ROLE.md) live in
+        :meth:`initialize`. Idempotent: write_guarded paths are safe
+        to refresh on every call.
+        """
+        allmight_dir = root / ".allmight"
+        mode_file = allmight_dir / "mode"
+        if mode_file.exists():
+            current_mode = mode_file.read_text().strip()
+            if current_mode == "read-only" and writable:
+                raise ValueError(
+                    "Cannot upgrade from read-only to writable mode. "
+                    "Read-only projects cannot be converted to writable."
+                )
+
+        if staging:
+            self._stage_templates_globals(root, manifest, writable=writable)
+            current_mode = (
+                mode_file.read_text().strip() if mode_file.exists() else None
+            )
+            if current_mode == "writable" and not writable:
+                tpl = root / ".allmight" / "templates"
+                tpl.mkdir(parents=True, exist_ok=True)
+                (tpl / "remove.txt").write_text("enrich.md\ningest.md\n")
+        else:
+            self._generate_commands(root, manifest, writable=writable, force=force)
+            self._install_onboard_skill(root, force=force)
+            self._install_one_for_all_skill(root, force=force)
+            self._install_all_for_one_skill(root, force=force)
+
+            allmight_dir.mkdir(exist_ok=True)
+            templates_dir = allmight_dir / "templates"
+            if templates_dir.exists():
+                import shutil
+                shutil.rmtree(templates_dir)
+
+        (allmight_dir / "mode").write_text(
+            "writable" if writable else "read-only"
+        )
+
     def initialize(
         self,
         manifest: ProjectManifest,
@@ -33,7 +84,7 @@ class ProjectInitializer:
         writable: bool = False,
         instance_root: Path | None = None,
     ) -> None:
-        """Execute Detroit SMAK — bootstrap the entire workspace.
+        """Execute Detroit SMAK — bootstrap globals + one personality instance.
 
         Args:
             manifest: Project characteristics from the Scanner.
@@ -50,60 +101,20 @@ class ProjectInitializer:
         if instance_root is None:
             instance_root = root
         self._instance_root = instance_root
-        allmight_dir = root / ".allmight"
-        is_reinit = allmight_dir.is_dir() and not force
+        is_reinit = (root / ".allmight").is_dir() and not force
 
-        # Validate mode transition (applies to both re-init and --force)
-        mode_file = allmight_dir / "mode"
-        if mode_file.exists():
-            current_mode = mode_file.read_text().strip()
-            if current_mode == "read-only" and writable:
-                raise ValueError(
-                    "Cannot upgrade from read-only to writable mode. "
-                    "Read-only projects cannot be converted to writable."
-                )
+        # Project-wide writes
+        self.initialize_globals(
+            root, manifest,
+            force=force, writable=writable, staging=is_reinit,
+        )
 
-        # 1. Create database/ (always safe — mkdir exist_ok)
+        # Per-instance writes
         self._create_metadata(root, manifest)
-
         if is_reinit:
-            # Detect mode downgrade before staging
-            current_mode = (
-                mode_file.read_text().strip() if mode_file.exists() else None
-            )
-
-            # Re-init: stage templates, don't overwrite working files
-            self._stage_templates(root, manifest, writable=writable)
-
-            # If downgrading writable → read-only, stage removal list
-            if current_mode == "writable" and not writable:
-                tpl = root / ".allmight" / "templates"
-                tpl.mkdir(parents=True, exist_ok=True)
-                (tpl / "remove.txt").write_text("enrich.md\ningest.md\n")
-
-            # Update mode file
-            (allmight_dir / "mode").write_text(
-                "writable" if writable else "read-only"
-            )
+            self._stage_templates_role(root, manifest, writable=writable)
         else:
-            # First init (or --force): write everything directly
-            self._generate_commands(root, manifest, writable=writable, force=force)
             self._write_role_md(root, manifest, writable=writable, force=force)
-            self._install_onboard_skill(root, force=force)
-            self._install_one_for_all_skill(root, force=force)
-            self._install_all_for_one_skill(root, force=force)
-
-            # Create .allmight/ marker (clean up any stale templates)
-            allmight_dir.mkdir(exist_ok=True)
-            templates_dir = allmight_dir / "templates"
-            if templates_dir.exists():
-                import shutil
-                shutil.rmtree(templates_dir)
-
-            # Persist access mode
-            (allmight_dir / "mode").write_text(
-                "writable" if writable else "read-only"
-            )
 
     def _create_metadata(self, root: Path, manifest: ProjectManifest) -> None:
         """Create database/ inside the instance dir.
@@ -113,31 +124,33 @@ class ProjectInitializer:
         """
         (self._instance_root / "database").mkdir(parents=True, exist_ok=True)
 
-    def _stage_templates(
+    def _stage_templates_globals(
         self,
         root: Path,
         manifest: ProjectManifest,
         writable: bool = False,
     ) -> None:
-        """Stage new templates to .allmight/templates/ for agent-driven /sync.
+        """Re-init: stage project-wide templates to ``.allmight/templates/``.
 
-        Called on re-init when .allmight/ already exists. Writes the same
-        content that first-init would write, but to
-        ``.allmight/templates/`` (mirroring the project layout) instead
-        of the live locations.
+        Globals only — per-personality ROLE.md staging lives in
+        :meth:`_stage_templates_role`.
         """
         tpl = root / ".allmight" / "templates"
-
-        # --- Commands (still under .allmight/templates/commands/ for
-        # backwards compat with existing /sync flow; instance-aware
-        # staging is a follow-up) ---
         cmds_tpl = tpl / "commands"
         cmds_tpl.mkdir(parents=True, exist_ok=True)
         self._stage_command_content(cmds_tpl, manifest, writable=writable)
+        # /sync skill + command are written directly to .opencode/, not staged
+        self._install_sync_skill(root)
 
-        # --- ROLE / AGENTS section staged ---
+    def _stage_templates_role(
+        self,
+        root: Path,
+        manifest: ProjectManifest,
+        writable: bool = False,
+    ) -> None:
+        """Re-init: stage one personality's ROLE.md to ``.allmight/templates/``."""
+        tpl = root / ".allmight" / "templates"
         if self._instance_root is not None and self._instance_root != root:
-            # Registry-driven: mirror project layout for /sync to find.
             inst_rel = self._instance_root.relative_to(root)
             staged_role = tpl / inst_rel / "ROLE.md"
             staged_role.parent.mkdir(parents=True, exist_ok=True)
@@ -149,10 +162,8 @@ class ProjectInitializer:
             body = self._role_md_body(manifest, writable=writable)
             if body.startswith(ALLMIGHT_MARKER_MD):
                 body = body[len(ALLMIGHT_MARKER_MD):].lstrip("\n")
+            tpl.mkdir(parents=True, exist_ok=True)
             (tpl / "claude-md-section.md").write_text(f"{marker}\n{body}")
-
-        # --- Install /sync skill + command (directly, not staged) ---
-        self._install_sync_skill(root)
 
     def _stage_command_content(
         self, cmds_tpl: Path, manifest: ProjectManifest, writable: bool = False,
