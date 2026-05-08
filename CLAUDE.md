@@ -204,6 +204,7 @@ mirrors it **must** be updated in the same commit:
 | OpenCode plugin (`.ts`) | Claude Code hook (`.py`) |
 |---|---|
 | `memory-load.ts` | `memory_load.py` (in `MemoryInitializer`) |
+| `memory-history.ts` | `memory_history.py` (in `MemoryInitializer`) — `Stop` hook |
 | `role-load.ts` | `role_load.py` (in `core.claude_bridge`) |
 | `remember-trigger.ts` | *(not yet mirrored — see TODO in claude_bridge)* |
 | `usage-logger.ts` | *(not yet mirrored)* |
@@ -287,7 +288,12 @@ my-chip-project/                          ← One All-Might project
 └── .allmight/
     ├── personalities.yaml                ← Records installed personalities (Part-D shape)
     ├── onboard.yaml                      ← What `/onboard` should classify
-    └── templates/                        ← Re-init staging (when applicable)
+    ├── templates/                        ← Re-init staging (when applicable)
+    └── memory-history/                   ← Local git mirror tracking memory data
+        ├── .git/                         ← Bookkeeping (separate from project's main .git)
+        ├── .gitignore                    ← Excludes store/ (SMAK vector indices)
+        ├── MEMORY.md                     ← Mirror of project-root MEMORY.md
+        └── personalities/<name>/         ← Mirror of ROLE.md + memory data + database config.yaml
 ```
 
 **SMAK indexes source files in-place** — no files are ever copied
@@ -298,6 +304,16 @@ SMAK config (`config.yaml`) live inside each personality's
 **Sidecar files** (`.sidecar.yaml`) live beside the source code
 they describe (at `$DDI_ROOT_PATH/...`), NOT inside the All-Might
 project.
+
+**Memory recovery** — every memory write is auto-snapshotted into
+`.allmight/memory-history/.git` by the post-turn hook
+(`memory-history.ts` / `memory_history.py`). Accidentally deleted
+or overwritten data is recoverable via `allmight memory log` +
+`allmight memory restore <file> [--rev <sha>]`. SMAK vector
+indices (`store/`) are excluded from the mirror — they're
+rebuildable by `/ingest`. The mirror's `.git` is separate from the
+project's main `.git` so neither side sees the other in
+`git status`.
 
 `allmight init` is **idempotent and safe in pre-populated
 directories.** Files that carry an All-Might marker
@@ -351,6 +367,7 @@ allmight import <bundle> [--as <new-name>]         Single-bundle install (no mer
 allmight clone <source>                            Read-only clone with symlinked database/.
 allmight migrate                                   One-shot upgrade for pre-Part-C projects.
 allmight memory init / memory export               Memory-specific lifecycle.
+allmight memory snapshot / log / diff / restore / gc   Memory version-control mirror (recovery from accidental edits / deletes).
 ```
 
 **`/one-for-all` and `/all-for-one` are skills, not CLI commands.**

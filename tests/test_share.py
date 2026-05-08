@@ -295,7 +295,7 @@ class TestRunGitDisablesSigning:
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from types import SimpleNamespace
-        from allmight.share import git_share
+        from allmight.utils import git as git_utils
 
         captured: list[list[str]] = []
 
@@ -303,10 +303,14 @@ class TestRunGitDisablesSigning:
             captured.append(list(cmd))
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(git_share.subprocess, "run", fake_run)
-        git_share._run_git(["commit", "-m", "anything"])
+        # Monkey-patch the subprocess in ``utils.git`` (where
+        # ``run_git`` is now defined and shared between share and
+        # memory-history). Both surfaces inherit the same signing
+        # bypass; this test pins the exact -c prefix shape.
+        monkeypatch.setattr(git_utils.subprocess, "run", fake_run)
+        git_utils.run_git(["commit", "-m", "anything"])
 
-        assert captured, "_run_git should have invoked subprocess.run"
+        assert captured, "run_git should have invoked subprocess.run"
         cmd = captured[0]
         assert cmd[0] == "git"
         # The -c overrides must come before the subcommand. Pinning the

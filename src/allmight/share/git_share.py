@@ -15,9 +15,10 @@ problem; subprocess errors propagate up.
 from __future__ import annotations
 
 import shutil
-import subprocess
 import tempfile
 from dataclasses import dataclass, field
+
+from ..utils.git import GitError, run_git as _run_git
 from pathlib import Path
 from typing import Any
 
@@ -31,47 +32,12 @@ _UPSTREAM_FILE = ".allmight/upstream.yaml"
 # ---------------------------------------------------------------------------
 
 
-class GitShareError(RuntimeError):
-    """Raised when a git subprocess returns non-zero."""
-
-
-def _run_git(args: list[str], cwd: Path | None = None) -> str:
-    """Run ``git <args>`` and return stdout. Raises on non-zero exit.
-
-    Bundle-transport commits are bookkeeping (publishing the same
-    reviewed bundle to a git remote), not user-authored content, so
-    they must never be GPG-signed. Signing config that requires an
-    external signer (sandboxes, signing-server setups, hardware
-    tokens) would otherwise fail every ``git commit`` here. We
-    inject ``-c commit.gpgsign=false -c tag.gpgsign=false`` for
-    every git invocation — harmless for read-only commands, and the
-    only way to opt out of a global ``commit.gpgsign = true``.
-    """
-    cmd = [
-        "git",
-        "-c", "commit.gpgsign=false",
-        "-c", "tag.gpgsign=false",
-        *args,
-    ]
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(cwd) if cwd else None,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=120,
-        )
-    except FileNotFoundError as exc:
-        raise GitShareError(
-            "git executable not found on PATH",
-        ) from exc
-    if proc.returncode != 0:
-        raise GitShareError(
-            f"git {' '.join(args)} failed (exit {proc.returncode}): "
-            f"{proc.stderr.strip() or proc.stdout.strip()}"
-        )
-    return proc.stdout
+# Backward-compat alias: existing callers (CLI, tests) catch
+# ``GitShareError`` against this name. The underlying ``run_git`` was
+# hoisted to ``utils.git`` so the memory-history bookkeeping path can
+# reuse the same signing-bypass; both surfaces raise the same error
+# class so callers catching either name still work.
+GitShareError = GitError
 
 
 def _local_path_from_url(url: str) -> Path | None:

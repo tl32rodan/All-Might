@@ -118,23 +118,40 @@ def _hook_command(script_basename: str) -> str:
     return f"python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/{script_basename}"
 
 
-_HOOK_SCRIPTS = ("memory_load.py", "role_load.py")
+# Reload-on-context-rebuild scripts: re-prime MEMORY.md + ROLE.md
+# at SessionStart and after PreCompact so the agent's context is
+# never "cold" after a compaction.
+_RELOAD_SCRIPTS = ("memory_load.py", "role_load.py")
+
+# Turn-end scripts: fire after the agent stops responding. Used for
+# bookkeeping that must capture each turn (memory-history snapshot).
+_TURN_END_SCRIPTS = ("memory_history.py",)
+
+# Union — used by tests and by the merge logic to identify our owned
+# hook commands across all events.
+_HOOK_SCRIPTS = _RELOAD_SCRIPTS + _TURN_END_SCRIPTS
 
 
 def _settings_payload() -> dict:
     """Return the hook config block this bridge owns.
 
     Returned shape matches what ``.claude/settings.json`` expects under
-    the top-level ``"hooks"`` key. Both ``SessionStart`` and
-    ``PreCompact`` register both scripts so memory and role context are
-    re-primed when conversation history is summarised.
+    the top-level ``"hooks"`` key. ``SessionStart`` and ``PreCompact``
+    re-prime memory + role context; ``Stop`` triggers the per-turn
+    memory-history snapshot.
     """
-    hook_entries = [
-        {"type": "command", "command": _hook_command(name)}
-        for name in _HOOK_SCRIPTS
-    ]
-    block = [{"hooks": hook_entries}]
-    return {"SessionStart": block, "PreCompact": block}
+    def _block(scripts: tuple[str, ...]) -> list:
+        return [{"hooks": [
+            {"type": "command", "command": _hook_command(name)}
+            for name in scripts
+        ]}]
+
+    reload_block = _block(_RELOAD_SCRIPTS)
+    return {
+        "SessionStart": reload_block,
+        "PreCompact": reload_block,
+        "Stop": _block(_TURN_END_SCRIPTS),
+    }
 
 
 def _merge_hook_config(existing: dict, owned: dict) -> dict:

@@ -15,6 +15,24 @@ from ...core.safe_write import write_guarded
 from .config import MemoryConfigManager
 
 
+def _routed_memory_paths(body: str) -> str:
+    """Rewrite bare ``memory/`` paths in command bodies to the
+    Part-D personality-routed form ``personalities/<active>/memory/``.
+
+    Command bodies (e.g. ``/remember``, ``/recall``) reference
+    per-personality memory under ``memory/...`` for source-code
+    readability. At install time this helper prepends the routing
+    prefix so the agent — operating from project root cwd — knows
+    which personality's memory to act on after resolving
+    ``<active>`` per ``ROUTING_PREAMBLE``.
+
+    The substitution is anchored on the trailing slash, so
+    ``MEMORY.md`` (uppercase, project root) and the word ``memory``
+    alone are never touched.
+    """
+    return body.replace("memory/", "personalities/<active>/memory/")
+
+
 def _reminder_nudge_text() -> str:
     """Canonical nudge text — shared byte-equal by both runtimes.
 
@@ -138,6 +156,32 @@ class MemoryInitializer:
         #    in core.claude_bridge already registered it in
         #    .claude/settings.json).
         self._write_claude_memory_load_hook(root, force=force)
+
+        # 9b. Write the Claude Code memory-history hook script (mirrors
+        #     .opencode/plugins/memory-history.ts). Registered on the
+        #     ``Stop`` event in .claude/settings.json.
+        self._write_claude_memory_history_hook(root, force=force)
+
+        # 10. Initialise the memory-history mirror at
+        #     ``.allmight/memory-history/``. Idempotent — re-runs of
+        #     ``allmight init`` only sync drift; the .git layout is
+        #     preserved across reinits. Failures here must not block
+        #     init (the user's project still works without recovery).
+        try:
+            from .history import MemoryHistory
+
+            MemoryHistory().init(root)
+        except Exception as exc:
+            # Surface as a warning; init continues so the user gets
+            # a working project even if git isn't on PATH or the
+            # disk is read-only.
+            import sys
+            print(
+                f"warning: memory-history init failed ({exc}); "
+                "auto-recovery snapshots will not be available. "
+                "Run `allmight memory init` after fixing.",
+                file=sys.stderr,
+            )
 
     # ------------------------------------------------------------------
     # Instance-root helpers
@@ -886,7 +930,16 @@ knowledge.
 
     def _remember_command_body(self) -> str:
         from ...core.routing import ROUTING_PREAMBLE
-        return ROUTING_PREAMBLE + """\
+        # The raw body uses bare ``memory/`` paths (e.g.
+        # ``memory/understanding/<workspace>.md``) for source-code
+        # readability. ``_routed_memory_paths`` rewrites every
+        # ``memory/`` to ``personalities/<active>/memory/`` so the
+        # generated command tells the agent which personality's
+        # memory to operate on after resolving ``<active>`` per
+        # ``ROUTING_PREAMBLE``. ``MEMORY.md`` (uppercase, project
+        # root) and the word "memory" alone are left intact because
+        # the substitution is anchored on the trailing slash.
+        body = """\
 Persist memory and maintain its quality. Two modes — pick the one that
 matches the trigger context:
 
@@ -1291,10 +1344,12 @@ Append to `memory/usage.log`:
 - When `memory/.l1-over-cap` appears
 - When the user asks you to consolidate what you learned
 """
+        return ROUTING_PREAMBLE + _routed_memory_paths(body)
 
     def _recall_command_body(self) -> str:
         from ...core.routing import ROUTING_PREAMBLE
-        return ROUTING_PREAMBLE + """\
+        # Same path-rewrite contract as ``_remember_command_body``.
+        body = """\
 Pick up where you left off, and search past memories.
 
 `/recall` is **not just** a journal search. Before running a query,
@@ -1377,6 +1432,7 @@ Log the recall to `memory/usage.log`:
 <ISO-8601> recall "<query>" results=<N> used=<how many were relevant>
 ```
 """
+        return ROUTING_PREAMBLE + _routed_memory_paths(body)
 
     # ------------------------------------------------------------------
     # ROLE.md (per-personality role description)
@@ -1704,6 +1760,26 @@ Log the recall to `memory/usage.log`:
                       CLAUDE_HOOK_MARKER, force=force)
         target.chmod(0o755)
 
+    def _write_claude_memory_history_hook(
+        self, root: Path, force: bool = False,
+    ) -> None:
+        """Write ``.claude/hooks/memory_history.py`` — Claude Code mirror.
+
+        Pairs with ``.opencode/plugins/memory-history.ts``. Both
+        spawn ``allmight memory snapshot`` after every agent turn to
+        capture per-turn recovery points. ``core.claude_bridge``
+        registers it on the ``Stop`` event in
+        ``.claude/settings.json``.
+        """
+        from ...core.claude_bridge import CLAUDE_HOOK_MARKER
+
+        hooks_dir = root / ".claude" / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        target = hooks_dir / "memory_history.py"
+        write_guarded(target, self._claude_memory_history_hook_content(),
+                      CLAUDE_HOOK_MARKER, force=force)
+        target.chmod(0o755)
+
     def _claude_memory_load_hook_content(self) -> str:
         """Return the memory-load hook body for Claude Code.
 
@@ -1785,11 +1861,162 @@ if __name__ == "__main__":
         """Return mapping of plugin filename → content."""
         return {
             "memory-load.ts": self._opencode_plugin_content(),
+            "memory-history.ts": self._memory_history_plugin_content(),
             "remember-trigger.ts": self._remember_trigger_plugin_content(),
             "todo-curator.ts": self._todo_curator_plugin_content(),
             "trajectory-writer.ts": self._trajectory_writer_plugin_content(),
             "usage-logger.ts": self._usage_logger_plugin_content(),
         }
+
+    def _memory_history_plugin_content(self) -> str:
+        """OpenCode plugin: post-turn auto-snapshot of memory data.
+
+        Spawns ``allmight memory snapshot`` (fire-and-forget) on:
+
+        * ``chat.message`` — every agent turn. Captures the granular
+          recovery point users want for "I just deleted that file"
+          mistakes.
+        * ``experimental.session.compacting`` — pre-compaction
+          fallback so any drift inside the compaction window lands
+          in the mirror before context is rewritten.
+        * ``session.deleted`` — final session-end fallback.
+
+        Sibling Claude Code hook is ``.claude/hooks/memory_history.py``
+        (see ``_claude_memory_history_hook_content``); both surfaces
+        share the same CLI entry point, so behaviour is identical.
+
+        Errors are swallowed: a plugin must never block the user's
+        turn. If ``allmight`` isn't on PATH (e.g. a non-pip install),
+        snapshots stop silently — recovery via ``allmight memory
+        snapshot`` by hand still works.
+        """
+        return """\
+/**
+ * Memory History — OpenCode plugin (All-Might)
+ *
+ * Post-turn / session-boundary auto-snapshot of personality memory
+ * data into .allmight/memory-history/. Backs accidental-delete
+ * recovery via `allmight memory restore`.
+ *
+ * Hooks:
+ *   - chat.message               — granular per-turn snapshot
+ *   - experimental.session.compacting — pre-compaction fallback
+ *   - session.deleted            — final session-end fallback
+ *
+ * Spawns `allmight memory snapshot --trigger=... --session-id=...`
+ * fire-and-forget. Errors are swallowed (plugin must not block).
+ */
+import type { Plugin } from "@opencode-ai/plugin";
+import { spawn } from "child_process";
+
+function snapshot(cwd: string, trigger: string, sid?: string): void {
+  const args = ["memory", "snapshot", `--trigger=${trigger}`];
+  if (sid) args.push(`--session-id=${sid}`);
+  try {
+    const child = spawn("allmight", args, {
+      cwd,
+      stdio: "ignore",
+      detached: true,
+    });
+    // Detach so the plugin returns immediately; the snapshot runs
+    // in the background. unref() lets the parent exit independently.
+    child.unref();
+    child.on("error", () => {
+      // allmight not on PATH or other spawn failure — silent.
+    });
+  } catch {
+    // Best-effort: a plugin must never throw.
+  }
+}
+
+export const MemoryHistoryPlugin: Plugin = async ({ directory }: any) => {
+  const cwd = (directory as string | undefined) ?? process.cwd();
+
+  return {
+    "chat.message": async (input: any, _output: any) => {
+      const sid = input?.sessionID;
+      snapshot(cwd, "chat-message", sid);
+      void _output;
+    },
+
+    "experimental.session.compacting": async (input: any, _output: any) => {
+      const sid = input?.sessionID;
+      snapshot(cwd, "session-compacting", sid);
+      void _output;
+    },
+
+    event: async ({ event }: any) => {
+      const type = String(event?.type ?? "");
+      if (type === "session.deleted") {
+        const sid = event?.properties?.sessionID;
+        snapshot(cwd, "session-deleted", sid);
+      }
+    },
+  };
+};
+
+export default MemoryHistoryPlugin;
+"""
+
+    def _claude_memory_history_hook_content(self) -> str:
+        """Claude Code hook: mirror of ``memory-history.ts``.
+
+        Reads JSON from stdin (the hook input), spawns ``allmight
+        memory snapshot``, returns an empty hook output. Used as a
+        ``Stop`` hook so it fires once per agent turn (the closest
+        Claude Code analogue to OpenCode's ``chat.message``).
+        """
+        return """\
+#!/usr/bin/env python3
+\"\"\"All-Might memory-history hook — Claude Code mirror of memory-history.ts.
+
+Stop hook: spawns ``allmight memory snapshot`` after every agent
+turn. Backs accidental-delete recovery via ``allmight memory
+restore``. Errors are swallowed; the hook must never block.
+
+The OpenCode sibling is ``.opencode/plugins/memory-history.ts``;
+both surfaces call the same CLI so behaviour is identical.
+\"\"\"
+import json
+import os
+import subprocess
+import sys
+
+
+def main() -> None:
+    raw = sys.stdin.read()
+    try:
+        payload = json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError:
+        payload = {}
+
+    cwd = payload.get("cwd") or os.getcwd()
+    sid = (payload.get("session_id") or "")[:32]
+
+    args = ["allmight", "memory", "snapshot", "--trigger=stop-hook"]
+    if sid:
+        args.append(f"--session-id={sid}")
+
+    try:
+        subprocess.Popen(
+            args,
+            cwd=cwd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+        )
+    except (FileNotFoundError, OSError):
+        # allmight not on PATH or spawn failed — silent. Recovery via
+        # `allmight memory snapshot` by hand still works.
+        pass
+
+    # Empty output means: don't block, no extra context to inject.
+    print("{}")
+
+
+if __name__ == "__main__":
+    main()
+"""
 
     def _usage_logger_plugin_content(self) -> str:
         """Return the OpenCode usage-logger.ts plugin content.
