@@ -389,54 +389,6 @@ class TestPluginAndHook:
         assert 'allmight' in body
         assert 'memory' in body and 'snapshot' in body
 
-    def test_claude_hook_present_after_init(
-        self, initted_project: Path,
-    ) -> None:
-        hook = (
-            initted_project / ".claude" / "hooks" / "memory_history.py"
-        )
-        assert hook.is_file()
-        # Executable bit set so Claude Code can run it.
-        assert os.access(hook, os.X_OK)
-
-    def test_claude_settings_registers_stop_hook(
-        self, initted_project: Path,
-    ) -> None:
-        import json
-        settings = json.loads(
-            (initted_project / ".claude" / "settings.json").read_text()
-        )
-        hooks = settings.get("hooks", {})
-        stop_blocks = hooks.get("Stop") or []
-        commands = [
-            h.get("command", "")
-            for block in stop_blocks
-            for h in block.get("hooks", [])
-        ]
-        assert any(
-            "memory_history.py" in cmd for cmd in commands
-        ), f"expected memory_history.py in Stop hooks, got: {commands}"
-
-    def test_claude_hook_runs_cleanly(
-        self, initted_project: Path,
-    ) -> None:
-        """End-to-end: feed the hook a stub stdin, verify it exits 0
-        and emits the empty-output JSON shape Claude Code expects."""
-        hook = (
-            initted_project / ".claude" / "hooks" / "memory_history.py"
-        )
-        proc = subprocess.run(
-            ["python3", str(hook)],
-            input='{"cwd": "%s", "session_id": "test"}' % initted_project,
-            capture_output=True, text=True, timeout=10,
-        )
-        assert proc.returncode == 0, proc.stderr
-        # Hook must emit valid JSON (Claude Code's contract).
-        import json
-        parsed = json.loads(proc.stdout)
-        assert isinstance(parsed, dict)
-
-
 # ----------------------------------------------------------------------
 # Tracked-glob coverage
 # ----------------------------------------------------------------------

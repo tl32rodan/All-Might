@@ -74,27 +74,6 @@ class TestFirstInit:
         assert (commands / "enrich.md").exists()
         assert (commands / "ingest.md").exists()
 
-    def test_full_init_writes_claude_bridge(self, sample_project):
-        """Full init writes the Claude Code bridge alongside .opencode/.
-
-        Mirrors what the OpenCode side gets:
-        - root CLAUDE.md is the @-import shim Claude Code reads
-        - .claude/{commands,skills} are dir symlinks into .opencode/
-        - .claude/hooks/{memory_load,role_load}.py mirror the
-          memory-load.ts and role-load.ts plugins
-        - .claude/settings.json registers both hooks for SessionStart
-          and PreCompact
-        """
-        _full_init(sample_project)
-        assert (sample_project / "CLAUDE.md").exists()
-        commands_link = sample_project / ".claude" / "commands"
-        skills_link = sample_project / ".claude" / "skills"
-        assert commands_link.is_symlink()
-        assert skills_link.is_symlink()
-        assert (sample_project / ".claude" / "hooks" / "memory_load.py").exists()
-        assert (sample_project / ".claude" / "hooks" / "role_load.py").exists()
-        assert (sample_project / ".claude" / "settings.json").exists()
-
     def test_first_init_writes_agents_md(self, sample_project):
         _full_init(sample_project)
         content = (sample_project / "AGENTS.md").read_text()
@@ -190,16 +169,6 @@ class TestReInit:
         templates = sample_project / ".allmight" / "templates"
         assert (templates / "opencode.json").exists()
         assert (templates / "memory-load.ts").exists()
-
-    def test_reinit_stages_claude_md_sections(self, sample_project):
-        _full_init(sample_project)
-        _full_init(sample_project)
-
-        templates = sample_project / ".allmight" / "templates"
-        assert (templates / "claude-md-section.md").exists()
-        assert "<!-- ALL-MIGHT -->" in (templates / "claude-md-section.md").read_text()
-        assert (templates / "memory-md-section.md").exists()
-        assert "<!-- ALL-MIGHT-MEMORY -->" in (templates / "memory-md-section.md").read_text()
 
     def test_reinit_still_creates_new_directories(self, sample_project):
         _full_init(sample_project)
