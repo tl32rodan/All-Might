@@ -15,6 +15,24 @@ from ...core.safe_write import write_guarded
 from .config import MemoryConfigManager
 
 
+def _routed_memory_paths(body: str) -> str:
+    """Rewrite bare ``memory/`` paths in command bodies to the
+    Part-D personality-routed form ``personalities/<active>/memory/``.
+
+    Command bodies (e.g. ``/remember``, ``/recall``) reference
+    per-personality memory under ``memory/...`` for source-code
+    readability. At install time this helper prepends the routing
+    prefix so the agent — operating from project root cwd — knows
+    which personality's memory to act on after resolving
+    ``<active>`` per ``ROUTING_PREAMBLE``.
+
+    The substitution is anchored on the trailing slash, so
+    ``MEMORY.md`` (uppercase, project root) and the word ``memory``
+    alone are never touched.
+    """
+    return body.replace("memory/", "personalities/<active>/memory/")
+
+
 def _reminder_nudge_text() -> str:
     """Canonical nudge text — shared byte-equal by both runtimes.
 
@@ -802,7 +820,16 @@ See `memory/understanding/<workspace>.md` for detailed per-corpus knowledge.
 
     def _remember_command_body(self) -> str:
         from ...core.routing import ROUTING_PREAMBLE
-        return ROUTING_PREAMBLE + """\
+        # The raw body uses bare ``memory/`` paths (e.g.
+        # ``memory/understanding/<workspace>.md``) for source-code
+        # readability. ``_routed_memory_paths`` rewrites every
+        # ``memory/`` to ``personalities/<active>/memory/`` so the
+        # generated command tells the agent which personality's
+        # memory to operate on after resolving ``<active>`` per
+        # ``ROUTING_PREAMBLE``. ``MEMORY.md`` (uppercase, project
+        # root) and the word "memory" alone are left intact because
+        # the substitution is anchored on the trailing slash.
+        body = """\
 Persist memory and maintain its quality. Two modes — pick the one that
 matches the trigger context:
 
@@ -1144,10 +1171,12 @@ Append to `memory/usage.log`:
 - When `memory/.l1-over-cap` appears
 - When the user asks you to consolidate what you learned
 """
+        return ROUTING_PREAMBLE + _routed_memory_paths(body)
 
     def _recall_command_body(self) -> str:
         from ...core.routing import ROUTING_PREAMBLE
-        return ROUTING_PREAMBLE + """\
+        # Same path-rewrite contract as ``_remember_command_body``.
+        body = """\
 Pick up where you left off, and search past memories.
 
 `/recall` is **not just** a journal search. Before running a query,
@@ -1213,6 +1242,7 @@ Log the recall to `memory/usage.log`:
 <ISO-8601> recall "<query>" results=<N> used=<how many were relevant>
 ```
 """
+        return ROUTING_PREAMBLE + _routed_memory_paths(body)
 
     # ------------------------------------------------------------------
     # ROLE.md (per-personality role description)
