@@ -11,8 +11,8 @@ decisions are inherently judgement calls — what counts as PII, what's
 worth sharing — and have to be confirmed with the user. The skill body
 is the procedure the agent follows to walk one personality's data,
 apply per-capability rules, obtain consent, and write a portable
-bundle that ``allmight import`` (single-bundle install) or
-``/all-for-one`` (merge) can later restore.
+bundle that ``/all-for-one`` can later restore (or ``allmight share
+pull`` if the bundle travels through a git remote).
 
 Why ``database`` owns it: same reason it owns ``/onboard`` — a
 cross-capability skill needs one home, and ``database`` is the lead
@@ -26,8 +26,8 @@ ONE_FOR_ALL_SKILL_BODY = """\
 > Run this skill when the user asks to export a personality (e.g.
 > "export stdcell_owner", "share my pll_owner"). The agent applies
 > per-capability export rules, asks for consent on sensitive content,
-> and writes a directory bundle that ``allmight import`` or
-> ``/all-for-one`` can later restore.
+> and writes a directory bundle that ``/all-for-one`` can later
+> restore (or ``allmight share pull`` if going via a git remote).
 >
 > Cardinality: **one personality → one bundle**. To absorb multiple
 > sources into one personality, use ``/all-for-one`` (the inverse

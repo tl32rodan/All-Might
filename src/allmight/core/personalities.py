@@ -701,7 +701,8 @@ class DerivedFrom:
     """One source descriptor in a personality's ``derived_from`` lineage.
 
     Personalities can be derived from prior bundles (output of
-    ``/one-for-all`` / ``allmight import``) or from in-project
+    ``/one-for-all``, installed via ``allmight share pull``) or from
+    in-project
     personalities consumed during ``/all-for-one`` merges. A single
     personality may be derived from multiple sources of either kind,
     so the registry stores ``derived_from`` as a list of these

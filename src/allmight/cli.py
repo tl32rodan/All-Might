@@ -361,30 +361,28 @@ def list_personalities() -> None:
 
 
 # ------------------------------------------------------------------
-# Import (personality bundle restore)
+# Bundle import (internal helper for `share pull`).
+#
+# The standalone ``allmight import`` CLI was removed (Track C — it
+# was the mechanical CI/scripting path; the agent-driven
+# ``/all-for-one`` skill covers cross-project transfer). The body
+# stays here as a private helper because ``share pull`` clones a git
+# remote into a temp dir then runs the same install + lineage
+# bookkeeping. Callers pass the project root and bundle path
+# explicitly; this used to be derived from ``cwd`` via Click.
 # ------------------------------------------------------------------
 
-@main.command("import")
-@click.argument("bundle", type=click.Path(exists=True, file_okay=False))
-@click.option("--as", "as_name", default=None,
-              help="Install the bundled personality under this new name "
-                   "(instead of the manifest's personality_name).")
-def import_personality(bundle: str, as_name: str | None) -> None:
-    """Restore a single personality bundle into the current All-Might project.
 
-    Mechanical, single-bundle install — the thin path for CI,
-    scripting, and fresh-project bootstrap. Reads ``manifest.yaml``
-    from the bundle, runs each named capability's install hook (so the
-    on-disk structure conforms to the receiving project's ``allmight``
-    version), and copies the bundle's data into
-    ``personalities/<name>/``. Vector indices (``store/``) are not in
-    bundles; rebuild via ``/ingest`` afterward.
+def _import_bundle(
+    project_root: "Path",
+    bundle: str,
+    as_name: str | None = None,
+) -> None:
+    """Install a single personality bundle into ``project_root``.
 
-    If the target name already exists, this command fails. Anything
-    requiring merge — multiple bundles, fold-into-existing,
-    in-project consolidation — belongs to ``/all-for-one`` (the skill
-    invoked from the agent), which can dialog through the per-file
-    decisions a CLI flag cannot capture.
+    Same semantics as the (removed) ``allmight import`` CLI: refuses
+    on collision and points the user at ``/all-for-one``. Used by
+    ``share pull`` after the git clone lands a bundle in a temp dir.
     """
     from pathlib import Path as P
     import shutil
@@ -406,7 +404,6 @@ def import_personality(bundle: str, as_name: str | None) -> None:
     )
     from .capabilities.database.scanner import ProjectScanner
 
-    project_root = P(".").resolve()
     if not (project_root / ".allmight").is_dir():
         click.echo(
             f"error: {project_root} is not an All-Might project (no .allmight/ found). "
@@ -704,15 +701,14 @@ def share_publish(
 @click.option("--as", "as_name", default=None,
               help="Install the pulled personality under this name.")
 def share_pull(git_url: str, as_name: str | None) -> None:
-    """Clone a bundle from a git remote and import it.
+    """Clone a bundle from a git remote and install it.
 
-    Equivalent to: ``git clone <url> <tmp> && allmight import <tmp>``,
-    plus persisting the upstream URL in ``.allmight/upstream.yaml``.
+    Internally: ``git clone <url> <tmp>`` then runs the bundle-import
+    helper. Persists the upstream URL in ``.allmight/upstream.yaml``.
 
-    Inherits ``allmight import``'s collision behaviour: if the target
-    name already exists, the pull fails and asks the user to either
-    retry with ``--as <new-name>`` or run ``/all-for-one`` in the
-    agent to merge.
+    Collision behaviour: if the target name already exists, the pull
+    fails and asks the user to either retry with ``--as <new-name>``
+    or run ``/all-for-one`` in the agent to merge.
     """
     import shutil as _shutil
     import tempfile as _tempfile
@@ -744,15 +740,12 @@ def share_pull(git_url: str, as_name: str | None) -> None:
             click.echo(f"error: {exc}", err=True)
             raise SystemExit(1)
 
-        # Reuse the existing import command's body via Click's
-        # invocation API. Collision-on-target is reported by import
-        # itself (and includes a /all-for-one redirect message); we
-        # let SystemExit propagate so the user sees the same error.
-        ctx = click.get_current_context()
-        sub = main.get_command(ctx, "import")
-        assert sub is not None, "import command must be registered"
+        # Reuse the bundle-import helper directly. Collision-on-target
+        # is reported by the helper (and includes a /all-for-one
+        # redirect message); we let SystemExit propagate so the user
+        # sees the same error.
         try:
-            ctx.invoke(sub, bundle=str(clone_dest), as_name=as_name)
+            _import_bundle(project_root, str(clone_dest), as_name)
         except SystemExit:
             raise
 
