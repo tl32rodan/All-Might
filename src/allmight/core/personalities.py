@@ -65,12 +65,20 @@ class CliOption:
 
 @dataclass
 class InstallContext:
-    """Cross-cutting state passed to every ``install`` call."""
+    """Cross-cutting state passed to every ``install`` /
+    ``install_globals`` call.
+
+    ``options`` carries CLI-level flags that templates need at the
+    project-wide install step (e.g. ``writable=True`` for the
+    database capability) — there's no ``Personality`` instance at
+    that point so options can't ride on ``Personality.options``.
+    """
 
     project_root: Path
     manifest: ProjectManifest
     staging: bool = False
     force: bool = False
+    options: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -112,6 +120,14 @@ class PersonalityTemplate:
     install: Callable[["InstallContext", "Personality"], InstallResult]
     status: Callable[[Path, "Personality"], PersonalityStatus]
     default_instance_name: str = ""
+    install_globals: Callable[["InstallContext"], None] | None = None
+    """Project-wide install step. Called once per template at init time
+    (before any ``Personality`` instance exists). Writes the
+    ``.opencode/`` skills/commands/plugins, root MEMORY.md / AGENTS.md
+    placeholders, and any ``.allmight/`` mode files. ``None`` means the
+    template has no project-wide assets — the install loop just skips
+    it. Per-personality writes still go through ``install`` (called by
+    ``allmight add``)."""
 
 
 @dataclass
@@ -476,13 +492,6 @@ def write_init_scaffold(project_root: Path) -> None:
 
     _write_role_load_plugin(project_root)
 
-    # Claude Code compatibility bridge — markdown surface via dir
-    # symlinks, agent context via @-import shim, runtime hooks for
-    # role-load (memory-load lives in the memory capability).
-    from .claude_bridge import write_claude_bridge
-
-    write_claude_bridge(project_root)
-
 
 # ---------------------------------------------------------------------------
 # ROLE.md composition + role-load.ts plugin
@@ -692,7 +701,8 @@ class DerivedFrom:
     """One source descriptor in a personality's ``derived_from`` lineage.
 
     Personalities can be derived from prior bundles (output of
-    ``/one-for-all`` / ``allmight import``) or from in-project
+    ``/one-for-all``, installed via ``allmight share pull``) or from
+    in-project
     personalities consumed during ``/all-for-one`` merges. A single
     personality may be derived from multiple sources of either kind,
     so the registry stores ``derived_from`` as a list of these

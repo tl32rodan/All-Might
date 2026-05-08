@@ -12,10 +12,6 @@ After modifying initializer, skill templates, commands, or memory init:
    `cd /tmp/demo && allmight init . && tsc --noEmit --skipLibCheck .opencode/plugins/*.ts`
    Python tests only verify strings written — they cannot catch
    wrong-shape API calls in the generated `.ts`.
-3. **If the change touches an OpenCode plugin, the matching Claude
-   Code hook MUST also be updated** (see *Editor Compatibility* below).
-   The two surfaces share a behavioural contract; updating one and
-   leaving the other stale is a regression even when tests pass.
 
 ## Planning Workflow
 
@@ -47,25 +43,33 @@ All-Might/                          ← This repo (the framework)
 │   │   └── routing.py               ← ROUTING_PREAMBLE for command bodies
 │   ├── enrichment/                  ← Enrichment policy (advisory)
 │   ├── migrate/                     ← One-shot upgrader for pre-Part-C projects
-│   ├── hub/                         ← Multi-workspace hub templates
-│   └── cli.py                       ← CLI entry: init, add, list, import, clone, migrate, memory
+│   ├── hub/                         ← Multi-workspace hub templates (deprecated)
+│   └── cli.py                       ← CLI entry: init, add, list, clone, migrate, memory, share
 ├── tests/                           ← Test suite
 └── docs/
 ```
+
+**Editor target:** `.opencode/` is the canonical and only agent
+surface. The Claude Code mirror (`.claude/` + `core/claude_bridge.py`)
+was removed in Track D — projects that need to stay on Claude Code
+should pin the prior tag.
 
 ## Key Files to Know
 
 | File | What it generates |
 |------|-------------------|
-| `core/personalities.py` | Capability framework: Template, Personality, registry, `compose` (downward symlinks for personality-specific entries), `compose_agents_md`, `slugify_instance_name`, `role-load.ts` scaffold |
+| `core/personalities.py` | Capability framework: Template (with `install` + optional `install_globals`), Personality, registry, `compose` (downward symlinks for personality-specific entries), `compose_agents_md`, `slugify_instance_name`, `role-load.ts` scaffold |
 | `core/routing.py` | `ROUTING_PREAMBLE` prepended to every routed command body |
-| `capabilities/database/__init__.py` | TEMPLATE (cli_options for --sos/--writable; default_instance_name = `knowledge`) |
-| `capabilities/database/initializer.py` | `database/` data dir, globals in `.opencode/`, `ROLE.md`, installs `/onboard`, `/one-for-all`, `/all-for-one`, `/sync` skills |
-| `capabilities/database/onboard_skill_content.py` | The `/onboard` skill body + command body (Part-D: classify personalities, write ROLE.md, set default-personality callout) |
+| `core/skill_io.py` | Shared `install_skill(root, name, description, skill_body, command_body=None)` — writes `.opencode/skills/<name>/SKILL.md` + optional `.opencode/commands/<name>.md` |
+| `core/state.py` | Centralized `.allmight/*.yaml` I/O: `read_onboard` / `write_onboard` plus re-exports of `read_registry` / `write_registry` |
+| `capabilities/database/__init__.py` | TEMPLATE with `_install_globals` (project-wide) + `_install` (per-personality); cli_options for --sos/--writable; default_instance_name = `knowledge` |
+| `capabilities/database/initializer.py` | `initialize_globals(root, ...)` writes `.opencode/` skills/commands + `.allmight/mode`; `initialize(...)` adds per-personality `database/` workspace + ROLE.md |
+| `capabilities/database/personality_suggestions.py` | Canonical suggestion catalog; `seed_suggestions(root)` writes the marker'd YAML files to `.allmight/suggestions/personalities/` |
+| `capabilities/database/onboard_skill_content.py` | The `/onboard` skill body (~85 lines): one purpose question, match catalog, `allmight add` shell-out, default-personality callout |
 | `capabilities/database/one_for_all_skill_content.py` | The `/one-for-all` skill body + command body (1 personality → 1 bundle, PII review, manifest with `derived_from` lineage) |
 | `capabilities/database/all_for_one_skill_content.py` | The `/all-for-one` skill body + command body (N sources → 1 target, per-capability merge with dialog, ROLE.md prose reconciliation) |
-| `capabilities/memory/__init__.py` | TEMPLATE (no cli_options; default_instance_name = `memory`) |
-| `capabilities/memory/initializer.py` | MEMORY.md (L1), understanding/ (L2), journal/ (L3), `/remember` (Record + Reflect modes), `/recall`, OpenCode plugins |
+| `capabilities/memory/__init__.py` | TEMPLATE with `_install_globals` + `_install`; no cli_options; default_instance_name = `memory` |
+| `capabilities/memory/initializer.py` | `initialize_globals(root, ...)` writes root MEMORY.md + `.opencode/` commands+plugins + memory-history mirror; `initialize(...)` adds per-personality memory subtree |
 | `capabilities/database/scanner.py` | Detects languages, frameworks, proposes indices |
 | `migrate/migrator.py` | One-shot upgrader for pre-Part-C projects |
 
@@ -128,42 +132,47 @@ rejected before and will be rejected again.
   plugin re-injects each ROLE.md at every `chat.message` for an
   un-primed session — same pattern as `memory-load.ts` keeping
   `MEMORY.md` warm after compaction.
-- **Two-stage bootstrap.** `allmight init` is a CLI prompt-driven
-  scaffold (single question: "Personality name?") that captures
-  one personality + capability list into `.allmight/onboard.yaml`.
-  The agent-side `/onboard` skill (owned by `database`) does the
-  qualitative half: writes each ROLE.md from the user's answers,
-  populates `MEMORY.md`'s project map and the
-  `> **Default personality**` callout. Don't duplicate
-  `/onboard`'s prose into init prompts — keep the CLI short.
+- **Two-stage bootstrap (Track A).** `allmight init` is a CLI
+  scaffold — no personality is created at install time. It writes
+  `.opencode/` globals, `AGENTS.md`, `MEMORY.md`, an empty registry,
+  and seeds a suggestion catalog at
+  `.allmight/suggestions/personalities/*.yaml` (a stable home,
+  distinct from `.allmight/templates/` which is `/sync` re-init
+  staging). The agent-side `/onboard` skill (owned by `database`)
+  handles the personality-decision phase: asks the user about
+  purpose, matches against suggestions, and calls `allmight add
+  <name> --capabilities <list>` once per chosen suggestion so
+  ROLE.md, the marker, the capability table, and the registry row
+  are written deterministically by Python — never by the agent
+  free-form. Multi-personality stays first-class — `/onboard` can
+  create one or many. The fallback when the user has no specific
+  purpose is the `general` suggestion (database + memory).
 - **`/reflect` is folded into `/remember`.** The `/remember.md`
   body has two top-level sections (`# Record` and `# Reflect`);
   the agent picks based on trigger context. Do not re-introduce
   a separate `/reflect` command.
 - **Personality transfer is themed One For All / All For One.**
-  Cross-project moves go through three surfaces, each with a
-  specific scope:
-  - `/one-for-all` (skill, agent-driven, with PII review) — bundle
-    a single personality outward (1 → 1). Writes a directory bundle
-    with `manifest.yaml` (including a `derived_from` lineage list),
+  Cross-project moves go through two agent-driven surfaces:
+  - `/one-for-all` (skill, with PII review) — bundle a single
+    personality outward (1 → 1). Writes a directory bundle with
+    `manifest.yaml` (including a `derived_from` lineage list),
     `ROLE.md`, and per-capability data dirs minus `store/`.
-  - `/all-for-one` (skill, agent-driven, with per-file dialog) —
-    absorb N sources (bundles or in-project personalities) into 1
-    target (new or existing). Owns all merge semantics:
-    `database/` workspace name clashes, `memory/understanding/`
-    overwrites, `memory/journal/` append + dedupe, ROLE.md prose
-    reconciliation. Records every source in the target's
-    `derived_from` registry list.
-  - `allmight import <bundle>` (CLI, mechanical) — single-bundle
-    install into a fresh target name. Refuses on collision and
-    redirects the user to `/all-for-one`. Reserved for CI /
-    scripting / fresh-project bootstrap. Has no `--force` flag —
-    overwrites and merges belong to the agent surface that can
-    dialog through them.
+  - `/all-for-one` (skill, with per-file dialog) — absorb N sources
+    (bundles or in-project personalities) into 1 target (new or
+    existing). Owns all merge semantics: `database/` workspace name
+    clashes, `memory/understanding/` overwrites, `memory/journal/`
+    append + dedupe, ROLE.md prose reconciliation. Records every
+    source in the target's `derived_from` registry list.
 
-  Do not re-introduce `allmight merge`, a CLI `--force` overwrite,
-  or a separate `/export` / `/import` skill pair — the OFA / AFO
-  asymmetry is the design.
+  The standalone `allmight import` CLI was removed in Track C — it
+  was a mechanical single-bundle path that the agent skills now
+  cover. `allmight share pull <git-url>` still installs single
+  bundles when they arrive over a git remote (using the internal
+  `cli._import_bundle` helper).
+
+  Do not re-introduce `allmight import`, `allmight merge`, a CLI
+  `--force` overwrite, or a separate `/export` / `/import` skill
+  pair — the OFA / AFO asymmetry is the design.
 
 ## Architecture Layers
 
@@ -172,59 +181,7 @@ rejected before and will be rejected again.
 | README.md | How to talk to the agent | Human |
 | AGENTS.md (in workspace) | What capabilities exist | Agent (high-level) |
 | Skills/Commands | How to execute operations (smak CLI) | Agent (low-level) |
-| CLI | `init`, `add`, `list`, `import`, `clone`, `migrate`, `memory` | Human (bootstrap + lifecycle) |
-
----
-
-## Editor Compatibility
-
-`.opencode/` is the canonical agent surface; `.claude/` is a
-**generated mirror** so a single `allmight init` produces a project
-both OpenCode and Claude Code can drive without forking source of
-truth. The mirror has three layers, each with a different sync model:
-
-| Asset | Source of truth | Mirror | Sync model |
-|---|---|---|---|
-| Slash commands | `.opencode/commands/*.md` | `.claude/commands` (dir symlink) | Symlink — adding a new command is automatically visible on both sides |
-| Skills | `.opencode/skills/<name>/` | `.claude/skills` (dir symlink) | Same |
-| Agent context | `AGENTS.md`, `MEMORY.md`, `personalities/*/ROLE.md` | root `CLAUDE.md` (`@`-import shim) | Single set of files, both editors read |
-| Runtime hooks | `.opencode/plugins/*.ts` | `.claude/hooks/*.py` + `.claude/settings.json` | **Hand-mirrored** — updates to one require updates to the other |
-
-The bridge is wired by `src/allmight/core/claude_bridge.py`
-(project-level pieces: root `CLAUDE.md`, dir symlinks, settings.json,
-`role_load.py`) plus per-capability hook scripts (e.g.
-`MemoryInitializer._claude_memory_load_hook_content` mirroring
-`memory-load.ts`).
-
-### Dual-platform invariant for plugin/hook changes
-
-When you change an OpenCode plugin, the Claude Code hook script that
-mirrors it **must** be updated in the same commit:
-
-| OpenCode plugin (`.ts`) | Claude Code hook (`.py`) |
-|---|---|
-| `memory-load.ts` | `memory_load.py` (in `MemoryInitializer`) |
-| `memory-history.ts` | `memory_history.py` (in `MemoryInitializer`) — `Stop` hook |
-| `role-load.ts` | `role_load.py` (in `core.claude_bridge`) |
-| `remember-trigger.ts` | *(not yet mirrored — see TODO in claude_bridge)* |
-| `usage-logger.ts` | *(not yet mirrored)* |
-| `trajectory-writer.ts` | *(not yet mirrored)* |
-
-The two scripts are not generated from a shared template; each is
-hand-authored in its native language because the runtime contracts
-differ (TS plugin returns objects mutating chat parts; Claude Code
-hook reads JSON from stdin and prints JSON to stdout). The
-behavioural equivalence is enforced by:
-
-- `tests/test_claude_bridge.py::TestHooksRunCleanly` — runs each
-  generated hook end-to-end and asserts the JSON output shape.
-- `tests/test_memory_init.py::test_writes_claude_memory_load_hook` —
-  pins the memory-load hook content alongside its OpenCode sibling.
-
-If you skip the dual update, the OpenCode and Claude Code surfaces
-will silently drift, and bug reports will look like "behaviour
-depends on which editor I open the project with" — by the time
-anyone notices, several plugin generations may be stale.
+| CLI | `init`, `add`, `list`, `clone`, `migrate`, `memory`, `share` | Human (bootstrap + lifecycle) |
 
 ---
 
@@ -360,22 +317,24 @@ installed.)
 ### 5. CLI Surface (Part D)
 
 ```
-allmight init [--yes] [path]                       Bootstrap: creates one personality (project-root dir name) with all capabilities.
-allmight add <name> [--capabilities a,b,c]         Add another personality with the requested capability subset.
+allmight init [--yes] [path]                       Scaffold-only: writes globals + suggestion catalog. NO personality created at install time — /onboard handles that.
+allmight add <name> [--capabilities a,b,c]         Add a personality with the requested capability subset. Called by /onboard for each chosen suggestion.
 allmight list                                      Print a table of installed personalities.
-allmight import <bundle> [--as <new-name>]         Single-bundle install (no merge). Refuses on collision and redirects to /all-for-one.
 allmight clone <source>                            Read-only clone with symlinked database/.
 allmight migrate                                   One-shot upgrade for pre-Part-C projects.
 allmight memory init / memory export               Memory-specific lifecycle.
 allmight memory snapshot / log / diff / restore / gc   Memory version-control mirror (recovery from accidental edits / deletes).
+allmight share publish / pull                      Push or pull personality bundles via a git remote.
 ```
 
 **`/one-for-all` and `/all-for-one` are skills, not CLI commands.**
 Export (one-for-all) is agent-driven because it needs PII review
 and per-file consent. Merge (all-for-one) is agent-driven because
 it needs per-file conflict dialog and ROLE.md prose reconciliation
-that no CLI flag can capture. `allmight import` exists only as the
-narrow mechanical path for the single-bundle, no-collision case.
+that no CLI flag can capture. The standalone `allmight import` CLI
+was removed in Track C; bundles arriving over a git remote install
+via `allmight share pull` (which calls the internal
+`cli._import_bundle` helper).
 
 The agent calls `smak` CLI directly (taught by skills), NOT
 `allmight` wrappers.

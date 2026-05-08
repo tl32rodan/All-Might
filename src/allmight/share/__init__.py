@@ -7,7 +7,8 @@ no GitHub-specific assumptions, no auth helpers, no PR semantics.
 
 The ``/one-for-all`` skill produces a bundle directory; ``allmight
 share publish`` pushes that bundle to a git URL; ``allmight share
-pull`` clones the bundle and runs ``allmight import`` against it.
+pull`` clones the bundle and installs it via the internal bundle-
+import helper (``cli._import_bundle``).
 """
 
 from .git_share import (

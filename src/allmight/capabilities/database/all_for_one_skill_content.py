@@ -8,8 +8,7 @@ inverse, single-source export.
 
 Sources may be:
 
-* External bundles produced by ``/one-for-all`` (or by the legacy
-  ``allmight import``-compatible bundle layout).
+* External bundles produced by ``/one-for-all``.
 * In-project personalities by name. This makes ``/all-for-one``
   double as a refactoring tool ("merge ``stdcell_owner`` and
   ``pll_owner`` into ``eda_owner``").
@@ -22,9 +21,9 @@ Targets may be:
 Why a skill instead of a CLI: the merge requires per-file judgement
 that a CLI flag cannot capture — ROLE.md prose reconciliation,
 ``memory/understanding/`` overwrites, ``database/`` workspace name
-clashes. The companion ``allmight import`` CLI remains for the
-**single-bundle, no-merge** install case (CI / scripting / fresh
-project bootstrap).
+clashes. The standalone ``allmight import`` CLI was removed in
+Track C; cross-project transfer goes through this skill (or
+``allmight share pull`` for git-transport bundles).
 """
 
 ALL_FOR_ONE_SKILL_BODY = """\
@@ -45,12 +44,10 @@ ALL_FOR_ONE_SKILL_BODY = """\
   (bundle + existing personality → existing).
 - "Take these three bundles and combine them into a new
   shared_owner" (multiple bundles → new).
-- Any single-bundle install where the target name **already exists**
-  — ``allmight import`` will refuse and redirect here.
-
-For a single-bundle install into a *fresh* target name, prefer
-``allmight import <bundle>`` (CLI); it's faster and no merge dialog
-is needed.
+- Any single-bundle install — there is no longer a separate CLI
+  command for this; ``/all-for-one`` covers the fresh-target case
+  too. (Bundles that arrive over a git remote can also use
+  ``allmight share pull``, which calls the same install logic.)
 
 ## Procedure
 
@@ -266,8 +263,8 @@ bundle into an existing one, or consolidate in-project roles. Named
 after All-Might's antagonist's quirk: **N sources → 1 target**.
 
 For the inverse (export one personality outward as a bundle), use
-``/one-for-all``. For a single-bundle install into a *fresh* target
-name with no merge needed, prefer the ``allmight import`` CLI.
+``/one-for-all``. For bundles arriving over a git remote, ``allmight
+share pull`` installs them directly without going through this skill.
 
 ## What happens
 

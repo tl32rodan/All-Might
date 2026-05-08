@@ -29,6 +29,17 @@ from ...core.personalities import (
 from .initializer import MemoryInitializer
 
 
+def _install_globals(ctx: InstallContext) -> None:
+    """Project-wide install — root MEMORY.md, ``.opencode/`` commands +
+    plugins, recover skill. No personality instance is touched.
+    """
+    MemoryInitializer().initialize_globals(
+        ctx.project_root,
+        force=ctx.force,
+        staging=ctx.staging,
+    )
+
+
 def _install(ctx: InstallContext, instance: Personality) -> InstallResult:
     """Bootstrap one memory capability instance.
 
@@ -78,5 +89,6 @@ TEMPLATE = PersonalityTemplate(
     ],
     cli_options=[],
     install=_install,
+    install_globals=_install_globals,
     status=_status,
 )

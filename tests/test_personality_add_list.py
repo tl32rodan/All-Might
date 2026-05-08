@@ -155,15 +155,13 @@ class TestAddGuards:
 
 
 class TestListCommand:
-    def test_lists_default_init_personality(self, initted_project: Path) -> None:
-        """Per commit 7, ``allmight init --yes`` creates ONE personality
-        named after the project-root dir, with all capabilities."""
+    def test_list_after_fresh_init_is_empty(self, initted_project: Path) -> None:
+        """Track A contract: ``allmight init`` is scaffold-only; no
+        personality exists until the agent runs ``/onboard`` (which
+        shells out to ``allmight add``). ``list`` says so explicitly."""
         result = _invoke_in(initted_project, ["list"])
         assert result.exit_code == 0, result.output
-        assert initted_project.name in result.output
-        # And the row should mention both default capabilities.
-        assert "database" in result.output
-        assert "memory" in result.output
+        assert "No personalities" in result.output
 
     def test_lists_newly_added_personality(self, initted_project: Path) -> None:
         _invoke_in(

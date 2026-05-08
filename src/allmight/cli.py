@@ -7,7 +7,7 @@ for the one operation that cannot be agent-driven:
     allmight clone <source> [path]  — Clone an All-Might project (read-only)
     allmight memory init [path]     — Re-initialize agent memory subsystem
 
-Everything else is agent-driven through .claude/skills and commands.
+Everything else is agent-driven through .opencode/skills and commands.
 The skills teach the agent how to call the underlying tools (smak CLI)
 directly.
 """
@@ -87,33 +87,31 @@ def _init_callback(
     yes: bool = False,
     **template_options: object,
 ) -> None:
-    """Run the registry-driven init flow.
+    """Run the scaffold-only init flow.
 
     ``template_options`` is the raw dict of every CliOption value. Each
-    template's ``install`` reads what it cares about; the CLI never
-    interprets the contents.
+    template's ``install_globals`` reads what it cares about; the CLI
+    never interprets the contents.
 
-    When ``yes`` is False (default) and stdin is a TTY, the CLI prompts
-    for the instance name of each personality and an optional list of
-    project folders to register. The captured answers land in
-    ``.allmight/onboard.yaml`` so the agent's ``/onboard`` skill can
-    finish the qualitative setup later.
+    No personality is created at install time — ``allmight init`` writes
+    the project-wide ``.opencode/`` globals, ``AGENTS.md``,
+    ``MEMORY.md``, an empty registry, and a personality suggestion
+    catalog at ``.allmight/suggestions/personalities/``. The
+    agent-side ``/onboard`` skill then proposes from the catalog and
+    shells out to ``allmight add`` for whatever the user picks.
     """
     from pathlib import Path as P
 
     from .core.personalities import (
         InstallContext,
-        Personality,
-        RegistryEntry,
-        compose,
         compose_agents_md,
         discover,
-        slugify_instance_name,
-        stage_compose_conflicts,
         write_init_scaffold,
         write_registry,
     )
+    from .core.state import read_onboard, write_onboard
     from .capabilities.database.scanner import ProjectScanner
+    from .capabilities.database.personality_suggestions import seed_suggestions
 
     root = P(path).resolve()
     scanner = ProjectScanner()
@@ -123,24 +121,15 @@ def _init_callback(
     is_reinit = allmight_dir.is_dir() and not force
 
     templates = discover()
-    template_by_name = {t.name: t for t in templates}
 
-    # Decide the single personality name + its capability set. If
-    # onboard.yaml exists, reuse what was captured before so re-init
-    # never asks the user again. Otherwise prompt (or use the
-    # project-root dir name under --yes).
-    onboard_path = allmight_dir / "onboard.yaml"
-    captured = _read_onboard_yaml(onboard_path)
-    if captured is None:
-        captured = _collect_onboard_answers(templates, manifest, interactive=not yes)
-
-    rows = captured.get("personalities", [])
-    if not rows:
-        raise RuntimeError("onboard.yaml has no personalities entry")
-    row = rows[0]
-    personality_name = row.get("name") or row.get("instance")
-    wanted_caps = row.get("capabilities") or [row.get("template")]
-    selected_templates = [template_by_name[c] for c in wanted_caps if c in template_by_name]
+    # Captured onboard.yaml is preserved across re-init so /onboard
+    # state survives. On first init we just seed the empty shape —
+    # /onboard fills personalities[] later when the user picks.
+    captured = read_onboard(root) or {
+        "onboarded": False,
+        "personalities": [],
+        "folders": [],
+    }
 
     write_init_scaffold(root)
 
@@ -149,48 +138,29 @@ def _init_callback(
         manifest=manifest,
         staging=is_reinit,
         force=force,
-    )
-    instance = Personality(
-        template=selected_templates[0],
-        project_root=root,
-        name=personality_name,
         options=dict(template_options),
-        capabilities=[t.name for t in selected_templates],
     )
-    notes: list[str] = []
-    for template in selected_templates:
-        result = template.install(ctx, instance)
-        notes.extend(result.notes)
-    instances: list[Personality] = [instance]
+    for template in templates:
+        if template.install_globals is not None:
+            template.install_globals(ctx)
 
-    # Compose .opencode/ symlinks from each instance's surface.
-    # Conflicts (user-authored files at our target paths) are NOT
-    # silently overwritten — they're collected and staged so /sync can
-    # walk the user through resolution.
-    all_conflicts = []
-    for instance in instances:
-        all_conflicts.extend(compose(root, instance, force=force))
-    stage_compose_conflicts(root, all_conflicts)
+    # Empty AGENTS.md compose — no personalities yet, but the file
+    # must exist so OpenCode can pick it up. /onboard + allmight add
+    # populate it via compose_agents_md once personalities exist.
+    compose_agents_md(root, [], project_name=manifest.name)
 
-    # Stitch every instance's ROLE.md into the single root AGENTS.md.
-    compose_agents_md(root, instances, project_name=manifest.name)
+    # Empty registry — allmight add will append.
+    write_registry(root, [])
 
-    # Persist the registry so allmight list/status can find it again.
-    write_registry(root, [
-        RegistryEntry(
-            instance=instance.name,
-            capabilities=list(instance.capabilities),
-            versions={t.name: t.version for t in selected_templates},
-        ),
-    ])
-
-    # Persist onboarding answers for the agent-side /onboard skill.
-    captured["personalities"] = [
-        {"name": instance.name, "capabilities": list(instance.capabilities)},
-    ]
-    captured.setdefault("folders", [])
+    # Persist the (possibly preserved) onboard state.
     captured.setdefault("onboarded", False)
-    _write_onboard_yaml(onboard_path, captured)
+    captured.setdefault("personalities", [])
+    captured.setdefault("folders", [])
+    write_onboard(root, captured)
+
+    # Seed the personality suggestion catalog so /onboard has a
+    # deterministic list to propose from.
+    seed_suggestions(root, force=force)
 
     writable = bool(template_options.get("writable"))
     mode_label = "writable" if writable else "read-only"
@@ -200,113 +170,16 @@ def _init_callback(
         file_count = sum(1 for _ in tpl_dir.rglob("*") if _.is_file()) if tpl_dir.exists() else 0
         click.echo(f"All-Might! Project '{manifest.name}' — new templates staged.")
         click.echo(f"  Templates:  .allmight/templates/ ({file_count} files)")
-        if all_conflicts:
-            click.echo(f"  Conflicts:  {len(all_conflicts)} (.opencode/ entries you authored)")
         click.echo("")
         click.echo("  Run /sync in your agent to merge with your customizations.")
         click.echo("  Or run 'allmight init --force' to overwrite everything.")
     else:
         click.echo(f"All-Might! Project '{manifest.name}' initialized ({mode_label}).")
-        click.echo(f"  Languages:    {', '.join(manifest.languages) or 'none detected'}")
-        click.echo(f"  Corpora:      {len(manifest.indices)}")
-        click.echo(f"  Personalities: {', '.join(i.name for i in instances)}")
-        if all_conflicts:
-            click.echo("")
-            click.echo(
-                f"  Heads up: {len(all_conflicts)} .opencode/ entries already exist "
-                "and were not touched."
-            )
-            for c in all_conflicts:
-                click.echo(f"    - {c.dst.relative_to(root)} ({c.existing})")
-            click.echo(
-                "  Manifest staged at .allmight/templates/conflicts.yaml — "
-                "run /sync to resolve."
-            )
+        click.echo(f"  Languages:  {', '.join(manifest.languages) or 'none detected'}")
         click.echo("")
         click.echo("What's next:")
-        click.echo("  1. Open this folder in Claude Code or OpenCode")
-        click.echo("  2. Run /onboard to finish setup (role descriptions, folder classification)")
-        if writable:
-            click.echo("  3. Run /ingest to build the search index")
-            click.echo("  4. Run /search \"<query>\" to explore your codebase")
-            click.echo("  5. Run /enrich to annotate symbols as you learn")
-        else:
-            click.echo("  3. Run /search \"<query>\" to explore the codebase")
-        click.echo("")
-        click.echo("All-Might skills auto-load — just start asking questions.")
-
-
-def _collect_onboard_answers(
-    templates,
-    manifest,
-    *,
-    interactive: bool,
-) -> dict:
-    """Gather the single personality name + its capabilities.
-
-    Part-D commit 7: ``allmight init`` creates ONE personality with
-    ALL discovered capabilities. The previous flow (one prompt per
-    template + folder list) is gone — folder classification is
-    deferred entirely to the agent-side ``/onboard`` skill.
-
-    Always returns the same dict shape — uses the project-root dir
-    name as the default under ``--yes`` / non-TTY, prompts otherwise.
-    """
-    import sys
-
-    from .core.personalities import slugify_instance_name
-
-    is_tty = sys.stdin.isatty() and sys.stdout.isatty()
-    do_prompt = interactive and is_tty
-
-    default_name = slugify_instance_name(manifest.root_path.name) or "main"
-
-    if do_prompt:
-        raw = click.prompt(
-            "  Personality name",
-            default=default_name,
-            show_default=True,
-        )
-        slug = slugify_instance_name(raw) or default_name
-        if slug != raw:
-            click.echo(f"    → using slug: {slug}")
-    else:
-        slug = default_name
-
-    return {
-        "onboarded": False,
-        "personalities": [
-            {
-                "name": slug,
-                "capabilities": [t.name for t in templates],
-            },
-        ],
-        "folders": [],
-    }
-
-
-def _read_onboard_yaml(path) -> dict | None:
-    """Return the captured onboarding state, or ``None`` if absent."""
-    import yaml
-
-    if not path.exists():
-        return None
-    try:
-        data = yaml.safe_load(path.read_text()) or {}
-    except (yaml.YAMLError, OSError):
-        return None
-    data.setdefault("onboarded", False)
-    data.setdefault("personalities", [])
-    data.setdefault("folders", [])
-    return data
-
-
-def _write_onboard_yaml(path, data: dict) -> None:
-    """Persist onboarding state for the agent-side /onboard skill."""
-    import yaml
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(data, sort_keys=False))
+        click.echo("  Run /onboard in your agent to set up your first personality,")
+        click.echo("  or just start asking questions.")
 
 
 main.add_command(_build_init_command())
@@ -488,30 +361,28 @@ def list_personalities() -> None:
 
 
 # ------------------------------------------------------------------
-# Import (personality bundle restore)
+# Bundle import (internal helper for `share pull`).
+#
+# The standalone ``allmight import`` CLI was removed (Track C — it
+# was the mechanical CI/scripting path; the agent-driven
+# ``/all-for-one`` skill covers cross-project transfer). The body
+# stays here as a private helper because ``share pull`` clones a git
+# remote into a temp dir then runs the same install + lineage
+# bookkeeping. Callers pass the project root and bundle path
+# explicitly; this used to be derived from ``cwd`` via Click.
 # ------------------------------------------------------------------
 
-@main.command("import")
-@click.argument("bundle", type=click.Path(exists=True, file_okay=False))
-@click.option("--as", "as_name", default=None,
-              help="Install the bundled personality under this new name "
-                   "(instead of the manifest's personality_name).")
-def import_personality(bundle: str, as_name: str | None) -> None:
-    """Restore a single personality bundle into the current All-Might project.
 
-    Mechanical, single-bundle install — the thin path for CI,
-    scripting, and fresh-project bootstrap. Reads ``manifest.yaml``
-    from the bundle, runs each named capability's install hook (so the
-    on-disk structure conforms to the receiving project's ``allmight``
-    version), and copies the bundle's data into
-    ``personalities/<name>/``. Vector indices (``store/``) are not in
-    bundles; rebuild via ``/ingest`` afterward.
+def _import_bundle(
+    project_root: "Path",
+    bundle: str,
+    as_name: str | None = None,
+) -> None:
+    """Install a single personality bundle into ``project_root``.
 
-    If the target name already exists, this command fails. Anything
-    requiring merge — multiple bundles, fold-into-existing,
-    in-project consolidation — belongs to ``/all-for-one`` (the skill
-    invoked from the agent), which can dialog through the per-file
-    decisions a CLI flag cannot capture.
+    Same semantics as the (removed) ``allmight import`` CLI: refuses
+    on collision and points the user at ``/all-for-one``. Used by
+    ``share pull`` after the git clone lands a bundle in a temp dir.
     """
     from pathlib import Path as P
     import shutil
@@ -533,7 +404,6 @@ def import_personality(bundle: str, as_name: str | None) -> None:
     )
     from .capabilities.database.scanner import ProjectScanner
 
-    project_root = P(".").resolve()
     if not (project_root / ".allmight").is_dir():
         click.echo(
             f"error: {project_root} is not an All-Might project (no .allmight/ found). "
@@ -831,15 +701,14 @@ def share_publish(
 @click.option("--as", "as_name", default=None,
               help="Install the pulled personality under this name.")
 def share_pull(git_url: str, as_name: str | None) -> None:
-    """Clone a bundle from a git remote and import it.
+    """Clone a bundle from a git remote and install it.
 
-    Equivalent to: ``git clone <url> <tmp> && allmight import <tmp>``,
-    plus persisting the upstream URL in ``.allmight/upstream.yaml``.
+    Internally: ``git clone <url> <tmp>`` then runs the bundle-import
+    helper. Persists the upstream URL in ``.allmight/upstream.yaml``.
 
-    Inherits ``allmight import``'s collision behaviour: if the target
-    name already exists, the pull fails and asks the user to either
-    retry with ``--as <new-name>`` or run ``/all-for-one`` in the
-    agent to merge.
+    Collision behaviour: if the target name already exists, the pull
+    fails and asks the user to either retry with ``--as <new-name>``
+    or run ``/all-for-one`` in the agent to merge.
     """
     import shutil as _shutil
     import tempfile as _tempfile
@@ -871,15 +740,12 @@ def share_pull(git_url: str, as_name: str | None) -> None:
             click.echo(f"error: {exc}", err=True)
             raise SystemExit(1)
 
-        # Reuse the existing import command's body via Click's
-        # invocation API. Collision-on-target is reported by import
-        # itself (and includes a /all-for-one redirect message); we
-        # let SystemExit propagate so the user sees the same error.
-        ctx = click.get_current_context()
-        sub = main.get_command(ctx, "import")
-        assert sub is not None, "import command must be registered"
+        # Reuse the bundle-import helper directly. Collision-on-target
+        # is reported by the helper (and includes a /all-for-one
+        # redirect message); we let SystemExit propagate so the user
+        # sees the same error.
         try:
-            ctx.invoke(sub, bundle=str(clone_dest), as_name=as_name)
+            _import_bundle(project_root, str(clone_dest), as_name)
         except SystemExit:
             raise
 

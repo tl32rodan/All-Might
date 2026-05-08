@@ -128,7 +128,6 @@ decide whether the directory is still wanted.
 
 - **MEMORY.md** is never staged or overwritten — it is agent-writable
 - After syncing, run `/ingest` if workspace configs changed
-- Any legacy `.claude/` directory can be deleted manually once sync is complete
 """
 
 SYNC_COMMAND_BODY = """\

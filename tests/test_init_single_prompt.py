@@ -1,16 +1,14 @@
-"""Init UX simplification — single ``Personality name?`` prompt.
+"""Init is scaffold-only: no personality is created at install time.
 
-Part-D commit 7 contract: ``allmight init`` creates ONE personality
-with ALL discovered capabilities by default. The previous flow
-(prompt per template + folder list) has been replaced with a single
-question:
+Track A contract: ``allmight init`` writes the project-wide
+``.opencode/`` globals + ``MEMORY.md`` + ``AGENTS.md``, an empty
+registry, and seeds ``.allmight/suggestions/personalities/`` with the
+canonical suggestion catalog. Personalities are decided by the
+agent-side ``/onboard`` skill, which proposes from the catalog and
+shells out to ``allmight add``.
 
-  Personality name? [<project-root-dir-name>]
-
-Under ``--yes`` the prompt is skipped and the default
-(``slugify_instance_name(project_root.name)``) is used. Folder
-classification is deferred entirely to the agent-side
-``/onboard`` skill (commit 8).
+(File still named ``test_init_single_prompt.py`` for git history;
+the "single prompt" framing predates Track A.)
 """
 
 from __future__ import annotations
@@ -34,77 +32,90 @@ def project_dir(tmp_path: Path) -> Path:
     return project
 
 
-class TestInitYesSinglePersonality:
-    def test_creates_one_personality(self, project_dir: Path) -> None:
+class TestInitScaffoldOnly:
+    def test_no_personality_created(self, project_dir: Path) -> None:
         runner = CliRunner()
         result = runner.invoke(main, ["init", "--yes", str(project_dir)])
         assert result.exit_code == 0, result.output
 
-        personality_dirs = sorted(p for p in (project_dir / "personalities").iterdir() if p.is_dir())
-        assert len(personality_dirs) == 1, (
-            f"--yes init must produce exactly one personality, got "
-            f"{[p.name for p in personality_dirs]}"
-        )
+        personalities_dir = project_dir / "personalities"
+        # The directory may be created (write_init_scaffold makes a
+        # stable parent for compose) but must contain no personalities.
+        if personalities_dir.exists():
+            children = [p for p in personalities_dir.iterdir() if p.is_dir()]
+            assert children == [], (
+                f"init should not create personalities, got {[p.name for p in children]}"
+            )
 
-    def test_personality_named_after_project_root(self, project_dir: Path) -> None:
-        runner = CliRunner()
-        runner.invoke(main, ["init", "--yes", str(project_dir)])
-
-        personality_dirs = list((project_dir / "personalities").iterdir())
-        assert personality_dirs[0].name == "my-chip"
-
-    def test_personality_has_all_capabilities(self, project_dir: Path) -> None:
-        runner = CliRunner()
-        runner.invoke(main, ["init", "--yes", str(project_dir)])
-
-        p = project_dir / "personalities" / "my-chip"
-        assert (p / "database").is_dir()
-        assert (p / "memory").is_dir()
-
-    def test_registry_has_one_part_d_row(self, project_dir: Path) -> None:
+    def test_registry_is_empty(self, project_dir: Path) -> None:
         runner = CliRunner()
         runner.invoke(main, ["init", "--yes", str(project_dir)])
 
         registry = yaml.safe_load(
             (project_dir / ".allmight" / "personalities.yaml").read_text()
         )
-        rows = registry["personalities"]
-        assert len(rows) == 1
-        row = rows[0]
-        assert row.get("name") == "my-chip"
-        assert sorted(row.get("capabilities", [])) == ["database", "memory"]
+        assert registry["personalities"] == []
 
-
-class TestInitOnboardYaml:
-    def test_writes_single_personality_block(self, project_dir: Path) -> None:
-        """``onboard.yaml`` records the single personality + its
-        capabilities; ``/onboard`` will read this to drive the
-        qualitative half of setup."""
+    def test_onboard_yaml_starts_unonboarded(self, project_dir: Path) -> None:
         runner = CliRunner()
         runner.invoke(main, ["init", "--yes", str(project_dir)])
 
-        path = project_dir / ".allmight" / "onboard.yaml"
-        assert path.exists()
-        data = yaml.safe_load(path.read_text())
+        data = yaml.safe_load(
+            (project_dir / ".allmight" / "onboard.yaml").read_text()
+        )
         assert data["onboarded"] is False
-        assert isinstance(data["personalities"], list)
-        assert len(data["personalities"]) == 1
-        entry = data["personalities"][0]
-        assert entry["name"] == "my-chip"
-        assert sorted(entry["capabilities"]) == ["database", "memory"]
+        assert data["personalities"] == []
+        assert data.get("folders", []) == []
 
-    def test_no_folders_prompt_under_yes(self, project_dir: Path) -> None:
-        """``--yes`` must not gather folders; ``/onboard`` does that."""
+    def test_seeds_suggestion_catalog(self, project_dir: Path) -> None:
         runner = CliRunner()
         runner.invoke(main, ["init", "--yes", str(project_dir)])
 
-        path = project_dir / ".allmight" / "onboard.yaml"
-        data = yaml.safe_load(path.read_text())
-        assert data.get("folders", []) == []
+        suggestions_dir = project_dir / ".allmight" / "suggestions" / "personalities"
+        assert suggestions_dir.is_dir()
+        # `general` is the always-offered fallback — must always be seeded.
+        general = suggestions_dir / "general.yaml"
+        assert general.exists()
+        body = yaml.safe_load(general.read_text())
+        assert body["name"] == "general"
+        assert "database" in body["capabilities"]
+        assert "memory" in body["capabilities"]
+
+    def test_does_not_populate_sync_templates(self, project_dir: Path) -> None:
+        """``.allmight/templates/`` is the ``/sync`` re-init staging area.
+        First init must not write into it — that path is owned by
+        ``/sync``, distinct from ``.allmight/suggestions/``."""
+        runner = CliRunner()
+        runner.invoke(main, ["init", "--yes", str(project_dir)])
+
+        templates_dir = project_dir / ".allmight" / "templates"
+        if templates_dir.exists():
+            files = list(templates_dir.rglob("*"))
+            assert files == [], (
+                f".allmight/templates/ should be empty on first init, got {files}"
+            )
+
+    def test_writes_opencode_globals(self, project_dir: Path) -> None:
+        runner = CliRunner()
+        runner.invoke(main, ["init", "--yes", str(project_dir)])
+
+        # Project-wide skills installed by database capability
+        assert (project_dir / ".opencode" / "skills" / "onboard" / "SKILL.md").is_file()
+        assert (project_dir / ".opencode" / "commands" / "onboard.md").is_file()
+        # Project-wide commands installed by memory capability
+        assert (project_dir / ".opencode" / "commands" / "remember.md").is_file()
+        assert (project_dir / ".opencode" / "commands" / "recall.md").is_file()
+
+    def test_writes_root_context_files(self, project_dir: Path) -> None:
+        runner = CliRunner()
+        runner.invoke(main, ["init", "--yes", str(project_dir)])
+
+        assert (project_dir / "MEMORY.md").is_file()
+        assert (project_dir / "AGENTS.md").is_file()
 
 
 class TestInitOutputMessage:
-    def test_message_lists_one_personality(self, project_dir: Path) -> None:
+    def test_message_directs_user_to_onboard(self, project_dir: Path) -> None:
         runner = CliRunner()
         result = runner.invoke(main, ["init", "--yes", str(project_dir)])
-        assert "my-chip" in result.output
+        assert "/onboard" in result.output

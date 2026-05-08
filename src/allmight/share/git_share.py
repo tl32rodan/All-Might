@@ -5,7 +5,7 @@ Two operations:
 * :func:`publish_bundle` — take an existing bundle dir (produced by
   ``/one-for-all``) and push it to a git URL.
 * :func:`pull_to_temp` — clone a git URL to a temp dir so the caller
-  can run ``allmight import`` against the cloned tree.
+  can install the cloned bundle via the internal bundle-import helper.
 
 The All-Might side cares only that ``git`` exists on PATH. Auth,
 network reachability, and credentials are the user's environment's

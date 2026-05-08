@@ -43,8 +43,18 @@ def initted_project(tmp_path: Path) -> Path:
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n")
 
     runner = CliRunner()
-    result = runner.invoke(main, ["init", "--yes", str(tmp_path)])
-    assert result.exit_code == 0, result.output
+    import os
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        # Track A: init is scaffold-only. Add one personality
+        # explicitly so the per-personality compose surface exists.
+        result = runner.invoke(main, ["init", "--yes", str(tmp_path)])
+        assert result.exit_code == 0, result.output
+        result = runner.invoke(main, ["add", "general", "--capabilities", "database,memory"])
+        assert result.exit_code == 0, result.output
+    finally:
+        os.chdir(cwd)
     return tmp_path
 
 

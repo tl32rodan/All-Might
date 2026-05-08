@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ...core.markers import ALLMIGHT_MARKER_MD, ALLMIGHT_MARKER_TS
 from ...core.safe_write import write_guarded
+from ...core.skill_io import install_skill
 from .config import MemoryConfigManager
 
 
@@ -67,6 +68,32 @@ class MemoryInitializer:
         self._instance_root: Path | None = None
         self._instance_rel: str = ""
 
+    def initialize_globals(
+        self,
+        root: Path,
+        *,
+        force: bool = False,
+        staging: bool = False,
+    ) -> None:
+        """Project-wide install — root MEMORY.md, ``.opencode/`` commands +
+        plugins, recover skill, memory-history mirror.
+
+        Per-personality data (``personalities/<n>/memory/``, ROLE.md,
+        STATUS.md) lives in :meth:`initialize`. The memory-history
+        mirror is initialised here on the global state; :meth:`initialize`
+        re-syncs it after per-instance writes so any drift from
+        ROLE.md / STATUS.md / config.yaml lands in the seed commit too.
+        Both calls are idempotent.
+        """
+        if staging:
+            self._stage_memory_templates(root)
+        else:
+            self._create_memory_md(root)
+            self._generate_memory_commands(root, force=force)
+            self._generate_opencode_json(root, force=force)
+            self._install_recover_skill(root, force=force)
+        self._init_memory_history(root)
+
     def initialize(
         self,
         root: Path,
@@ -74,109 +101,71 @@ class MemoryInitializer:
         instance_root: Path | None = None,
         force: bool = False,
     ) -> None:
-        """Bootstrap the memory subsystem at *root*.
+        """Bootstrap globals + one personality's memory subtree.
 
         Args:
-            root: Project root path. Always holds ``MEMORY.md`` and
-                ``AGENTS.md`` regardless of layout.
+            root: Project root path. Always holds ``MEMORY.md``.
             staging: If True, stage templates to .allmight/templates/
                      instead of writing to working locations.
             instance_root: Personality instance directory under
-                ``personalities/<name>/``. The memory data dir,
-                commands, and plugins live here. When ``None`` (legacy
-                callers) writes go under ``root`` to preserve the
-                pre-personalities layout.
+                ``personalities/<name>/``. The memory data dir lives
+                here. When ``None`` (legacy callers) writes go under
+                ``root`` to preserve the pre-personalities layout.
             force: If True, regenerate framework-owned files
-                (``.opencode/plugins/*.ts``, the Claude Code memory
-                hook, generated commands, ROLE.md) even when the on-
-                disk file is missing the All-Might marker. **Never
-                touches user data**: ``MEMORY.md``, ``memory/journal/``,
+                (``.opencode/plugins/*.ts``, generated commands,
+                ROLE.md) even when the on-disk file is missing the
+                All-Might marker. **Never touches user data**:
+                ``MEMORY.md``, ``memory/journal/``,
                 ``memory/understanding/``, ``memory/store/``, and
                 ``memory/usage.log`` always preserve existing content.
         """
         self._instance_root = instance_root
         self._instance_rel = self._compute_instance_rel(root, instance_root)
 
+        # Project-wide writes (idempotent — also seeds memory-history)
+        self.initialize_globals(root, force=force, staging=staging)
+
         if staging:
-            self._stage_memory_templates(root)
-            # Bookkeeping mirror runs on the staging path too — see
-            # the call after the direct branch for the rationale.
-            self._init_memory_history(root)
             return
 
-        # --- Direct init (first time or force) ---
-
+        # Per-instance writes
         memory_dir = self._memory_dir(root)
 
         # 1. Create memory config (defines journal store + SMAK config)
         cfg_mgr = MemoryConfigManager(root, memory_root=memory_dir)
         cfg_mgr.initialize()
 
-        # 2. Create L1: MEMORY.md at project root
-        self._create_memory_md(root)
-
-        # 3. Create L2: understanding/ directory
+        # 2. L2: understanding/
         (memory_dir / "understanding").mkdir(parents=True, exist_ok=True)
 
-        # 4. Create L3: journal/ directory + store/
+        # 3. L3: journal/ + store/
         (memory_dir / "journal").mkdir(parents=True, exist_ok=True)
         (memory_dir / "store").mkdir(parents=True, exist_ok=True)
 
-        # 4b. Create usage.log for feedback loop
+        # 4. usage.log for feedback loop
         usage_log = memory_dir / "usage.log"
         if not usage_log.exists():
             usage_log.write_text("")
 
-        # 4c. Skills log — trace of self-authored skills/plugins
+        # 5. skills-log.md — trace of self-authored skills/plugins
         skills_log = memory_dir / "skills-log.md"
         if not skills_log.exists():
             skills_log.write_text(self._skills_log_template())
 
-        # 4d. Lessons-learned curator workflow:
-        # - _inbox/  : users write freely during sessions (Mode-2 instance share)
-        # - _reviewed/: curator (e.g. team lead) moves audited entries here
-        # See /remember "Lesson Learned" subsection for the routing rule.
+        # 6. Lessons-learned curator workflow (_inbox/, _reviewed/)
         lessons = memory_dir / "lessons_learned"
         (lessons / "_inbox").mkdir(parents=True, exist_ok=True)
         (lessons / "_reviewed").mkdir(parents=True, exist_ok=True)
 
-        # 4e. Personality STATUS.md (Part-F): rolling per-personality
-        # state (active focus, recent topics, open threads, last
-        # activity). Maintained by /remember; the framework only
-        # writes the empty starter on first init.
+        # 7. STATUS.md — rolling per-personality state
         self._write_status_md()
 
-        # 5. Generate memory commands (remember, recall, reflect)
-        self._generate_memory_commands(root, force=force)
-
-        # 7. Write ROLE.md (root AGENTS.md is composed by the registry)
+        # 8. ROLE.md
         self._write_role_md(root, force=force)
 
-        # 8. Generate opencode.json with hooks for OpenCode
-        self._generate_opencode_json(root, force=force)
-
-        # 9. Write the Claude Code memory-load hook script (mirrors
-        #    .opencode/plugins/memory-load.ts; the project-level bridge
-        #    in core.claude_bridge already registered it in
-        #    .claude/settings.json).
-        self._write_claude_memory_load_hook(root, force=force)
-
-        # 9b. Write the Claude Code memory-history hook script (mirrors
-        #     .opencode/plugins/memory-history.ts). Registered on the
-        #     ``Stop`` event in .claude/settings.json.
-        self._write_claude_memory_history_hook(root, force=force)
-
-        # 9c. Install the /recover skill — wraps the memory-history
-        #     CLI for the typical "undo this accidental edit" moment.
-        self._install_recover_skill(root, force=force)
-
-        # 10. Initialise the memory-history mirror at
-        #     ``.allmight/memory-history/``. Runs LAST so the seed
-        #     commit captures everything we just wrote (MEMORY.md,
-        #     ROLE.md, plugins, command files, etc.). Idempotent —
-        #     re-init of an already-mirrored project just syncs
-        #     drift. Failures are non-fatal: the project still works
-        #     without recovery.
+        # 9. Memory-history mirror runs LAST so the seed commit captures
+        #    everything we just wrote (MEMORY.md, ROLE.md, plugins,
+        #    command files, etc.). Idempotent. Failures are non-fatal.
         self._init_memory_history(root)
 
     def _init_memory_history(self, root: Path) -> None:
@@ -202,33 +191,20 @@ class MemoryInitializer:
             )
 
     def _install_recover_skill(self, root: Path, force: bool = False) -> None:
-        """Install the ``/recover`` SKILL.md.
-
-        Companion to the ``/recover`` command body (written by
-        ``_write_memory_command_content``). The skill body teaches
-        the agent how to walk the user through picking the right
-        revision and restoring it via ``allmight memory log/diff/
-        restore``. Idempotent and runs on every ``initialize()`` so
-        re-init picks it up too.
-        """
+        """Install the ``/recover`` SKILL.md (command body lives in
+        ``_write_memory_command_content``)."""
         from .recover_skill_content import RECOVER_SKILL_BODY
 
-        skills_dir = root / ".opencode" / "skills" / "recover"
-        skills_dir.mkdir(parents=True, exist_ok=True)
-        frontmatter = (
-            "---\n"
-            "name: recover\n"
-            "description: Restore memory data from the .allmight/memory-history/ "
-            "snapshot mirror. Use when the user wants to undo an accidental "
-            "memory edit, restore a deleted file, or roll back to an earlier "
-            "state.\n"
-            "---\n\n"
-        )
-        content = frontmatter + ALLMIGHT_MARKER_MD + "\n\n" + RECOVER_SKILL_BODY
-        write_guarded(
-            skills_dir / "SKILL.md",
-            content,
-            ALLMIGHT_MARKER_MD,
+        install_skill(
+            root,
+            name="recover",
+            description=(
+                "Restore memory data from the .allmight/memory-history/ "
+                "snapshot mirror. Use when the user wants to undo an "
+                "accidental memory edit, restore a deleted file, or roll "
+                "back to an earlier state."
+            ),
+            skill_body=RECOVER_SKILL_BODY,
             force=force,
         )
 
@@ -1799,127 +1775,6 @@ Log the recall to `memory/usage.log`:
                 force=force,
             )
 
-    def _write_claude_memory_load_hook(
-        self, root: Path, force: bool = False,
-    ) -> None:
-        """Write ``.claude/hooks/memory_load.py`` — Claude Code mirror.
-
-        Pairs with ``.opencode/plugins/memory-load.ts``. Both inject
-        the same MEMORY.md content plus the scope-first principle so
-        the agent's L1 cache stays warm across sessions and after
-        compaction. When you change one, change the other (see All-
-        Might ``CLAUDE.md`` -> Editor Compatibility).
-
-        The settings.json registration is written by the project-level
-        bridge in ``core.claude_bridge``; this method only emits the
-        script body.
-        """
-        from ...core.claude_bridge import CLAUDE_HOOK_MARKER
-
-        hooks_dir = root / ".claude" / "hooks"
-        hooks_dir.mkdir(parents=True, exist_ok=True)
-        target = hooks_dir / "memory_load.py"
-        write_guarded(target, self._claude_memory_load_hook_content(),
-                      CLAUDE_HOOK_MARKER, force=force)
-        target.chmod(0o755)
-
-    def _write_claude_memory_history_hook(
-        self, root: Path, force: bool = False,
-    ) -> None:
-        """Write ``.claude/hooks/memory_history.py`` — Claude Code mirror.
-
-        Pairs with ``.opencode/plugins/memory-history.ts``. Both
-        spawn ``allmight memory snapshot`` after every agent turn to
-        capture per-turn recovery points. ``core.claude_bridge``
-        registers it on the ``Stop`` event in
-        ``.claude/settings.json``.
-        """
-        from ...core.claude_bridge import CLAUDE_HOOK_MARKER
-
-        hooks_dir = root / ".claude" / "hooks"
-        hooks_dir.mkdir(parents=True, exist_ok=True)
-        target = hooks_dir / "memory_history.py"
-        write_guarded(target, self._claude_memory_history_hook_content(),
-                      CLAUDE_HOOK_MARKER, force=force)
-        target.chmod(0o755)
-
-    def _claude_memory_load_hook_content(self) -> str:
-        """Return the memory-load hook body for Claude Code.
-
-        Functionally equivalent to the OpenCode memory-load.ts plugin:
-        reads project-root MEMORY.md and prepends the scope-first
-        principle, emitting the result as ``additionalContext`` for
-        SessionStart / PreCompact.
-        """
-        return '''\
-#!/usr/bin/env python3
-# all-might generated — DO NOT EDIT.
-#
-# Mirror of .opencode/plugins/memory-load.ts. Changes here MUST land in
-# the .ts plugin too; see All-Might CLAUDE.md -> Editor Compatibility.
-"""Memory-load hook for Claude Code (SessionStart, PreCompact).
-
-Primes the agent with MEMORY.md (L1) plus the scope-first memory
-principle. Same content the OpenCode memory-load plugin injects via
-chat.message.
-"""
-import json
-import os
-import sys
-from pathlib import Path
-
-
-SCOPE_FIRST_PRINCIPLE = """--- Memory Scope-First Principle ---
-Before writing anything to memory, decide the scope:
-- Project-wide fact / preference / goal -> MEMORY.md (L1)
-- Per-corpus knowledge -> memory/understanding/<workspace>.md (L2)
-- Per-corpus personal state (TODOs, shortcuts, ad-hoc notes)
-    -> memory/<kind>/<workspace>.md  (create on demand)
-- Historical / searchable -> memory/journal/<workspace>/<date>-<title>.md (L3)
-
-Prefer the narrower scope. Never dump per-corpus content into MEMORY.md
-or memory/journal/general/. See /remember for the full guide.
---- End Principle ---"""
-
-
-def main() -> int:
-    cwd = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
-    parts: list[str] = []
-    memory_md = cwd / "MEMORY.md"
-    if memory_md.is_file():
-        try:
-            body = memory_md.read_text(encoding="utf-8")
-        except OSError:
-            body = ""
-        if body:
-            parts.append("--- Project Memory (MEMORY.md) ---")
-            parts.append(body.rstrip())
-            parts.append("--- End Project Memory ---")
-            parts.append("")
-    parts.append(SCOPE_FIRST_PRINCIPLE)
-    text = "\\n".join(parts).strip()
-    if not text:
-        return 0
-
-    try:
-        payload = json.load(sys.stdin) if not sys.stdin.isatty() else {}
-    except (json.JSONDecodeError, ValueError):
-        payload = {}
-    event = payload.get("hook_event_name") or "SessionStart"
-
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": event,
-            "additionalContext": text,
-        }
-    }))
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-'''
-
     def _opencode_plugin_map(self) -> dict[str, str]:
         """Return mapping of plugin filename → content."""
         return {
@@ -1943,10 +1798,6 @@ if __name__ == "__main__":
           fallback so any drift inside the compaction window lands
           in the mirror before context is rewritten.
         * ``session.deleted`` — final session-end fallback.
-
-        Sibling Claude Code hook is ``.claude/hooks/memory_history.py``
-        (see ``_claude_memory_history_hook_content``); both surfaces
-        share the same CLI entry point, so behaviour is identical.
 
         Errors are swallowed: a plugin must never block the user's
         turn. If ``allmight`` isn't on PATH (e.g. a non-pip install),
@@ -2019,66 +1870,6 @@ export const MemoryHistoryPlugin: Plugin = async ({ directory }: any) => {
 };
 
 export default MemoryHistoryPlugin;
-"""
-
-    def _claude_memory_history_hook_content(self) -> str:
-        """Claude Code hook: mirror of ``memory-history.ts``.
-
-        Reads JSON from stdin (the hook input), spawns ``allmight
-        memory snapshot``, returns an empty hook output. Used as a
-        ``Stop`` hook so it fires once per agent turn (the closest
-        Claude Code analogue to OpenCode's ``chat.message``).
-        """
-        return """\
-#!/usr/bin/env python3
-\"\"\"All-Might memory-history hook — Claude Code mirror of memory-history.ts.
-
-Stop hook: spawns ``allmight memory snapshot`` after every agent
-turn. Backs accidental-delete recovery via ``allmight memory
-restore``. Errors are swallowed; the hook must never block.
-
-The OpenCode sibling is ``.opencode/plugins/memory-history.ts``;
-both surfaces call the same CLI so behaviour is identical.
-\"\"\"
-import json
-import os
-import subprocess
-import sys
-
-
-def main() -> None:
-    raw = sys.stdin.read()
-    try:
-        payload = json.loads(raw) if raw.strip() else {}
-    except json.JSONDecodeError:
-        payload = {}
-
-    cwd = payload.get("cwd") or os.getcwd()
-    sid = (payload.get("session_id") or "")[:32]
-
-    args = ["allmight", "memory", "snapshot", "--trigger=stop-hook"]
-    if sid:
-        args.append(f"--session-id={sid}")
-
-    try:
-        subprocess.Popen(
-            args,
-            cwd=cwd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-        )
-    except (FileNotFoundError, OSError):
-        # allmight not on PATH or spawn failed — silent. Recovery via
-        # `allmight memory snapshot` by hand still works.
-        pass
-
-    # Empty output means: don't block, no extra context to inject.
-    print("{}")
-
-
-if __name__ == "__main__":
-    main()
 """
 
     def _usage_logger_plugin_content(self) -> str:
