@@ -20,10 +20,10 @@ one needs:
 A single project can hold one personality (the default after
 `allmight init`) or many (`allmight add` adds more). All personalities
 share **one** flat slash-command surface — `/search`, `/remember`,
-`/recall`, `/enrich`, `/ingest`, `/onboard`, `/one-for-all`,
-`/all-for-one`, `/sync` — and the agent decides which personality to
-act for from conversation context plus a `> **Default personality**:
-<name>` hint at the top of `MEMORY.md`.
+`/recall`, `/recover`, `/enrich`, `/ingest`, `/onboard`,
+`/one-for-all`, `/all-for-one`, `/sync` — and the agent decides
+which personality to act for from conversation context plus a
+`> **Default personality**: <name>` hint at the top of `MEMORY.md`.
 
 ## Setup
 
@@ -119,6 +119,7 @@ command against that personality's data dir.
 | `/ingest`   | "Build the search index" |
 | `/remember` | "Remember that ..." (records *or* reviews — agent picks based on trigger) |
 | `/recall`   | "What do you know about ...?" |
+| `/recover`  | "Get back what I just deleted" — agent walks you through picking the right snapshot from `.allmight/memory-history/` and restores it |
 | `/one-for-all` | "Export `<name>` so I can share it" — agent applies per-capability rules and reviews for PII (1 personality → 1 bundle) |
 | `/all-for-one` | "Merge these into one personality" — fold multiple bundles or in-project personalities into one target (N → 1) with per-file dialog |
 | `/sync`     | Merge staged template updates after re-init / resolve compose conflicts |
@@ -243,20 +244,29 @@ it's agent-authored from `/onboard` onward.
 
 Every memory write is auto-snapshotted into a local git mirror at
 `.allmight/memory-history/` (separate from your project's main
-`.git`). Accidental deletes or overwrites are recoverable:
+`.git`). Snapshots fire automatically after every agent turn (and
+on session end / pre-compaction).
+
+The friendly path: just tell the agent.
+
+```text
+> Oops, I deleted understanding/stdcell.md by accident — get it back?
+```
+
+The `/recover` skill walks you through picking the right snapshot
+and restores the file. SMAK vector indices (`store/`) are excluded
+from the mirror — they're rebuilt by `/ingest`.
+
+For scripting / power users, the same operations are exposed as CLI
+subcommands:
 
 ```bash
 allmight memory log                          # see snapshots
 allmight memory log --personality stdcell_owner -n 5
 allmight memory diff <sha>                   # what changed
 allmight memory restore MEMORY.md --rev HEAD~1
-allmight memory restore personalities/stdcell_owner/memory/understanding/stdcell.md
+allmight memory snapshot -m "before risky edit"
 ```
-
-Snapshots fire automatically after every agent turn (and on session
-end / pre-compaction). You can also run `allmight memory snapshot`
-by hand. SMAK vector indices (`store/`) are excluded from the
-mirror — they're rebuilt by `/ingest`.
 
 ## Glossary
 
