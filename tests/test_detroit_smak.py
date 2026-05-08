@@ -244,3 +244,41 @@ class TestProjectInitializer:
         assert "sos_checkout" not in content
         assert "smak enrich" in content
 
+    # -- ROLE.md is write-once even under --force ----------------------
+    # Mirror of the corresponding tests in test_memory_init.py.
+    # ProjectInitializer (database capability) writes ROLE.md too,
+    # and the same regression applies if the user has customised it.
+
+    def test_role_md_not_overwritten_on_db_reinit(self, sample_project):
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        instance_root = sample_project / "personalities" / "lab"
+        instance_root.mkdir(parents=True)
+        ProjectInitializer().initialize(manifest, instance_root=instance_root)
+        role = instance_root / "ROLE.md"
+        assert role.is_file()
+        # /onboard rewrites the body; agents typically keep the marker.
+        role.write_text(
+            "<!-- all-might generated -->\n# lab\n\nPoC executor.\n",
+        )
+        ProjectInitializer().initialize(manifest, instance_root=instance_root)
+        assert "PoC executor" in role.read_text()
+
+    def test_role_md_not_overwritten_under_force_db(self, sample_project):
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        instance_root = sample_project / "personalities" / "lab"
+        instance_root.mkdir(parents=True)
+        ProjectInitializer().initialize(manifest, instance_root=instance_root)
+        role = instance_root / "ROLE.md"
+        role.write_text(
+            "<!-- all-might generated -->\n# lab\n\nPoC executor.\n",
+        )
+        ProjectInitializer().initialize(
+            manifest, instance_root=instance_root, force=True,
+        )
+        body = role.read_text()
+        assert "PoC executor" in body
+        # Framework starter should not have been spliced in.
+        assert "corpus keeper" not in body.lower()
+

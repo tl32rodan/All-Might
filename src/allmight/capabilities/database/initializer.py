@@ -532,26 +532,40 @@ smak ingest --config {db_root}/<workspace>/config.yaml --index source_code --jso
         writable: bool = False,
         force: bool = False,
     ) -> None:
-        """Write the corpus keeper's role description.
+        """Write the corpus keeper's role description **once**.
 
-        Registry-driven mode (``instance_root`` set and != ``root``):
-        writes ``personalities/<n>/ROLE.md``; the registry's
-        ``compose_agents_md`` stitches every instance's ROLE.md into
-        the single root ``AGENTS.md`` afterwards.
+        ROLE.md is user-owned: ``/onboard`` rewrites the body to
+        describe the personality's actual role, and the All-Might
+        marker on line 1 typically survives that edit. Pre-fix,
+        ``write_guarded`` saw the marker and overwrote on every
+        re-init; under ``--force`` the overwrite happened even
+        without a marker, silently destroying user content.
+
+        ROLE.md is now **write-once at the framework level**. We
+        emit a starter template only when no file exists. ``--force``
+        is reserved for plugin/command/hook regeneration; user role
+        descriptions are always preserved. To deliberately reset
+        ROLE.md, the user removes the file and re-runs init.
+
+        ``force`` is accepted for backward-compat in the call signature
+        but intentionally ignored on this path.
 
         Legacy direct-call mode (no ``instance_root`` — used by tests,
-        clone, merge that bypass the registry): writes a marker-fenced
-        section directly into root ``AGENTS.md``. This path goes away
-        once those callers migrate to the registry-driven flow
-        (tracked in §B.6.3).
+        clone, merge that bypass the registry) still splices a
+        marker-fenced section directly into root ``AGENTS.md``. That
+        path goes away once those callers migrate to the registry-
+        driven flow (tracked in §B.6.3).
         """
         if self._instance_root is not None and self._instance_root != root:
+            target = self._instance_root / "ROLE.md"
+            if target.exists():
+                # User-owned. Never overwrite — including under --force.
+                return
             self._instance_root.mkdir(parents=True, exist_ok=True)
             write_guarded(
-                self._instance_root / "ROLE.md",
+                target,
                 self._role_md_body(manifest, writable=writable),
                 ALLMIGHT_MARKER_MD,
-                force=force,
             )
         else:
             self._write_legacy_agents_md(root, manifest, writable=writable)
