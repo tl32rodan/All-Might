@@ -7,7 +7,7 @@ for the one operation that cannot be agent-driven:
     allmight clone <source> [path]  — Clone an All-Might project (read-only)
     allmight memory init [path]     — Re-initialize agent memory subsystem
 
-Everything else is agent-driven through .opencode/skills and commands.
+Everything else is agent-driven through .claude/skills and commands.
 The skills teach the agent how to call the underlying tools (smak CLI)
 directly.
 """
