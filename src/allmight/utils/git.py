@@ -1,12 +1,62 @@
-"""Git repository introspection utilities.
+"""Git repository introspection + bookkeeping utilities.
 
-Used by the enrichment planner to prioritize symbols by commit frequency.
+Two responsibilities:
+
+* Read-only introspection used by the enrichment planner
+  (``get_repo_name``, ``is_git_repo``, ``get_file_commit_count``).
+* ``run_git``: a shared subprocess wrapper for All-Might's own
+  bookkeeping repos (``share/git_share.py`` for bundle transport,
+  ``memory/history.py`` for the memory recovery mirror). Both
+  scenarios commit programmatically and must never trigger
+  user-level GPG signing — see :func:`run_git` for the contract.
 """
 
 from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+
+
+class GitError(RuntimeError):
+    """Raised by :func:`run_git` when a git subprocess returns non-zero."""
+
+
+def run_git(args: list[str], cwd: Path | None = None) -> str:
+    """Run ``git <args>`` and return stdout. Raises :class:`GitError` on non-zero.
+
+    All-Might's bookkeeping commits (bundle publish, memory-history
+    snapshots) are not user-authored content; they must never be
+    GPG-signed regardless of the host's global ``commit.gpgsign``
+    setting. Hosts that enforce signing via an external signer
+    (sandboxes, hardware tokens, corporate CI) would otherwise fail
+    every internal ``git commit``. This wrapper injects
+    ``-c commit.gpgsign=false -c tag.gpgsign=false`` for every
+    invocation — harmless for read-only commands, and the only way
+    to opt out of a global ``true``.
+    """
+    cmd = [
+        "git",
+        "-c", "commit.gpgsign=false",
+        "-c", "tag.gpgsign=false",
+        *args,
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(cwd) if cwd else None,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+    except FileNotFoundError as exc:
+        raise GitError("git executable not found on PATH") from exc
+    if proc.returncode != 0:
+        raise GitError(
+            f"git {' '.join(args)} failed (exit {proc.returncode}): "
+            f"{proc.stderr.strip() or proc.stdout.strip()}"
+        )
+    return proc.stdout
 
 
 def get_repo_name(path: Path) -> str | None:

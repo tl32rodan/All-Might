@@ -1058,3 +1058,130 @@ def memory_export(fmt: str, root: str, out: str):
     click.echo(f"Exported {fmt} to {out_path}")
     if skipped:
         click.echo(f"  Skipped {skipped} legacy/unparseable entries.")
+
+
+# ------------------------------------------------------------------
+# Agent Memory: version-control mirror (recovery from accidental edits)
+# ------------------------------------------------------------------
+
+def _memory_history():
+    from .capabilities.memory.history import MemoryHistory
+    return MemoryHistory()
+
+
+@memory.command("snapshot")
+@click.option("--message", "-m", default=None,
+              help="Commit message. Defaults to 'manual: <change summary>'.")
+@click.option("--trigger", default="manual",
+              help="Trigger label recorded in the commit message "
+                   "(used by plugins / hooks to mark auto-snapshots).")
+@click.option("--session-id", "session_id", default="",
+              help="Session id recorded in the commit body.")
+def memory_snapshot(
+    message: str | None, trigger: str, session_id: str,
+) -> None:
+    """Sync live memory data into the recovery mirror and commit.
+
+    Run automatically by the OpenCode plugin / Claude Code hook after
+    each turn. Safe to run by hand at any time. No-op if nothing
+    changed since the last snapshot.
+    """
+    from pathlib import Path as P
+
+    project_root = P(".").resolve()
+    history = _memory_history()
+    if message is None:
+        sha = history.snapshot(
+            project_root, trigger=trigger, session_id=session_id,
+        )
+    else:
+        history.sync(project_root)
+        sha = history.commit(project_root, message)
+    if sha is None:
+        click.echo("No changes to snapshot.")
+    else:
+        click.echo(f"Snapshot: {sha[:12]}")
+
+
+@memory.command("log")
+@click.option("--personality", default=None,
+              help="Filter to commits that touched this personality's tree.")
+@click.option("-n", "limit", default=20, type=int,
+              help="Maximum number of commits to print (default: 20).")
+def memory_log(personality: str | None, limit: int) -> None:
+    """Print the memory-history commit log.
+
+    Each line: ``<short-sha> <iso-timestamp> <subject>``.
+    """
+    from pathlib import Path as P
+
+    history = _memory_history()
+    records = history.log(
+        P(".").resolve(),
+        personality=personality, n=limit,
+    )
+    if not records:
+        click.echo("(no commits in memory-history yet)")
+        return
+    for rec in records:
+        click.echo(f"{rec.sha[:12]}  {rec.timestamp}  {rec.subject}")
+
+
+@memory.command("diff")
+@click.argument("rev")
+@click.option("--file", "relpath", default=None,
+              help="Restrict the diff to one file (project-relative path).")
+def memory_diff(rev: str, relpath: str | None) -> None:
+    """Show what changed at <rev>, optionally for a single file."""
+    from pathlib import Path as P
+
+    history = _memory_history()
+    out = history.diff(P(".").resolve(), rev, relpath=relpath)
+    click.echo(out)
+
+
+@memory.command("restore")
+@click.argument("relpath", metavar="FILE")
+@click.option("--rev", default="HEAD",
+              help="Mirror revision to restore from. Default: HEAD "
+                   "(the most recent snapshot).")
+@click.option("--to", "dest", default=None, type=click.Path(),
+              help="Destination path (project-relative or absolute). "
+                   "Default: overwrite the live file at <file>.")
+@click.option("--yes", is_flag=True,
+              help="Skip the overwrite confirmation prompt.")
+def memory_restore(
+    relpath: str, rev: str, dest: str | None, yes: bool,
+) -> None:
+    """Restore <file> from a memory-history snapshot.
+
+    With no ``--to``, overwrites the live file. Confirms before
+    overwriting unless ``--yes``.
+    """
+    from pathlib import Path as P
+
+    project_root = P(".").resolve()
+    target = P(dest).resolve() if dest else (project_root / relpath)
+    if target.exists() and not yes:
+        if not click.confirm(
+            f"Overwrite {target}? This replaces the current contents."
+        ):
+            click.echo("Aborted.")
+            raise SystemExit(1)
+    history = _memory_history()
+    out = history.restore(
+        project_root, relpath, rev=rev, dest=target,
+    )
+    click.echo(f"Restored: {out}")
+
+
+@memory.command("gc")
+def memory_gc() -> None:
+    """Run ``git gc`` inside the memory-history mirror."""
+    from pathlib import Path as P
+
+    history = _memory_history()
+    out = history.gc(P(".").resolve())
+    if out.strip():
+        click.echo(out.strip())
+    click.echo("Memory-history gc complete.")
