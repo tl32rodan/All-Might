@@ -16,6 +16,69 @@ After modifying initializer, skill templates, commands, or memory init:
    Code hook MUST also be updated** (see *Editor Compatibility* below).
    The two surfaces share a behavioural contract; updating one and
    leaving the other stale is a regression even when tests pass.
+4. **If the change adds, removes, or renames a CLI command, run the
+   CLI-surface consistency sweep before committing** (see *CLI Surface
+   Consistency Sweep* below). The Python test suite does not catch
+   stale `allmight <cmd>` references inside skill bodies, README, or
+   docs — those will tell the agent (or the user) to run a
+   non-existent command. Track C shipped with this kind of drift in
+   README.md and docs/team-share.md because the sweep was skipped;
+   that's the regression this rule exists to prevent.
+
+## CLI Surface Consistency Sweep
+
+Run this any time you add, remove, or rename a top-level CLI command
+(``allmight <cmd>``), a sub-command (``allmight memory <sub>``), or a
+top-level flag. The Python tests catch most internal regressions but
+do **not** scan agent-facing skill bodies or human-facing markdown
+for stale references — those need a deliberate sweep.
+
+**Step 1: grep every surface.**
+
+```bash
+grep -rn '\\ballmight <cmd>\\b' src/ tests/ docs/ README.md CLAUDE.md
+```
+
+Replace `<cmd>` with the changed command name. Inspect every hit.
+
+**Step 2: classify each hit.**
+
+| Hit kind | Action |
+|---|---|
+| Live agent instruction in a skill body (``src/allmight/capabilities/*/skill_content.py``) | **Update** — agents will execute the instruction verbatim. A removed command must not appear here. |
+| Live cross-reference in another skill (e.g. ``/one-for-all`` mentioning ``allmight import``) | **Update** — same as above; the cross-referenced command must exist. |
+| User-facing prose / commands table (``README.md``) | **Update** — the user will type whatever the README shows. |
+| Supplementary docs (``docs/*.md``) | **Update** — same reason as README. |
+| CLI Surface table in ``CLAUDE.md`` § Design Philosophy 5, plus Architecture Layers row | **Update** — pinned reference for future contributors. |
+| Test that invokes the command via ``runner.invoke(main, [<cmd>, ...])`` (``tests/test_*.py``) | **Update or delete** depending on intent. |
+| Historical context in a docstring or module header ("was removed in Track C", "Do not re-introduce") | **Keep** — these signal intent to future contributors. |
+
+**Step 3: re-run the grep.** After fixing, the only remaining hits
+should be historical-context strings (the "Keep" row above). Anything
+else is a stale instruction.
+
+**Step 4: smoke test.** ``cd /tmp/demo && allmight init .`` then
+``allmight --help`` and inspect the generated ``.opencode/skills/``
+and ``.opencode/commands/`` for the changed command's mentions.
+
+### Why this sweep is mandatory
+
+The Python test suite has blind spots that are structural, not
+fixable with more pytest:
+
+* Skill bodies are stored as Python **string constants** (``ONE_FOR_ALL_SKILL_BODY``,
+  ``ALL_FOR_ONE_SKILL_BODY``). A test asserting ``"allmight import" in body``
+  passes regardless of whether ``allmight import`` is a real CLI command —
+  the assertion is a string-presence check, not a CLI-existence check.
+* ``README.md`` and ``docs/*.md`` are never imported or executed.
+  A test suite has no view of them.
+* Agents read the skill body at runtime, not the Python module. If
+  the module docstring is updated but the constant body isn't, the
+  agent still runs the stale instruction.
+
+The blast radius of a missed hit is high: the agent executes a
+non-existent command, fails, retries, escalates. Every stale
+reference is a foot-gun for the next user to step on.
 
 ## Planning Workflow
 

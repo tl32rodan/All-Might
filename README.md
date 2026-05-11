@@ -149,25 +149,14 @@ stdcell_owner-export/
 
 `store/` is never bundled — the receiver runs `/ingest` to rebuild it.
 
-### Import (single bundle, no merge): `allmight import`
+### Install / Merge: `/all-for-one`
 
-```bash
-allmight import ./stdcell_owner-export/
-allmight import ./stdcell_owner-export/ --as stdcell_v2  # rename
-```
+Run this skill in the agent when you want to absorb one or more
+bundles (or in-project personalities) into a single target:
 
-Mechanical install — runs each capability's install hook, copies
-the bundled files, records lineage. **Refuses if a personality of
-the same name already exists** and points you at `/all-for-one` to
-merge instead. Reserved for CI / scripting / fresh-project bootstrap.
-
-### Merge (multiple sources, or fold-into-existing): `/all-for-one`
-
-Run this skill in the agent when you want to:
-
+- Install a single bundle into a fresh target name
 - Combine multiple bundles into one personality
-- Fold a bundle into an existing personality (`allmight import`
-  refused on collision)
+- Fold a bundle into an existing personality (per-file dialog)
 - Consolidate two in-project personalities (`stdcell_owner` +
   `pll_owner` → `eda_owner`) — sources don't have to be bundles
 
@@ -178,8 +167,12 @@ short dialog. By default the source personalities are kept after the
 merge (the agent asks before removing them). Lineage from every
 source is recorded in the target's `derived_from` list.
 
-After any import or merge, run `/ingest` in the merged workspaces to
-rebuild SMAK indices.
+For bundles arriving over a git remote, see `allmight share pull`
+below — it clones the bundle and installs it via the same internal
+helper, without a merge dialog.
+
+After installing or merging, run `/ingest` in the merged workspaces
+to rebuild SMAK indices.
 
 ## Team Share
 
