@@ -102,10 +102,14 @@ def _init_callback(
     """
     from pathlib import Path as P
 
+    import shutil as _shutil
+
     from .core.personalities import (
         InstallContext,
+        Personality,
         compose_agents_md,
         discover,
+        read_registry,
         write_init_scaffold,
         write_registry,
     )
@@ -121,6 +125,7 @@ def _init_callback(
     is_reinit = allmight_dir.is_dir() and not force
 
     templates = discover()
+    template_by_name = {t.name: t for t in templates}
 
     # Captured onboard.yaml is preserved across re-init so /onboard
     # state survives. On first init we just seed the empty shape —
@@ -130,6 +135,26 @@ def _init_callback(
         "personalities": [],
         "folders": [],
     }
+
+    # On re-init: read the existing registry so we can recompose
+    # AGENTS.md with the personalities the user already has. Skipping
+    # this would clobber AGENTS.md to a header-only stub and force
+    # the user back through /onboard.
+    existing_entries = read_registry(root) if is_reinit else []
+
+    # Back up the existing AGENTS.md before compose_agents_md
+    # overwrites it. ``/sync`` reads
+    # ``.allmight/templates/AGENTS.md.backup`` to recover any
+    # customisations the user made directly to AGENTS.md (rather than
+    # to the per-personality ROLE.md). The new AGENTS.md is intentionally
+    # *not* annotated with a callout — once /sync merges and deletes the
+    # backup, no stale pointer is left behind.
+    if is_reinit:
+        existing_agents = root / "AGENTS.md"
+        if existing_agents.is_file():
+            backup_dir = root / ".allmight" / "templates"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            _shutil.copy2(existing_agents, backup_dir / "AGENTS.md.backup")
 
     write_init_scaffold(root)
 
@@ -144,13 +169,31 @@ def _init_callback(
         if template.install_globals is not None:
             template.install_globals(ctx)
 
-    # Empty AGENTS.md compose — no personalities yet, but the file
-    # must exist so OpenCode can pick it up. /onboard + allmight add
-    # populate it via compose_agents_md once personalities exist.
-    compose_agents_md(root, [], project_name=manifest.name)
+    # Recompose AGENTS.md. On first init the instance list is empty
+    # (no personalities yet — /onboard creates them); on re-init we
+    # pass the entries we read above so the user's existing
+    # personalities survive the regenerated header.
+    existing_instances: list[Personality] = []
+    for entry in existing_entries:
+        primary_name = (
+            entry.capabilities[0] if entry.capabilities else entry.template
+        )
+        primary = template_by_name.get(primary_name)
+        if primary is None:
+            continue
+        existing_instances.append(Personality(
+            template=primary,
+            project_root=root,
+            name=entry.instance,
+            capabilities=list(entry.capabilities),
+        ))
+    compose_agents_md(root, existing_instances, project_name=manifest.name)
 
-    # Empty registry — allmight add will append.
-    write_registry(root, [])
+    # Registry: only seed an empty list on first init. Re-init
+    # preserves the existing rows so ``allmight list`` keeps working
+    # without forcing the user to re-run /onboard.
+    if not is_reinit:
+        write_registry(root, [])
 
     # Persist the (possibly preserved) onboard state.
     captured.setdefault("onboarded", False)

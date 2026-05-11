@@ -119,3 +119,114 @@ class TestInitOutputMessage:
         runner = CliRunner()
         result = runner.invoke(main, ["init", "--yes", str(project_dir)])
         assert "/onboard" in result.output
+
+
+class TestReInitPreservesPersonalitiesAndAgentsMd:
+    """Re-init must not clobber existing personality state.
+
+    Track A's scaffold-only init created a regression: re-init called
+    ``compose_agents_md(root, [], ...)`` and ``write_registry(root,
+    [])`` unconditionally, wiping any personalities the user had added
+    via ``allmight add`` or ``/onboard``. The fix:
+
+    * Re-init reads the existing registry and passes those instances
+      to ``compose_agents_md`` so the regenerated AGENTS.md still
+      lists them.
+    * Re-init only seeds an empty registry on **first** init.
+    * Re-init backs up the existing ``AGENTS.md`` to
+      ``.allmight/templates/AGENTS.md.backup`` (a fixed name) so
+      ``/sync`` can reconcile any user edits that lived directly in
+      AGENTS.md (rather than in the underlying ROLE.md).
+
+    The new AGENTS.md is intentionally *not* annotated with a
+    callout pointing at the backup — once ``/sync`` merges and
+    deletes the backup, no stale pointer is left behind. The
+    documentation lives in the ``/sync`` skill body.
+    """
+
+    def _init_and_add(self, project_dir: Path) -> CliRunner:
+        runner = CliRunner()
+        r = runner.invoke(main, ["init", "--yes", str(project_dir)])
+        assert r.exit_code == 0, r.output
+        import os
+        cwd = os.getcwd()
+        os.chdir(project_dir)
+        try:
+            r = runner.invoke(
+                main,
+                ["add", "general", "--capabilities", "database,memory"],
+            )
+            assert r.exit_code == 0, r.output
+        finally:
+            os.chdir(cwd)
+        return runner
+
+    def test_reinit_preserves_registry(self, project_dir: Path) -> None:
+        self._init_and_add(project_dir)
+        # Re-init in place.
+        CliRunner().invoke(main, ["init", "--yes", str(project_dir)])
+
+        registry = yaml.safe_load(
+            (project_dir / ".allmight" / "personalities.yaml").read_text()
+        )
+        names = [r.get("name") or r.get("instance") for r in registry["personalities"]]
+        assert "general" in names, (
+            f"re-init wiped the registry; got {names}"
+        )
+
+    def test_reinit_recomposes_agents_md_with_existing_personality(
+        self, project_dir: Path,
+    ) -> None:
+        self._init_and_add(project_dir)
+        CliRunner().invoke(main, ["init", "--yes", str(project_dir)])
+
+        content = (project_dir / "AGENTS.md").read_text()
+        # The regenerated AGENTS.md must still mention the personality
+        # the user added before re-init.
+        assert "general" in content, (
+            "re-init regenerated AGENTS.md without the existing personality"
+        )
+
+    def test_reinit_backs_up_pre_regeneration_agents_md(
+        self, project_dir: Path,
+    ) -> None:
+        self._init_and_add(project_dir)
+
+        # User edits AGENTS.md directly — this content is what /sync
+        # later needs to reconcile from the backup.
+        agents = project_dir / "AGENTS.md"
+        original = agents.read_text()
+        sentinel = "## User Notes\nFollow PEP-8 strictly.\n"
+        agents.write_text(original + "\n" + sentinel)
+
+        CliRunner().invoke(main, ["init", "--yes", str(project_dir)])
+
+        backup = project_dir / ".allmight" / "templates" / "AGENTS.md.backup"
+        assert backup.is_file(), "re-init did not write the AGENTS.md backup"
+        assert sentinel in backup.read_text(), (
+            "AGENTS.md backup is missing the user's edits"
+        )
+
+    def test_reinit_does_not_inject_backup_callout_into_agents_md(
+        self, project_dir: Path,
+    ) -> None:
+        """The regenerated AGENTS.md must not carry a sticky pointer to
+        the backup file — once /sync merges and deletes the backup, the
+        pointer would become stale. Reconciliation guidance lives in
+        the /sync skill body instead.
+        """
+        self._init_and_add(project_dir)
+        CliRunner().invoke(main, ["init", "--yes", str(project_dir)])
+
+        content = (project_dir / "AGENTS.md").read_text()
+        assert "AGENTS.md.backup" not in content
+        assert ".allmight/templates/AGENTS.md.backup" not in content
+
+    def test_first_init_does_not_create_backup(self, project_dir: Path) -> None:
+        """No prior AGENTS.md → no backup to make. The
+        ``.allmight/templates/AGENTS.md.backup`` path must only appear
+        on a true re-init.
+        """
+        CliRunner().invoke(main, ["init", "--yes", str(project_dir)])
+        backup = project_dir / ".allmight" / "templates" / "AGENTS.md.backup"
+        assert not backup.exists()

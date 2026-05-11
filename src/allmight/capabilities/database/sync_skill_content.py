@@ -29,6 +29,7 @@ SYNC_SKILL_BODY = """\
    - `.allmight/templates/commands/search.md` → `.opencode/commands/search.md`
    - `.allmight/templates/claude-md-section.md` → `AGENTS.md` (within `<!-- ALL-MIGHT -->` markers)
    - `.allmight/templates/memory-md-section.md` → `AGENTS.md` (within `<!-- ALL-MIGHT-MEMORY -->` markers)
+   - `.allmight/templates/AGENTS.md.backup` → `AGENTS.md` (see *AGENTS.md backup reconciliation* below)
    - `.allmight/templates/opencode.json` → `.opencode/opencode.json`
    - `.allmight/templates/memory-load.ts` → `.opencode/plugins/memory-load.ts`
 3. **Verify the working file is All-Might-owned before merging.**
@@ -48,6 +49,44 @@ SYNC_SKILL_BODY = """\
    - Replace only the content between the markers (`<!-- ALL-MIGHT -->`, `<!-- ALL-MIGHT-MEMORY -->`)
    - Never touch content outside the markers
 6. After all files are merged, delete `.allmight/templates/`
+
+### AGENTS.md backup reconciliation
+
+`allmight init` re-runs **regenerate** the root `AGENTS.md` from
+each personality's `ROLE.md` plus the current framework header. Any
+direct edits the user made to `AGENTS.md` (rather than to the
+underlying `ROLE.md`) are lost from the live file. To make those
+edits recoverable, init copies the pre-regeneration `AGENTS.md`
+to `.allmight/templates/AGENTS.md.backup`.
+
+If that backup exists, reconcile it as part of sync:
+
+1. Read both files: `.allmight/templates/AGENTS.md.backup` and the
+   freshly regenerated `AGENTS.md`.
+2. Diff them. Three common shapes:
+   - **Identical** — no customisations. Delete the backup.
+   - **Backup has notes / project context the new file lacks** — these
+     belong somewhere stable. Decide *with the user*:
+     - Per-personality content → fold into the matching
+       `personalities/<name>/ROLE.md`, then re-run
+       `compose_agents_md` (the easiest path: `allmight add` /
+       `allmight list` will trigger it next time, or the user can
+       just leave it and the next `allmight init` picks it up).
+     - Project-wide context (e.g. coding conventions, team norms) →
+       move to `MEMORY.md`'s `## Project Map` or a new top-level
+       section. Never paste back into `AGENTS.md` directly — the
+       next regeneration will discard it again.
+   - **Backup has stale framework prose the new header replaces** —
+     drop the backup's version; the regenerated header is canonical.
+3. After the user confirms each section's destination, delete
+   `.allmight/templates/AGENTS.md.backup`. Leaving it around means
+   the next re-init will create a backup-of-a-backup — confusing,
+   and tests pin "no backup after a successful sync".
+
+The point of this flow is to put user content where re-init won't
+clobber it again: ROLE.md for personality-specific notes, MEMORY.md
+for project-wide context. The backup file is the bridge between
+"user edited AGENTS.md once" and "user edited the right file".
 
 ### Mode-aware cleanup (after mode change)
 
@@ -120,6 +159,7 @@ decide whether the directory is still wanted.
 | `.allmight/templates/commands/**` | `.opencode/commands/**` |
 | `.allmight/templates/claude-md-section.md` | `AGENTS.md` (ALL-MIGHT marker) |
 | `.allmight/templates/memory-md-section.md` | `AGENTS.md` (ALL-MIGHT-MEMORY marker) |
+| `.allmight/templates/AGENTS.md.backup` | pre-regeneration snapshot of `AGENTS.md` (reconcile then delete — see above) |
 | `.allmight/templates/opencode.json` | `.opencode/opencode.json` |
 | `.allmight/templates/memory-load.ts` | `.opencode/plugins/memory-load.ts` |
 | `.allmight/templates/conflicts.yaml` | manifest of skipped compose targets |

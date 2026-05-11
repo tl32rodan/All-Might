@@ -311,6 +311,25 @@ class TestSyncSkillContent:
         assert ".claude/commands" not in SYNC_SKILL_BODY
         assert ".claude/hooks" not in SYNC_SKILL_BODY
 
+    def test_sync_skill_documents_agents_md_backup(self):
+        """``allmight init`` (re-init) writes
+        ``.allmight/templates/AGENTS.md.backup`` so the user's pre-
+        regeneration AGENTS.md edits aren't lost. The /sync skill body
+        is where that contract lives — it must teach the agent to
+        find the backup, reconcile, then delete it.
+        """
+        from allmight.capabilities.database.sync_skill_content import SYNC_SKILL_BODY
+        assert "AGENTS.md.backup" in SYNC_SKILL_BODY
+        # The agent must be told to delete the backup after merging,
+        # otherwise the next re-init creates a backup-of-a-backup.
+        body_lower = SYNC_SKILL_BODY.lower()
+        assert "delete" in body_lower and "backup" in body_lower
+        # Reconciliation should route content to ROLE.md / MEMORY.md,
+        # not back into AGENTS.md (which would just get regenerated
+        # away again on the next re-init).
+        assert "ROLE.md" in SYNC_SKILL_BODY
+        assert "MEMORY.md" in SYNC_SKILL_BODY
+
 
 # ======================================================================
 # Mode Transitions — re-init with different mode
