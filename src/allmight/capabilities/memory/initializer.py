@@ -442,7 +442,8 @@ See `/remember` and `/recall` commands for detailed guides.
 
     def _opencode_plugin_content(self) -> str:
         """Return the OpenCode memory-load.ts plugin content."""
-        return """\
+        from ...core.plugin_telemetry import TS_HEARTBEAT_SNIPPET
+        return ("""\
 /**
  * Memory L1 Loader — OpenCode plugin (All-Might)
  *
@@ -463,6 +464,7 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 
+""" + TS_HEARTBEAT_SNIPPET + """
 const SCOPE_FIRST_PRINCIPLE = `--- Memory Scope-First Principle ---
 Before writing anything to memory, decide the scope:
 - Project-wide fact / preference / goal → MEMORY.md (L1)
@@ -500,6 +502,7 @@ export const MemoryLoadPlugin: Plugin = async ({ directory }: any) => {
 
   return {
     event: async ({ event }: { event: any }) => {
+      emitHeartbeat("memory-load", cwd);
       const type = event?.type;
       const sid = event?.properties?.sessionID ?? "";
       if (!sid) return;
@@ -513,6 +516,7 @@ export const MemoryLoadPlugin: Plugin = async ({ directory }: any) => {
     },
 
     "chat.message": async (input: any, output: any) => {
+      emitHeartbeat("memory-load", cwd);
       const sid = input?.sessionID;
       if (!sid) return;
       if (primed.has(sid)) return;
@@ -541,10 +545,11 @@ export const MemoryLoadPlugin: Plugin = async ({ directory }: any) => {
 };
 
 export default MemoryLoadPlugin;
-"""
+""")
 
     def _remember_trigger_plugin_content(self) -> str:
         """Return the OpenCode remember-trigger.ts plugin content."""
+        from ...core.plugin_telemetry import TS_HEARTBEAT_SNIPPET
         # Canonical nudge text, substituted into the TS plugin so the
         # OpenCode and Claude Code paths share one source of truth.
         shared_nudge = (
@@ -572,6 +577,7 @@ export default MemoryLoadPlugin;
  */
 import type { Plugin } from "@opencode-ai/plugin";
 
+__TS_HEARTBEAT_SNIPPET__
 const NUDGE_EVERY = 5;
 
 type State = { idleCount: number; pendingNudge: string | null };
@@ -604,9 +610,12 @@ function ensure(sid: string): State {
   return s;
 }
 
-export const RememberTriggerPlugin: Plugin = async () => {
+export const RememberTriggerPlugin: Plugin = async ({ directory }: any) => {
+  const cwd = (directory as string | undefined) ?? process.cwd();
+
   return {
     event: async ({ event }: { event: any }) => {
+      emitHeartbeat("remember-trigger", cwd);
       const sid = event?.properties?.sessionID ?? "";
       if (!sid) return;
       const type = event?.type;
@@ -625,6 +634,7 @@ export const RememberTriggerPlugin: Plugin = async () => {
     },
 
     "chat.message": async (input: any, output: any) => {
+      emitHeartbeat("remember-trigger", cwd);
       const sid = input?.sessionID;
       if (!sid) return;
       const s = sessions.get(sid);
@@ -650,6 +660,7 @@ export const RememberTriggerPlugin: Plugin = async () => {
     // Pre-compaction hook: inject the scope reminder directly into the
     // compaction prompt so the generated summary carries the framing.
     "experimental.session.compacting": async (input: any, output: any) => {
+      emitHeartbeat("remember-trigger", cwd);
       const sid = input?.sessionID;
       if (!sid) return;
       if (!output) return;
@@ -663,11 +674,16 @@ export const RememberTriggerPlugin: Plugin = async () => {
 
 export default RememberTriggerPlugin;
 """
-        return template.replace("__SHARED_NUDGE__", shared_nudge)
+        return (
+            template
+            .replace("__SHARED_NUDGE__", shared_nudge)
+            .replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
+        )
 
     def _todo_curator_plugin_content(self) -> str:
         """Return the OpenCode todo-curator.ts plugin content."""
-        return """\
+        from ...core.plugin_telemetry import TS_HEARTBEAT_SNIPPET
+        template = """\
 /**
  * TODO Curator — OpenCode plugin (All-Might)
  *
@@ -694,6 +710,8 @@ export default RememberTriggerPlugin;
 import type { Plugin } from "@opencode-ai/plugin";
 import { readFileSync, existsSync, mkdirSync, appendFileSync, readdirSync } from "fs";
 import { join, dirname } from "path";
+
+__TS_HEARTBEAT_SNIPPET__
 
 type TodoItem = { id?: string; content: string; status: string };
 type Ledger = {
@@ -801,6 +819,7 @@ export const TodoCuratorPlugin: Plugin = async ({ directory }: any) => {
 
   return {
     event: async ({ event }: { event: any }) => {
+      emitHeartbeat("todo-curator", cwd);
       const sid = event?.properties?.sessionID ?? "";
       if (!sid) return;
       const type = event?.type;
@@ -817,6 +836,7 @@ export const TodoCuratorPlugin: Plugin = async ({ directory }: any) => {
     },
 
     "tool.execute.after": async (input: any) => {
+      emitHeartbeat("todo-curator", cwd);
       const sid = input?.sessionID;
       if (!sid) return;
       const s = ensure(sid);
@@ -845,6 +865,7 @@ export const TodoCuratorPlugin: Plugin = async ({ directory }: any) => {
     },
 
     "chat.message": async (input: any, output: any) => {
+      emitHeartbeat("todo-curator", cwd);
       const sid = input?.sessionID;
       if (!sid) return;
       const s = sessions.get(sid);
@@ -871,6 +892,7 @@ export const TodoCuratorPlugin: Plugin = async ({ directory }: any) => {
     // and mention it in the compaction context so the summary doesn't
     // silently lose the curated file reference.
     "experimental.session.compacting": async (input: any, output: any) => {
+      emitHeartbeat("todo-curator", cwd);
       const sid = input?.sessionID;
       const s = sid ? sessions.get(sid) : undefined;
       if (!s?.workspace) return;
@@ -892,6 +914,7 @@ export const TodoCuratorPlugin: Plugin = async ({ directory }: any) => {
 
 export default TodoCuratorPlugin;
 """
+        return template.replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
 
     # ------------------------------------------------------------------
     # L1: MEMORY.md
@@ -1835,7 +1858,8 @@ Log the recall to `memory/usage.log`:
         principle, emitting the result as ``additionalContext`` for
         SessionStart / PreCompact.
         """
-        return '''\
+        from ...core.plugin_telemetry import PY_HEARTBEAT_SNIPPET
+        template = '''\
 #!/usr/bin/env python3
 # all-might generated — DO NOT EDIT.
 #
@@ -1853,6 +1877,8 @@ import sys
 from pathlib import Path
 
 
+__PY_HEARTBEAT_SNIPPET__
+
 SCOPE_FIRST_PRINCIPLE = """--- Memory Scope-First Principle ---
 Before writing anything to memory, decide the scope:
 - Project-wide fact / preference / goal -> MEMORY.md (L1)
@@ -1867,6 +1893,7 @@ or memory/journal/general/. See /remember for the full guide.
 
 
 def main() -> int:
+    _hb("memory_load")
     cwd = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     parts: list[str] = []
     memory_md = cwd / "MEMORY.md"
@@ -1903,6 +1930,7 @@ def main() -> int:
 if __name__ == "__main__":
     sys.exit(main())
 '''
+        return template.replace("__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET)
 
     def _opencode_plugin_map(self) -> dict[str, str]:
         """Return mapping of plugin filename → content."""
@@ -1937,7 +1965,8 @@ if __name__ == "__main__":
         snapshots stop silently — recovery via ``allmight memory
         snapshot`` by hand still works.
         """
-        return """\
+        from ...core.plugin_telemetry import TS_HEARTBEAT_SNIPPET
+        template = """\
 /**
  * Memory History — OpenCode plugin (All-Might)
  *
@@ -1955,6 +1984,8 @@ if __name__ == "__main__":
  */
 import type { Plugin } from "@opencode-ai/plugin";
 import { spawn } from "child_process";
+
+__TS_HEARTBEAT_SNIPPET__
 
 function snapshot(cwd: string, trigger: string, sid?: string): void {
   const args = ["memory", "snapshot", `--trigger=${trigger}`];
@@ -1981,18 +2012,21 @@ export const MemoryHistoryPlugin: Plugin = async ({ directory }: any) => {
 
   return {
     "chat.message": async (input: any, _output: any) => {
+      emitHeartbeat("memory-history", cwd);
       const sid = input?.sessionID;
       snapshot(cwd, "chat-message", sid);
       void _output;
     },
 
     "experimental.session.compacting": async (input: any, _output: any) => {
+      emitHeartbeat("memory-history", cwd);
       const sid = input?.sessionID;
       snapshot(cwd, "session-compacting", sid);
       void _output;
     },
 
     event: async ({ event }: any) => {
+      emitHeartbeat("memory-history", cwd);
       const type = String(event?.type ?? "");
       if (type === "session.deleted") {
         const sid = event?.properties?.sessionID;
@@ -2004,6 +2038,7 @@ export const MemoryHistoryPlugin: Plugin = async ({ directory }: any) => {
 
 export default MemoryHistoryPlugin;
 """
+        return template.replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
 
     def _claude_memory_history_hook_content(self) -> str:
         """Claude Code hook: mirror of ``memory-history.ts``.
@@ -2013,7 +2048,8 @@ export default MemoryHistoryPlugin;
         ``Stop`` hook so it fires once per agent turn (the closest
         Claude Code analogue to OpenCode's ``chat.message``).
         """
-        return """\
+        from ...core.plugin_telemetry import PY_HEARTBEAT_SNIPPET
+        template = """\
 #!/usr/bin/env python3
 \"\"\"All-Might memory-history hook — Claude Code mirror of memory-history.ts.
 
@@ -2030,7 +2066,10 @@ import subprocess
 import sys
 
 
+__PY_HEARTBEAT_SNIPPET__
+
 def main() -> None:
+    _hb("memory_history")
     raw = sys.stdin.read()
     try:
         payload = json.loads(raw) if raw.strip() else {}
@@ -2064,6 +2103,7 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 """
+        return template.replace("__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET)
 
     def _usage_logger_plugin_content(self) -> str:
         """Return the OpenCode usage-logger.ts plugin content.
@@ -2078,7 +2118,8 @@ if __name__ == "__main__":
         Writes use appendFileSync (sync I/O) so each entry lands on disk
         before the hook returns; nothing is buffered.
         """
-        return """\
+        from ...core.plugin_telemetry import TS_HEARTBEAT_SNIPPET
+        template = """\
 /**
  * Usage Logger — OpenCode plugin (All-Might)
  *
@@ -2096,6 +2137,8 @@ if __name__ == "__main__":
 import type { Plugin } from "@opencode-ai/plugin";
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from "fs";
 import { join, dirname } from "path";
+
+__TS_HEARTBEAT_SNIPPET__
 
 const COMMAND_RE = /(?:^|\\s)\\/(remember|recall)\\b/;
 
@@ -2147,6 +2190,7 @@ export const UsageLoggerPlugin: Plugin = async ({ directory }: any) => {
 
   return {
     "chat.message": async (input: any, _output: any) => {
+      emitHeartbeat("usage-logger", cwd);
       const sid = input?.sessionID;
       if (!sid) return;
       const text = extractUserText(input?.parts);
@@ -2159,6 +2203,7 @@ export const UsageLoggerPlugin: Plugin = async ({ directory }: any) => {
     },
 
     "tool.execute.after": async (input: any) => {
+      emitHeartbeat("usage-logger", cwd);
       const sid = input?.sessionID;
       if (!sid) return;
       const tool = String(input?.tool ?? "");
@@ -2177,6 +2222,7 @@ export const UsageLoggerPlugin: Plugin = async ({ directory }: any) => {
 
 export default UsageLoggerPlugin;
 """
+        return template.replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
 
     def _trajectory_writer_plugin_content(self) -> str:
         """Return the OpenCode trajectory-writer.ts plugin content.
@@ -2187,7 +2233,8 @@ export default UsageLoggerPlugin;
         or deletion. Transparent to the daily user: no nudges, no context
         injection — just a disk write.
         """
-        return """\
+        from ...core.plugin_telemetry import TS_HEARTBEAT_SNIPPET
+        template = """\
 /**
  * Trajectory Writer — OpenCode plugin (All-Might, F5)
  *
@@ -2213,6 +2260,8 @@ export default UsageLoggerPlugin;
 import type { Plugin } from "@opencode-ai/plugin";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "fs";
 import { join } from "path";
+
+__TS_HEARTBEAT_SNIPPET__
 
 type ToolCallRec = { tool: string; args: any; verdict: "ok" | "drift" | "blocked" };
 
@@ -2327,6 +2376,7 @@ export const TrajectoryWriterPlugin: Plugin = async ({ directory }: any) => {
 
   return {
     event: async ({ event }: { event: any }) => {
+      emitHeartbeat("trajectory-writer", cwd);
       const sid = event?.properties?.sessionID ?? "";
       if (!sid) return;
       const type = event?.type;
@@ -2341,6 +2391,7 @@ export const TrajectoryWriterPlugin: Plugin = async ({ directory }: any) => {
     },
 
     "chat.message": async (input: any, output: any) => {
+      emitHeartbeat("trajectory-writer", cwd);
       const sid = input?.sessionID;
       if (!sid) return;
       const t = ensure(sid);
@@ -2357,6 +2408,7 @@ export const TrajectoryWriterPlugin: Plugin = async ({ directory }: any) => {
     },
 
     "tool.execute.before": async (input: any) => {
+      emitHeartbeat("trajectory-writer", cwd);
       const sid = input?.sessionID;
       if (!sid) return;
       const t = ensure(sid);
@@ -2373,6 +2425,7 @@ export const TrajectoryWriterPlugin: Plugin = async ({ directory }: any) => {
     },
 
     "tool.execute.after": async (input: any) => {
+      emitHeartbeat("trajectory-writer", cwd);
       const sid = input?.sessionID;
       if (!sid) return;
       const t = ensure(sid);
@@ -2387,6 +2440,7 @@ export const TrajectoryWriterPlugin: Plugin = async ({ directory }: any) => {
     },
 
     "experimental.session.compacting": async (input: any, output: any) => {
+      emitHeartbeat("trajectory-writer", cwd);
       const sid = input?.sessionID;
       if (!sid) return;
       const t = sessions.get(sid);
@@ -2404,4 +2458,5 @@ export const TrajectoryWriterPlugin: Plugin = async ({ directory }: any) => {
 
 export default TrajectoryWriterPlugin;
 """
+        return template.replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
 

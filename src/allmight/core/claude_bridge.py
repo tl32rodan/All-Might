@@ -67,12 +67,17 @@ def _reflection_hook_content() -> str:
     # prompt constant lives in personalities so it can stay near the
     # plugin template that consumes it.
     from .personalities import REFLECTION_PROMPT
+    from .plugin_telemetry import PY_HEARTBEAT_SNIPPET
 
-    return _REFLECTION_HOOK_TEMPLATE.replace(
-        "__REFLECTION_PROMPT__",
-        # Triple-quoted Python literal — escape backslashes and the
-        # closing-triple-quote sequence so we don't break the string.
-        REFLECTION_PROMPT.replace("\\", "\\\\").replace('"""', '\\"""'),
+    return (
+        _REFLECTION_HOOK_TEMPLATE
+        .replace(
+            "__REFLECTION_PROMPT__",
+            # Triple-quoted Python literal — escape backslashes and the
+            # closing-triple-quote sequence so we don't break the string.
+            REFLECTION_PROMPT.replace("\\", "\\\\").replace('"""', '\\"""'),
+        )
+        .replace("__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET)
     )
 
 
@@ -97,7 +102,10 @@ import sys
 REFLECTION_PROMPT = """__REFLECTION_PROMPT__"""
 
 
+__PY_HEARTBEAT_SNIPPET__
+
 def main() -> int:
+    _hb("reflection")
     try:
         payload = json.load(sys.stdin) if not sys.stdin.isatty() else {}
     except (json.JSONDecodeError, ValueError):
@@ -118,7 +126,14 @@ if __name__ == "__main__":
 '''
 
 
-_ROLE_LOAD_HOOK_CONTENT = '''\
+def _role_load_hook_content() -> str:
+    from .plugin_telemetry import PY_HEARTBEAT_SNIPPET
+    return _ROLE_LOAD_HOOK_TEMPLATE.replace(
+        "__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET,
+    )
+
+
+_ROLE_LOAD_HOOK_TEMPLATE = '''\
 #!/usr/bin/env python3
 # all-might generated — DO NOT EDIT.
 #
@@ -137,7 +152,10 @@ import sys
 from pathlib import Path
 
 
+__PY_HEARTBEAT_SNIPPET__
+
 def main() -> int:
+    _hb("role_load")
     cwd = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     parts: list[str] = []
     personalities_dir = cwd / "personalities"
@@ -318,7 +336,7 @@ def _write_role_load_hook(project_root: Path) -> None:
     hooks_dir = project_root / ".claude" / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
     target = hooks_dir / "role_load.py"
-    write_guarded(target, _ROLE_LOAD_HOOK_CONTENT, CLAUDE_HOOK_MARKER)
+    write_guarded(target, _role_load_hook_content(), CLAUDE_HOOK_MARKER)
     target.chmod(0o755)
 
 

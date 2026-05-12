@@ -235,6 +235,38 @@ will silently drift, and bug reports will look like "behaviour
 depends on which editor I open the project with" — by the time
 anyone notices, several plugin generations may be stale.
 
+### Plugin observability (heartbeats)
+
+Every plugin / hook touches a marker file when it fires:
+
+```
+.allmight/plugins/heartbeats/oc/<plugin-basename>   # OpenCode .ts
+.allmight/plugins/heartbeats/cc/<hook-basename>     # Claude Code .py
+```
+
+`allmight plugin status` reads these markers and prints last-fired
+mtimes per surface. Plugins that have never fired show
+`never fired` — the signal to investigate.
+
+The two snippets that emit heartbeats live in
+`src/allmight/core/plugin_telemetry.py` as `TS_HEARTBEAT_SNIPPET`
+(inlined into every generated `.ts` plugin) and `PY_HEARTBEAT_SNIPPET`
+(inlined into every generated Claude `.py` hook). When you add a new
+plugin or hook:
+
+1. Inline the matching snippet near the top of the generated file.
+2. Call `emitHeartbeat("<name>", cwd)` (TS) or `_hb("<name>")` (Python)
+   inside every top-level event handler / hook entry point.
+3. Register the name in `KNOWN_OPENCODE_PLUGINS` or
+   `KNOWN_CLAUDE_HOOKS` in `core/plugin_telemetry.py` so `plugin
+   status` lists it explicitly (even before its first fire).
+
+The design rationale and the **plugin-reduction plan** (which existing
+plugins are likely to be deleted, reduced, or rewired once we have
+heartbeat data) live in `docs/plugin-observability.md`. Read it before
+proposing structured / JSONL telemetry — touch-file simplicity is
+deliberate.
+
 ---
 
 ## Design Philosophy

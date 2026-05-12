@@ -305,3 +305,41 @@ class TestHooksRunCleanly:
         payload = json.loads(result.stdout)
         assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
         assert "Reflection Check" in payload["hookSpecificOutput"]["additionalContext"]
+
+
+class TestHeartbeatWiring:
+    """Each generated hook writes a heartbeat marker when invoked.
+
+    This is the touch-file observability contract — without it,
+    ``allmight plugin status`` cannot tell whether a hook ever fired.
+    """
+
+    def _run(self, project, hook_name: str, event_name: str) -> None:
+        write_claude_bridge(project)
+        hook = project / ".claude" / "hooks" / hook_name
+        env = dict(os.environ)
+        env["CLAUDE_PROJECT_DIR"] = str(project)
+        result = subprocess.run(
+            [sys.executable, str(hook)],
+            input=json.dumps({"hook_event_name": event_name}),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+
+    def test_reflection_writes_heartbeat(self, project):
+        self._run(project, "reflection.py", "UserPromptSubmit")
+        marker = (
+            project / ".allmight" / "plugins" / "heartbeats" / "cc" / "reflection"
+        )
+        assert marker.is_file()
+
+    def test_role_load_writes_heartbeat(self, project):
+        # role-load fires even with no personalities (the heartbeat is
+        # before the early-return, by design).
+        self._run(project, "role_load.py", "SessionStart")
+        marker = (
+            project / ".allmight" / "plugins" / "heartbeats" / "cc" / "role_load"
+        )
+        assert marker.is_file()

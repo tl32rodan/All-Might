@@ -570,12 +570,19 @@ def _write_role_load_plugin(project_root: Path) -> None:
     plugins_dir.mkdir(parents=True, exist_ok=True)
     write_guarded(
         plugins_dir / "role-load.ts",
-        _ROLE_LOAD_PLUGIN_CONTENT,
+        _role_load_plugin_content(),
         ALLMIGHT_MARKER_TS,
     )
 
 
-_ROLE_LOAD_PLUGIN_CONTENT = """\
+def _role_load_plugin_content() -> str:
+    from .plugin_telemetry import TS_HEARTBEAT_SNIPPET
+    return _ROLE_LOAD_PLUGIN_TEMPLATE.replace(
+        "__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET,
+    )
+
+
+_ROLE_LOAD_PLUGIN_TEMPLATE = """\
 // all-might generated
 /**
  * Role Loader — OpenCode plugin (All-Might)
@@ -597,6 +604,7 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 
+__TS_HEARTBEAT_SNIPPET__
 const primed = new Set<string>();
 
 function readAllRoles(cwd: string): string {
@@ -636,6 +644,7 @@ export const RoleLoadPlugin: Plugin = async ({ directory }: any) => {
 
   return {
     event: async ({ event }: { event: any }) => {
+      emitHeartbeat("role-load", cwd);
       const type = event?.type;
       const sid = event?.properties?.sessionID ?? "";
       if (!sid) return;
@@ -649,6 +658,7 @@ export const RoleLoadPlugin: Plugin = async ({ directory }: any) => {
     },
 
     "chat.message": async (input: any, output: any) => {
+      emitHeartbeat("role-load", cwd);
       const sid = input?.sessionID;
       if (!sid) return;
       if (primed.has(sid)) return;
@@ -723,6 +733,7 @@ def _write_reflection_plugin(project_root: Path) -> None:
 
 
 def _reflection_plugin_content() -> str:
+    from .plugin_telemetry import TS_HEARTBEAT_SNIPPET
     # The prompt is interpolated into a TS backtick-string, so escape
     # backslashes, backticks, and ${ to keep the literal intact.
     escaped = (
@@ -731,7 +742,11 @@ def _reflection_plugin_content() -> str:
         .replace("`", "\\`")
         .replace("${", "\\${")
     )
-    return _REFLECTION_PLUGIN_TEMPLATE.replace("__REFLECTION_PROMPT__", escaped)
+    return (
+        _REFLECTION_PLUGIN_TEMPLATE
+        .replace("__REFLECTION_PROMPT__", escaped)
+        .replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
+    )
 
 
 _REFLECTION_PLUGIN_TEMPLATE = """\
@@ -760,11 +775,15 @@ _REFLECTION_PLUGIN_TEMPLATE = """\
  */
 import type { Plugin } from "@opencode-ai/plugin";
 
+__TS_HEARTBEAT_SNIPPET__
 const REFLECTION_PROMPT = `__REFLECTION_PROMPT__`;
 
-export const ReflectionPlugin: Plugin = async () => {
+export const ReflectionPlugin: Plugin = async ({ directory }: any) => {
+  const cwd = (directory as string | undefined) ?? process.cwd();
+
   return {
     "chat.message": async (input: any, output: any) => {
+      emitHeartbeat("reflection", cwd);
       const sid = input?.sessionID;
       if (!sid) return;
       // Each Part requires id / sessionID / messageID (see OpenCode's

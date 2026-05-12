@@ -410,6 +410,59 @@ class TestMemoryInitializer:
         assert "all-might generated" in body
         assert "MEMORY.md" in body
         assert "Memory Scope-First Principle" in body
+        # Heartbeat snippet is inlined and called inside main(); without
+        # this the plugin can fire silently and ``allmight plugin
+        # status`` will lie about it.
+        assert "def _hb(name):" in body
+        assert '_hb("memory_load")' in body
+
+    def test_memory_load_hook_writes_heartbeat(self, project_root, tmp_path):
+        """End-to-end: invoking the hook touches the heartbeat marker."""
+        import os
+        import subprocess
+        import sys
+
+        MemoryInitializer().initialize(project_root)
+        hook = project_root / ".claude" / "hooks" / "memory_load.py"
+        env = dict(os.environ)
+        env["CLAUDE_PROJECT_DIR"] = str(project_root)
+        result = subprocess.run(
+            [sys.executable, str(hook)],
+            input='{"hook_event_name": "SessionStart"}',
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        marker = (
+            project_root / ".allmight" / "plugins" / "heartbeats" / "cc"
+            / "memory_load"
+        )
+        assert marker.is_file()
+
+    def test_memory_history_hook_writes_heartbeat(self, project_root):
+        """End-to-end: invoking the Stop hook touches the heartbeat marker."""
+        import os
+        import subprocess
+        import sys
+
+        MemoryInitializer().initialize(project_root)
+        hook = project_root / ".claude" / "hooks" / "memory_history.py"
+        env = dict(os.environ)
+        env["CLAUDE_PROJECT_DIR"] = str(project_root)
+        result = subprocess.run(
+            [sys.executable, str(hook)],
+            input='{"hook_event_name": "Stop"}',
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        marker = (
+            project_root / ".allmight" / "plugins" / "heartbeats" / "cc"
+            / "memory_history"
+        )
+        assert marker.is_file()
 
     def test_memory_load_hook_is_executable(self, project_root):
         """Hook script needs +x — Claude Code runs it as a command."""
