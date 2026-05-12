@@ -27,6 +27,7 @@ SYNC_SKILL_BODY = """\
 1. List all files in `.allmight/templates/`
 2. For each staged file, find the corresponding working file:
    - `.allmight/templates/commands/search.md` → `.opencode/commands/search.md`
+   - `.allmight/templates/agents/<name>.md` → `.opencode/agents/<name>.md`
    - `.allmight/templates/claude-md-section.md` → `AGENTS.md` (within `<!-- ALL-MIGHT -->` markers)
    - `.allmight/templates/memory-md-section.md` → `AGENTS.md` (within `<!-- ALL-MIGHT-MEMORY -->` markers)
    - `.allmight/templates/opencode.json` → `.opencode/opencode.json`
@@ -118,11 +119,33 @@ decide whether the directory is still wanted.
 |-----------------|-----------------|
 | `.allmight/templates/skills/**` | `.opencode/skills/**` |
 | `.allmight/templates/commands/**` | `.opencode/commands/**` |
+| `.allmight/templates/agents/<name>.md` | `.opencode/agents/<name>.md` |
 | `.allmight/templates/claude-md-section.md` | `AGENTS.md` (ALL-MIGHT marker) |
 | `.allmight/templates/memory-md-section.md` | `AGENTS.md` (ALL-MIGHT-MEMORY marker) |
 | `.allmight/templates/opencode.json` | `.opencode/opencode.json` |
 | `.allmight/templates/memory-load.ts` | `.opencode/plugins/memory-load.ts` |
 | `.allmight/templates/conflicts.yaml` | manifest of skipped compose targets |
+
+### Personality agent files (`.opencode/agents/<name>.md`)
+
+All-Might emits one OpenCode subagent file per personality. The file
+itself is a thin pointer — `prompt: "{file:../personalities/<name>/ROLE.md}"` —
+so editing ROLE.md updates the agent's behaviour without re-running
+`allmight init`. The agent file is regenerated on every personality
+add / import; if you customised `.opencode/agents/<name>.md` directly
+(without ROLE.md), the fresh template is staged at
+`.allmight/templates/agents/<name>.md` and resolved here:
+
+- **Your customisation matters**: merge the staged frontmatter
+  (`description` / `mode` / `prompt`) into your working file, keeping
+  any per-agent fields you added (e.g. `model`, `temperature`,
+  `tools`). The body comment block is the source of the All-Might
+  marker — keep at least one of those `<!-- all-might generated -->`
+  lines so the next re-init recognises ownership.
+- **You only edited ROLE.md (the typical case)**: drop your working
+  file and replace it with the staged version. `ROLE.md` is the
+  single source of truth; the agent file is just a frontmatter
+  pointer.
 
 ## Important
 

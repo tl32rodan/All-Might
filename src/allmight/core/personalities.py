@@ -516,6 +516,103 @@ _AGENTS_MD_HEADER = (
 )
 
 
+def compose_role_agents(
+    project_root: Path,
+    instances: list["Personality"],
+) -> list[Path]:
+    """Project each personality as an OpenCode subagent file.
+
+    For every instance with a ``ROLE.md`` on disk, write
+    ``.opencode/agents/<name>.md`` — a thin OpenCode agent file whose
+    ``prompt:`` frontmatter points back at the personality's
+    ``ROLE.md`` (so ROLE.md stays the single source of truth and
+    editing it updates the agent's behaviour without re-running
+    ``allmight init``).
+
+    Agents are emitted as **subagents**: the user does not switch
+    sessions to use a personality. Instead they ``@<name>`` mention
+    it from any conversation and OpenCode invokes the personality
+    for that one task. This matches All-Might's "no default
+    personality switch" UX — personalities are specialised helpers,
+    not interaction modes.
+
+    Re-init safety:
+
+    * First write: creates ``.opencode/agents/<name>.md`` directly.
+    * User-authored ``.opencode/agents/<name>.md`` (no All-Might
+      marker): preserved untouched; the fresh content stages to
+      ``.allmight/templates/agents/<name>.md`` so ``/sync`` can
+      reconcile (same pattern as command / plugin re-init staging).
+    * Already-All-Might-owned file: refreshed in place.
+
+    Returns the list of paths actually written (working file or
+    staging file), in instance order. Missing ROLE.md is skipped.
+    """
+    from .markers import ALLMIGHT_MARKER_MD
+    from .safe_write import write_guarded
+
+    written: list[Path] = []
+    agents_dir = project_root / ".opencode" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    staging_dir = project_root / ".allmight" / "templates" / "agents"
+
+    for instance in instances:
+        role_md = instance.root / "ROLE.md"
+        if not role_md.is_file():
+            continue
+        content = _role_agent_content(instance)
+        target = agents_dir / f"{instance.name}.md"
+        wrote = write_guarded(target, content, ALLMIGHT_MARKER_MD)
+        if wrote:
+            written.append(target)
+            continue
+        # User-authored conflict — stage the fresh content so ``/sync``
+        # can merge it. The user's working file is left untouched.
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        staged = staging_dir / f"{instance.name}.md"
+        staged.write_text(content)
+        written.append(staged)
+    return written
+
+
+def _role_agent_content(instance: "Personality") -> str:
+    """Render the ``.opencode/agents/<name>.md`` body for one instance.
+
+    Frontmatter fields:
+
+    * ``description`` — required by OpenCode; pulled from
+      ``role_summary`` (registry) or falls back to a generic stub if
+      the registry row predates Part-D ``role_summary``.
+    * ``mode: subagent`` — invoked via ``@<name>`` mention, never
+      via Tab-switch.
+    * ``prompt: "{file:../personalities/<name>/ROLE.md}"`` — the
+      documented OpenCode way to point an agent at an external
+      system-prompt file. Path is relative to the agent file's
+      location, which is always ``.opencode/agents/``.
+
+    The All-Might marker lives in the body (after the frontmatter)
+    so write_guarded recognises the file as ours on re-init without
+    breaking OpenCode's frontmatter parser (which requires
+    ``---`` to be the first line).
+    """
+    summary = (instance.role_summary or "").strip()
+    if not summary:
+        summary = f"{instance.name} personality (see personalities/{instance.name}/ROLE.md)"
+    # YAML scalar — escape backslashes and double-quotes, since we
+    # quote the value to keep `{file:...}` clean.
+    desc = summary.replace("\\", "\\\\").replace('"', '\\"')
+    return (
+        "---\n"
+        f'description: "{desc}"\n'
+        "mode: subagent\n"
+        f'prompt: "{{file:../personalities/{instance.name}/ROLE.md}}"\n'
+        "---\n"
+        "<!-- all-might generated -->\n"
+        f"<!-- Edit personalities/{instance.name}/ROLE.md to change "
+        "this agent's behaviour; this file is just a pointer. -->\n"
+    )
+
+
 def compose_agents_md(
     project_root: Path,
     instances: list["Personality"],

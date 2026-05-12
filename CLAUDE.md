@@ -197,12 +197,51 @@ truth. The mirror has three layers, each with a different sync model:
 | Skills | `.opencode/skills/<name>/` | `.claude/skills` (dir symlink) | Same |
 | Agent context | `AGENTS.md`, `MEMORY.md`, `personalities/*/ROLE.md` | root `CLAUDE.md` (`@`-import shim) | Single set of files, both editors read |
 | Runtime hooks | `.opencode/plugins/*.ts` | `.claude/hooks/*.py` + `.claude/settings.json` | **Hand-mirrored** — updates to one require updates to the other |
+| Per-personality subagents | `personalities/<name>/ROLE.md` | `.opencode/agents/<name>.md` (pointer with `prompt: "{file:…}"`) | **OpenCode-only.** Claude Code's subagent format differs; not mirrored yet. |
 
 The bridge is wired by `src/allmight/core/claude_bridge.py`
 (project-level pieces: root `CLAUDE.md`, dir symlinks, settings.json,
 `role_load.py`, `reflection.py`) plus per-capability hook scripts (e.g.
 `MemoryInitializer._claude_memory_load_hook_content` mirroring
-`memory-load.ts`).
+`memory-load.ts`). The personality-subagent projection lives in
+`core/personalities.py::compose_role_agents`.
+
+### Personality subagents (`.opencode/agents/<name>.md`)
+
+Each personality is exposed to OpenCode as a **subagent** so the
+user can `@<name>` mention it from any conversation without
+Tab-switching out of their main session. The generated file is a
+thin pointer:
+
+```yaml
+---
+description: "<role_summary>"
+mode: subagent
+prompt: "{file:../personalities/<name>/ROLE.md}"
+---
+<!-- all-might generated -->
+```
+
+This keeps `ROLE.md` as the single source of truth — editing
+`personalities/<name>/ROLE.md` changes the agent's behaviour
+without re-running `allmight init`.
+
+Why `mode: subagent` (not `primary`):
+
+- Primary agents are session-level — the user `Tab`-switches to one
+  and the whole conversation becomes that agent. That fights All-
+  Might's "no default personality switching" UX.
+- Subagents are `@`-mentioned for one task at a time; the user's
+  main conversation persists.
+
+The directory is `.opencode/agents/` (plural). Singular `agent/` is
+also accepted by OpenCode for backwards compatibility, but plural
+is canonical.
+
+On re-init: `compose_role_agents` rewrites all-might-owned agent
+files in place; a user-customised file (without our marker) is
+preserved and the fresh template is staged at
+`.allmight/templates/agents/<name>.md` for `/sync` to merge.
 
 ### Dual-platform invariant for plugin/hook changes
 

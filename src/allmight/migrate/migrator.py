@@ -180,6 +180,8 @@ def migrate(project_root: Path, *, dry_run: bool = False) -> MigrationPlan:
         compose(project_root, instance, force=False)
     if instances:
         compose_agents_md(project_root, instances, project_name=project_root.name)
+        from ..core.personalities import compose_role_agents
+        compose_role_agents(project_root, instances)
 
     return plan
 

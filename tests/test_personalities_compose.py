@@ -25,6 +25,7 @@ from allmight.core.personalities import (
     Personality,
     PersonalityTemplate,
     compose,
+    compose_role_agents,
     stage_compose_conflicts,
     write_init_scaffold,
 )
@@ -285,3 +286,114 @@ class TestReflectionPlugin:
         write_init_scaffold(tmp_path)
         second = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
         assert first == second
+
+
+def _instance_with_role(
+    tmp_path: Path,
+    name: str = "stdcell_owner",
+    role_summary: str = "Standard-cell library characterisation.",
+) -> Personality:
+    """Pre-stage a personality with a ROLE.md so compose_role_agents has input."""
+    inst = Personality(
+        template=_dummy_template(),
+        project_root=tmp_path,
+        name=name,
+        capabilities=["database"],
+        role_summary=role_summary,
+    )
+    inst.root.mkdir(parents=True)
+    (inst.root / "ROLE.md").write_text(
+        f"{ALLMIGHT_MARKER_MD}\n# {name}\n\nrole body.\n"
+    )
+    return inst
+
+
+class TestComposeRoleAgents:
+    """`.opencode/agents/<name>.md` — OpenCode subagent file per personality.
+
+    Pin the documented OpenCode contract:
+      * file is at ``.opencode/agents/<name>.md`` (plural ``agents``)
+      * frontmatter has required ``description``, ``mode: subagent``,
+        and ``prompt: "{file:...}"`` pointing back at ROLE.md
+      * marker lives inside the body so write_guarded recognises
+        ownership without breaking OpenCode's frontmatter parser
+        (which requires ``---`` to be the first line)
+    """
+
+    def test_writes_agent_file_with_documented_frontmatter(
+        self, tmp_path: Path
+    ) -> None:
+        inst = _instance_with_role(tmp_path)
+        written = compose_role_agents(tmp_path, [inst])
+        target = tmp_path / ".opencode" / "agents" / f"{inst.name}.md"
+        assert target in written
+        body = target.read_text()
+        # First line must be `---` so OpenCode's frontmatter parser sees
+        # the YAML block before anything else.
+        assert body.startswith("---\n")
+        # The three frontmatter fields we depend on are present.
+        assert 'description: "Standard-cell library characterisation."' in body
+        assert "mode: subagent" in body
+        assert (
+            'prompt: "{file:../personalities/stdcell_owner/ROLE.md}"' in body
+        )
+
+    def test_marker_in_body_not_before_frontmatter(self, tmp_path: Path) -> None:
+        """Marker is in the body so frontmatter stays the first thing OpenCode sees."""
+        inst = _instance_with_role(tmp_path)
+        compose_role_agents(tmp_path, [inst])
+        body = (tmp_path / ".opencode" / "agents" / f"{inst.name}.md").read_text()
+        # Marker present (write_guarded will recognise on re-init)…
+        assert ALLMIGHT_MARKER_MD in body
+        # …but not before the first ``---``.
+        assert body.index(ALLMIGHT_MARKER_MD) > body.index("---\n")
+
+    def test_falls_back_when_role_summary_empty(self, tmp_path: Path) -> None:
+        """OpenCode requires `description`. Empty role_summary must not produce empty `description`."""
+        inst = _instance_with_role(tmp_path, role_summary="")
+        compose_role_agents(tmp_path, [inst])
+        body = (tmp_path / ".opencode" / "agents" / f"{inst.name}.md").read_text()
+        assert 'description: ""' not in body
+        assert inst.name in body  # fallback mentions the personality name
+
+    def test_skips_instance_without_role_md(self, tmp_path: Path) -> None:
+        """No ROLE.md → no agent file. Symmetric with compose_agents_md."""
+        inst = Personality(
+            template=_dummy_template(),
+            project_root=tmp_path,
+            name="rolemissing",
+        )
+        inst.root.mkdir(parents=True)  # but no ROLE.md
+        written = compose_role_agents(tmp_path, [inst])
+        assert written == []
+        assert not (
+            tmp_path / ".opencode" / "agents" / "rolemissing.md"
+        ).exists()
+
+    def test_idempotent_on_rerun(self, tmp_path: Path) -> None:
+        inst = _instance_with_role(tmp_path)
+        compose_role_agents(tmp_path, [inst])
+        first = (tmp_path / ".opencode" / "agents" / f"{inst.name}.md").read_text()
+        compose_role_agents(tmp_path, [inst])
+        second = (tmp_path / ".opencode" / "agents" / f"{inst.name}.md").read_text()
+        assert first == second
+
+    def test_user_authored_file_preserved_and_staged_for_sync(
+        self, tmp_path: Path
+    ) -> None:
+        """User-authored .opencode/agents/<n>.md → preserved; fresh content staged for /sync."""
+        inst = _instance_with_role(tmp_path)
+        target = tmp_path / ".opencode" / "agents" / f"{inst.name}.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        custom = "# my hand-rolled agent — no marker\nbody\n"
+        target.write_text(custom)
+        written = compose_role_agents(tmp_path, [inst])
+        # Working file untouched.
+        assert target.read_text() == custom
+        # Fresh template staged at the documented /sync location.
+        staged = (
+            tmp_path / ".allmight" / "templates" / "agents" / f"{inst.name}.md"
+        )
+        assert staged in written
+        assert staged.is_file()
+        assert "mode: subagent" in staged.read_text()
