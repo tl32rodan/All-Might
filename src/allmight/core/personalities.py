@@ -491,6 +491,7 @@ def write_init_scaffold(project_root: Path) -> None:
         pkg_json.write_text(_OPENCODE_PACKAGE_JSON)
 
     _write_role_load_plugin(project_root)
+    _write_reflection_plugin(project_root)
 
     # Claude Code compatibility bridge — markdown surface via dir
     # symlinks, agent context via @-import shim, runtime hooks for
@@ -672,6 +673,119 @@ export const RoleLoadPlugin: Plugin = async ({ directory }: any) => {
 };
 
 export default RoleLoadPlugin;
+"""
+
+
+# ---------------------------------------------------------------------------
+# Reflection-check plugin (project-level, every chat.message)
+# ---------------------------------------------------------------------------
+
+
+REFLECTION_PROMPT = (
+    "--- Reflection Check ---\n"
+    "Before this turn's work, glance at the user's latest message:\n"
+    "- If they pointed out a mistake or course-corrected a previous action,\n"
+    "  reflect first in 2-3 sentences before proceeding:\n"
+    "    * What went wrong?\n"
+    "    * Why did it happen?\n"
+    "    * How will I avoid the same class of mistake next time?\n"
+    "  Then proceed with the turn.\n"
+    "- If feedback is neutral, positive, or there is no prior action to reflect\n"
+    "  on (e.g. the first user turn), skip the reflection and proceed.\n"
+    "--- End Reflection Check ---"
+)
+
+
+def _write_reflection_plugin(project_root: Path) -> None:
+    """Write ``.opencode/plugins/reflection.ts`` if absent or owned.
+
+    Project-level plugin (same status as role-load). At every
+    ``chat.message`` it prepends a short instruction asking the agent
+    to glance at the user's latest message and, if it points out a
+    mistake, do a 2-3 sentence reflection (what / why / how to avoid)
+    before proceeding. Positive or neutral feedback skips the
+    reflection — the gating happens inside the agent's head, so the
+    plugin itself is stateless and fires every turn.
+
+    Sibling Claude Code hook is ``.claude/hooks/reflection.py`` (see
+    ``core.claude_bridge``); both surfaces inject the same prompt.
+    """
+    from .markers import ALLMIGHT_MARKER_TS
+    from .safe_write import write_guarded
+
+    plugins_dir = project_root / ".opencode" / "plugins"
+    plugins_dir.mkdir(parents=True, exist_ok=True)
+    write_guarded(
+        plugins_dir / "reflection.ts",
+        _reflection_plugin_content(),
+        ALLMIGHT_MARKER_TS,
+    )
+
+
+def _reflection_plugin_content() -> str:
+    # The prompt is interpolated into a TS backtick-string, so escape
+    # backslashes, backticks, and ${ to keep the literal intact.
+    escaped = (
+        REFLECTION_PROMPT
+        .replace("\\", "\\\\")
+        .replace("`", "\\`")
+        .replace("${", "\\${")
+    )
+    return _REFLECTION_PLUGIN_TEMPLATE.replace("__REFLECTION_PROMPT__", escaped)
+
+
+_REFLECTION_PLUGIN_TEMPLATE = """\
+// all-might generated
+/**
+ * Reflection Check — OpenCode plugin (All-Might)
+ *
+ * On every chat.message, prepends a brief instruction asking the
+ * agent to glance at the user's latest message and, if it points
+ * out a mistake, do a 2-3 sentence reflection (what went wrong /
+ * why / how to avoid) before proceeding with the turn. Positive or
+ * neutral feedback skips the reflection.
+ *
+ * The plugin is stateless — the agent itself decides whether the
+ * latest user message constitutes negative feedback. Firing every
+ * turn (no per-session "primed" gate) keeps the cue present even
+ * after compaction, and the prompt is small enough that the
+ * repeated injection cost is negligible.
+ *
+ * Sibling Claude Code hook is .claude/hooks/reflection.py — both
+ * surfaces inject the same prompt; changes to one MUST land in the
+ * other (see All-Might CLAUDE.md -> Editor Compatibility).
+ *
+ * Hook:
+ *   chat.message -> inject the reflection-check prefix every turn
+ */
+import type { Plugin } from "@opencode-ai/plugin";
+
+const REFLECTION_PROMPT = `__REFLECTION_PROMPT__`;
+
+export const ReflectionPlugin: Plugin = async () => {
+  return {
+    "chat.message": async (input: any, output: any) => {
+      const sid = input?.sessionID;
+      if (!sid) return;
+      // Each Part requires id / sessionID / messageID (see OpenCode's
+      // TextPart schema in session/message-v2.ts); omitting them makes
+      // SyncEvent.run reject the mutated part with "sessionID required".
+      const mid = output?.message?.id;
+      if (!mid) return;
+      if (!Array.isArray(output?.parts)) return;
+      output.parts.unshift({
+        id: "prt_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10),
+        sessionID: sid,
+        messageID: mid,
+        type: "text",
+        text: REFLECTION_PROMPT,
+        synthetic: true,
+      });
+    },
+  };
+};
+
+export default ReflectionPlugin;
 """
 
 

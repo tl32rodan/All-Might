@@ -220,3 +220,68 @@ class TestWriteInitScaffold:
     def test_creates_dot_opencode_skeleton(self, tmp_path: Path) -> None:
         write_init_scaffold(tmp_path)
         assert (tmp_path / ".opencode" / "opencode.json").is_file()
+
+
+class TestReflectionPlugin:
+    """Project-level reflection-check OpenCode plugin (mirrors reflection.py)."""
+
+    def test_writes_reflection_plugin(self, tmp_path: Path) -> None:
+        write_init_scaffold(tmp_path)
+        plugin = tmp_path / ".opencode" / "plugins" / "reflection.ts"
+        assert plugin.is_file()
+
+    def test_reflection_plugin_carries_marker(self, tmp_path: Path) -> None:
+        write_init_scaffold(tmp_path)
+        body = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
+        assert body.startswith(ALLMIGHT_MARKER_TS)
+
+    def test_reflection_plugin_uses_chat_message_hook(self, tmp_path: Path) -> None:
+        """Pin the exact OpenCode hook signature.
+
+        OpenCode distinguishes the global ``event`` handler from
+        top-level keys like ``chat.message`` which are hooks with
+        input/output contracts. The reflection plugin uses the hook
+        form so it can mutate ``output.parts``; the negative
+        assertion below catches the regression where someone places
+        the hook inside the event handler's if-chain.
+        """
+        write_init_scaffold(tmp_path)
+        body = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
+        assert '"chat.message": async (input: any, output: any)' in body
+        assert "output.parts.unshift" in body
+        # The reflection check is stateless — no per-session gate
+        # (would defeat the point: each turn needs the same prompt).
+        assert "new Set" not in body
+        assert "primed.add" not in body
+        assert "sessions.set" not in body
+        # Negative assertion: not the broken "msg.content = ..." shape.
+        assert "msg.content =" not in body
+
+    def test_reflection_plugin_contains_reflection_prompt(
+        self, tmp_path: Path
+    ) -> None:
+        write_init_scaffold(tmp_path)
+        body = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
+        # The user-facing prompt content.
+        assert "Reflection Check" in body
+        assert "What went wrong?" in body
+        assert "Why did it happen?" in body
+        assert "How will I avoid" in body
+
+    def test_reflection_plugin_preserves_user_authored(
+        self, tmp_path: Path
+    ) -> None:
+        """write_guarded contract — never overwrite a user-authored file."""
+        plugins_dir = tmp_path / ".opencode" / "plugins"
+        plugins_dir.mkdir(parents=True)
+        custom = "// my own plugin\n"
+        (plugins_dir / "reflection.ts").write_text(custom)
+        write_init_scaffold(tmp_path)
+        assert (plugins_dir / "reflection.ts").read_text() == custom
+
+    def test_reflection_plugin_idempotent(self, tmp_path: Path) -> None:
+        write_init_scaffold(tmp_path)
+        first = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
+        write_init_scaffold(tmp_path)
+        second = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
+        assert first == second

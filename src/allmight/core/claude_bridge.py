@@ -23,9 +23,11 @@ Code consumes the same project without forking the source of truth:
   Compatibility).
 
 The role-load hook lives here because role-load.ts is also project-
-level (one entry, lists every personality's ROLE.md). Memory-load is
-written by the memory capability initializer, alongside its OpenCode
-plugin sibling.
+level (one entry, lists every personality's ROLE.md). Reflection
+(``reflection.ts`` / ``reflection.py``) lives here for the same
+reason — one prompt, fires on every user turn regardless of which
+personalities are installed. Memory-load is written by the memory
+capability initializer, alongside its OpenCode plugin sibling.
 """
 
 from __future__ import annotations
@@ -51,6 +53,69 @@ _CLAUDE_MD_CONTENT = (
     "@AGENTS.md\n"
     "@MEMORY.md\n"
 )
+
+
+def _reflection_hook_content() -> str:
+    """Return the reflection-check Claude Code hook script body.
+
+    Built from the same ``REFLECTION_PROMPT`` text the OpenCode
+    reflection plugin uses, so behaviour stays identical across
+    editors.
+    """
+    # Imported lazily to avoid an import cycle: personalities imports
+    # claude_bridge at the bottom of write_init_scaffold, and the
+    # prompt constant lives in personalities so it can stay near the
+    # plugin template that consumes it.
+    from .personalities import REFLECTION_PROMPT
+
+    return _REFLECTION_HOOK_TEMPLATE.replace(
+        "__REFLECTION_PROMPT__",
+        # Triple-quoted Python literal — escape backslashes and the
+        # closing-triple-quote sequence so we don't break the string.
+        REFLECTION_PROMPT.replace("\\", "\\\\").replace('"""', '\\"""'),
+    )
+
+
+_REFLECTION_HOOK_TEMPLATE = '''\
+#!/usr/bin/env python3
+# all-might generated — DO NOT EDIT.
+#
+# Mirror of .opencode/plugins/reflection.ts. Changes here MUST land in
+# the .ts plugin too; see All-Might CLAUDE.md -> Editor Compatibility.
+"""Reflection-check hook for Claude Code (UserPromptSubmit).
+
+Injects a brief instruction asking the agent to glance at the user's
+latest message and, if it points out a mistake, do a 2-3 sentence
+reflection (what / why / how to avoid) before proceeding. Positive
+or neutral feedback skips the reflection. Same content the OpenCode
+reflection plugin injects via chat.message.
+"""
+import json
+import sys
+
+
+REFLECTION_PROMPT = """__REFLECTION_PROMPT__"""
+
+
+def main() -> int:
+    try:
+        payload = json.load(sys.stdin) if not sys.stdin.isatty() else {}
+    except (json.JSONDecodeError, ValueError):
+        payload = {}
+    event = payload.get("hook_event_name") or "UserPromptSubmit"
+
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": event,
+            "additionalContext": REFLECTION_PROMPT,
+        }
+    }))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
 
 
 _ROLE_LOAD_HOOK_CONTENT = '''\
@@ -127,9 +192,15 @@ _RELOAD_SCRIPTS = ("memory_load.py", "role_load.py")
 # bookkeeping that must capture each turn (memory-history snapshot).
 _TURN_END_SCRIPTS = ("memory_history.py",)
 
+# Turn-start scripts: fire when the user submits a prompt, before the
+# model sees it. Used to inject per-turn instructions (reflection
+# check on user feedback). Claude Code analogue of OpenCode's
+# chat.message hook.
+_USER_PROMPT_SCRIPTS = ("reflection.py",)
+
 # Union — used by tests and by the merge logic to identify our owned
 # hook commands across all events.
-_HOOK_SCRIPTS = _RELOAD_SCRIPTS + _TURN_END_SCRIPTS
+_HOOK_SCRIPTS = _RELOAD_SCRIPTS + _TURN_END_SCRIPTS + _USER_PROMPT_SCRIPTS
 
 
 def _settings_payload() -> dict:
@@ -138,7 +209,8 @@ def _settings_payload() -> dict:
     Returned shape matches what ``.claude/settings.json`` expects under
     the top-level ``"hooks"`` key. ``SessionStart`` and ``PreCompact``
     re-prime memory + role context; ``Stop`` triggers the per-turn
-    memory-history snapshot.
+    memory-history snapshot; ``UserPromptSubmit`` injects the
+    reflection-check prompt before each user turn.
     """
     def _block(scripts: tuple[str, ...]) -> list:
         return [{"hooks": [
@@ -151,6 +223,7 @@ def _settings_payload() -> dict:
         "SessionStart": reload_block,
         "PreCompact": reload_block,
         "Stop": _block(_TURN_END_SCRIPTS),
+        "UserPromptSubmit": _block(_USER_PROMPT_SCRIPTS),
     }
 
 
@@ -249,6 +322,20 @@ def _write_role_load_hook(project_root: Path) -> None:
     target.chmod(0o755)
 
 
+def _write_reflection_hook(project_root: Path) -> None:
+    """Write the reflection-check Claude Code hook script.
+
+    Mirrors ``.opencode/plugins/reflection.ts``. The settings.json
+    registration is added by ``_write_settings_json`` under
+    ``UserPromptSubmit``.
+    """
+    hooks_dir = project_root / ".claude" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    target = hooks_dir / "reflection.py"
+    write_guarded(target, _reflection_hook_content(), CLAUDE_HOOK_MARKER)
+    target.chmod(0o755)
+
+
 def _write_settings_json(project_root: Path) -> None:
     """Merge our hook registrations into ``.claude/settings.json``.
 
@@ -278,8 +365,10 @@ def write_claude_bridge(project_root: Path) -> None:
     * ``CLAUDE.md`` (root) ``@``-import shim
     * ``.claude/commands`` and ``.claude/skills`` directory symlinks
     * ``.claude/hooks/role_load.py`` (mirrors role-load.ts)
+    * ``.claude/hooks/reflection.py`` (mirrors reflection.ts)
     * ``.claude/settings.json`` hook registrations for both
-      ``role_load.py`` and the memory capability's ``memory_load.py``
+      ``role_load.py`` and the memory capability's ``memory_load.py``,
+      plus ``reflection.py`` under ``UserPromptSubmit``
 
     The memory-load hook script itself is written by
     ``MemoryInitializer`` since its content is a Python rewrite of
@@ -288,4 +377,5 @@ def write_claude_bridge(project_root: Path) -> None:
     _write_root_claude_md(project_root)
     _write_claude_dir_symlinks(project_root)
     _write_role_load_hook(project_root)
+    _write_reflection_hook(project_root)
     _write_settings_json(project_root)

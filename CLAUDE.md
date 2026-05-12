@@ -200,7 +200,7 @@ truth. The mirror has three layers, each with a different sync model:
 
 The bridge is wired by `src/allmight/core/claude_bridge.py`
 (project-level pieces: root `CLAUDE.md`, dir symlinks, settings.json,
-`role_load.py`) plus per-capability hook scripts (e.g.
+`role_load.py`, `reflection.py`) plus per-capability hook scripts (e.g.
 `MemoryInitializer._claude_memory_load_hook_content` mirroring
 `memory-load.ts`).
 
@@ -214,6 +214,7 @@ mirrors it **must** be updated in the same commit:
 | `memory-load.ts` | `memory_load.py` (in `MemoryInitializer`) |
 | `memory-history.ts` | `memory_history.py` (in `MemoryInitializer`) — `Stop` hook |
 | `role-load.ts` | `role_load.py` (in `core.claude_bridge`) |
+| `reflection.ts` | `reflection.py` (in `core.claude_bridge`) — `UserPromptSubmit` hook |
 | `remember-trigger.ts` | *(not yet mirrored — see TODO in claude_bridge)* |
 | `usage-logger.ts` | *(not yet mirrored)* |
 | `trajectory-writer.ts` | *(not yet mirrored)* |
@@ -274,7 +275,7 @@ my-chip-project/                          ← One All-Might project
 │   │   ├── all-for-one.md
 │   │   ├── sync.md
 │   │   └── stdcell-special.md            ← downward symlink → personalities/stdcell_owner/commands/...
-│   └── plugins/{role-load,memory-load,remember-trigger,todo-curator,trajectory-writer,usage-logger}.ts
+│   └── plugins/{role-load,reflection,memory-load,memory-history,remember-trigger,todo-curator,trajectory-writer,usage-logger}.ts
 │
 ├── personalities/
 │   ├── stdcell_owner/
