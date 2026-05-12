@@ -580,9 +580,11 @@ def _role_agent_content(instance: "Personality") -> str:
 
     Frontmatter fields:
 
-    * ``description`` — required by OpenCode; pulled from
-      ``role_summary`` (registry) or falls back to a generic stub if
-      the registry row predates Part-D ``role_summary``.
+    * ``description`` — required by OpenCode. Extracted from the
+      first paragraph of ``ROLE.md`` (the natural "what this
+      personality does" prose). ROLE.md is the single source of
+      truth; we deliberately do **not** read this from a separate
+      registry field that would have to be kept in sync.
     * ``mode: subagent`` — invoked via ``@<name>`` mention, never
       via Tab-switch.
     * ``prompt: "{file:../personalities/<name>/ROLE.md}"`` — the
@@ -595,12 +597,9 @@ def _role_agent_content(instance: "Personality") -> str:
     breaking OpenCode's frontmatter parser (which requires
     ``---`` to be the first line).
     """
-    summary = (instance.role_summary or "").strip()
-    if not summary:
-        summary = f"{instance.name} personality (see personalities/{instance.name}/ROLE.md)"
-    # YAML scalar — escape backslashes and double-quotes, since we
-    # quote the value to keep `{file:...}` clean.
-    desc = summary.replace("\\", "\\\\").replace('"', '\\"')
+    desc = _extract_role_description(instance.root / "ROLE.md", instance.name)
+    # YAML double-quoted scalar — escape backslashes and double-quotes.
+    desc = desc.replace("\\", "\\\\").replace('"', '\\"')
     return (
         "---\n"
         f'description: "{desc}"\n'
@@ -611,6 +610,51 @@ def _role_agent_content(instance: "Personality") -> str:
         f"<!-- Edit personalities/{instance.name}/ROLE.md to change "
         "this agent's behaviour; this file is just a pointer. -->\n"
     )
+
+
+_DESCRIPTION_MAX_LEN = 200
+
+
+def _extract_role_description(role_md: Path, fallback_name: str) -> str:
+    """Return a one-line description suitable for OpenCode's frontmatter.
+
+    Strategy: parse ROLE.md and take the first non-empty *paragraph*
+    that isn't a heading or HTML comment. Collapse internal whitespace
+    so the result fits on one YAML line, and truncate to
+    ``_DESCRIPTION_MAX_LEN`` characters (with an ellipsis) so the agent
+    picker UI doesn't get a wall of text.
+
+    Falls back to ``"<fallback_name> personality"`` if no usable
+    paragraph is found — OpenCode requires ``description`` to be
+    non-empty, so we always return something.
+    """
+    fallback = f"{fallback_name} personality"
+    try:
+        text = role_md.read_text(encoding="utf-8")
+    except OSError:
+        return fallback
+
+    # Walk paragraph by paragraph. A paragraph is a blank-line-delimited
+    # run; the first one that is neither a heading nor an HTML comment
+    # wins.
+    paragraphs = text.split("\n\n")
+    for raw in paragraphs:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        # Skip headings ('#', '##', ...) and HTML comments
+        # (``<!-- all-might generated -->`` etc.).
+        if stripped.startswith("#") or stripped.startswith("<!--"):
+            continue
+        # Collapse internal newlines + repeated whitespace into single
+        # spaces so the YAML scalar is one line.
+        flat = " ".join(stripped.split())
+        if not flat:
+            continue
+        if len(flat) > _DESCRIPTION_MAX_LEN:
+            flat = flat[: _DESCRIPTION_MAX_LEN - 1].rstrip() + "…"
+        return flat
+    return fallback
 
 
 def compose_agents_md(

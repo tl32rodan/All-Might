@@ -313,7 +313,6 @@ def add(name: str, capabilities_str: str | None, force: bool) -> None:
             project_root=root,
             name=entry.instance,
             capabilities=list(entry.capabilities),
-            role_summary=entry.role_summary,
         ))
     compose_agents_md(root, instances, project_name=manifest.name)
     from .core.personalities import compose_role_agents
@@ -586,7 +585,6 @@ def _import_bundle(
             project_root=project_root,
             name=entry.instance,
             capabilities=list(entry.capabilities),
-            role_summary=entry.role_summary,
         ))
     compose_agents_md(project_root, instances, project_name=project_manifest.name)
     from .core.personalities import compose_role_agents

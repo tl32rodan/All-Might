@@ -291,20 +291,25 @@ class TestReflectionPlugin:
 def _instance_with_role(
     tmp_path: Path,
     name: str = "stdcell_owner",
-    role_summary: str = "Standard-cell library characterisation.",
+    role_body: str = (
+        "# stdcell_owner\n\n"
+        "Standard-cell library characterisation.\n"
+    ),
 ) -> Personality:
-    """Pre-stage a personality with a ROLE.md so compose_role_agents has input."""
+    """Pre-stage a personality with a ROLE.md so compose_role_agents has input.
+
+    ``role_body`` is the markdown that goes under the marker line. The
+    first non-heading paragraph becomes the agent's ``description:``
+    so test cases can pin the extraction directly by varying it.
+    """
     inst = Personality(
         template=_dummy_template(),
         project_root=tmp_path,
         name=name,
         capabilities=["database"],
-        role_summary=role_summary,
     )
     inst.root.mkdir(parents=True)
-    (inst.root / "ROLE.md").write_text(
-        f"{ALLMIGHT_MARKER_MD}\n# {name}\n\nrole body.\n"
-    )
+    (inst.root / "ROLE.md").write_text(f"{ALLMIGHT_MARKER_MD}\n{role_body}")
     return inst
 
 
@@ -332,6 +337,8 @@ class TestComposeRoleAgents:
         # the YAML block before anything else.
         assert body.startswith("---\n")
         # The three frontmatter fields we depend on are present.
+        # Description comes from ROLE.md's first paragraph (not from a
+        # registry field), so we pin the actual extracted text.
         assert 'description: "Standard-cell library characterisation."' in body
         assert "mode: subagent" in body
         assert (
@@ -348,13 +355,74 @@ class TestComposeRoleAgents:
         # …but not before the first ``---``.
         assert body.index(ALLMIGHT_MARKER_MD) > body.index("---\n")
 
-    def test_falls_back_when_role_summary_empty(self, tmp_path: Path) -> None:
-        """OpenCode requires `description`. Empty role_summary must not produce empty `description`."""
-        inst = _instance_with_role(tmp_path, role_summary="")
+    def test_description_skips_headings_and_html_comments(
+        self, tmp_path: Path
+    ) -> None:
+        """First *prose* paragraph wins — not the marker, not the heading."""
+        inst = _instance_with_role(
+            tmp_path,
+            role_body=(
+                "# stdcell_owner\n\n"
+                "<!-- internal note, not for the agent picker -->\n\n"
+                "Owns the stdcell flow end-to-end.\n\n"
+                "Second paragraph that should not appear.\n"
+            ),
+        )
+        compose_role_agents(tmp_path, [inst])
+        body = (tmp_path / ".opencode" / "agents" / f"{inst.name}.md").read_text()
+        assert 'description: "Owns the stdcell flow end-to-end."' in body
+        assert "Second paragraph" not in body
+
+    def test_description_collapses_internal_whitespace(
+        self, tmp_path: Path
+    ) -> None:
+        """Multi-line paragraph collapses to one YAML line."""
+        inst = _instance_with_role(
+            tmp_path,
+            role_body=(
+                "# stdcell_owner\n\n"
+                "Characterises the standard-cell library\n"
+                "across   PVT corners and writes\nliberty files.\n"
+            ),
+        )
+        compose_role_agents(tmp_path, [inst])
+        body = (tmp_path / ".opencode" / "agents" / f"{inst.name}.md").read_text()
+        assert (
+            'description: "Characterises the standard-cell library '
+            'across PVT corners and writes liberty files."'
+        ) in body
+
+    def test_description_truncates_long_paragraphs(self, tmp_path: Path) -> None:
+        """Cap description at ~200 chars so the agent picker stays readable."""
+        long = "alpha " * 200  # ~1200 chars
+        inst = _instance_with_role(
+            tmp_path,
+            role_body=f"# stdcell_owner\n\n{long}\n",
+        )
+        compose_role_agents(tmp_path, [inst])
+        body = (tmp_path / ".opencode" / "agents" / f"{inst.name}.md").read_text()
+        # Find the description line, parse out the quoted value, check
+        # its length + ellipsis sentinel.
+        for line in body.splitlines():
+            if line.startswith('description: "'):
+                value = line[len('description: "'):-1]
+                assert len(value) <= 200
+                assert value.endswith("…")
+                break
+        else:  # pragma: no cover
+            raise AssertionError("expected a description: line")
+
+    def test_description_falls_back_when_role_md_has_only_heading(
+        self, tmp_path: Path
+    ) -> None:
+        """OpenCode requires non-empty `description`; fallback uses the name."""
+        inst = _instance_with_role(
+            tmp_path, role_body="# stdcell_owner\n",  # nothing after the heading
+        )
         compose_role_agents(tmp_path, [inst])
         body = (tmp_path / ".opencode" / "agents" / f"{inst.name}.md").read_text()
         assert 'description: ""' not in body
-        assert inst.name in body  # fallback mentions the personality name
+        assert 'description: "stdcell_owner personality"' in body
 
     def test_skips_instance_without_role_md(self, tmp_path: Path) -> None:
         """No ROLE.md → no agent file. Symmetric with compose_agents_md."""
