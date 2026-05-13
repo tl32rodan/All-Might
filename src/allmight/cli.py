@@ -315,6 +315,8 @@ def add(name: str, capabilities_str: str | None, force: bool) -> None:
             capabilities=list(entry.capabilities),
         ))
     compose_agents_md(root, instances, project_name=manifest.name)
+    from .core.personalities import compose_role_agents
+    compose_role_agents(root, instances)
 
     click.echo(
         f"All-Might! Added personality '{name}' "
@@ -585,6 +587,8 @@ def _import_bundle(
             capabilities=list(entry.capabilities),
         ))
     compose_agents_md(project_root, instances, project_name=project_manifest.name)
+    from .core.personalities import compose_role_agents
+    compose_role_agents(project_root, instances)
 
     click.echo(
         f"All-Might! Imported personality '{target_name}' "
@@ -1051,3 +1055,69 @@ def memory_gc() -> None:
     if out.strip():
         click.echo(out.strip())
     click.echo("Memory-history gc complete.")
+
+
+# ------------------------------------------------------------------
+# Plugin observability
+# ------------------------------------------------------------------
+
+@main.group("plugin")
+def plugin() -> None:
+    """Plugin observability — see what fires and what doesn't.
+
+    See ``docs/plugin-observability.md`` for the design rationale.
+    """
+
+
+@plugin.command("status")
+@click.argument("path", default=".", type=click.Path(exists=True))
+def plugin_status(path: str) -> None:
+    """Print last-fire time for every known plugin / hook.
+
+    Reads ``.allmight/plugins/heartbeats/{oc,cc}/`` and lists each
+    plugin's last-fired mtime. Plugins that have never fired show
+    ``never fired`` — that is the signal to investigate.
+    """
+    import time
+    from pathlib import Path as P
+
+    from .core.plugin_telemetry import (
+        KNOWN_CLAUDE_HOOKS,
+        KNOWN_OPENCODE_PLUGINS,
+        SURFACE_CLAUDE,
+        SURFACE_OPENCODE,
+        read_heartbeats,
+    )
+
+    root = P(path).resolve()
+    data = read_heartbeats(root)
+    now = time.time()
+
+    def _fmt_age(mtime: float | None) -> str:
+        if mtime is None:
+            return "never fired"
+        delta = max(0, int(now - mtime))
+        if delta < 60:
+            return f"fired {delta}s ago"
+        if delta < 3600:
+            return f"fired {delta // 60}m ago"
+        if delta < 86400:
+            return f"fired {delta // 3600}h ago"
+        return f"fired {delta // 86400}d ago"
+
+    def _print_surface(label: str, surface: str, known: tuple[str, ...]) -> None:
+        click.echo(f"{label}:")
+        entries = data.get(surface, {})
+        seen = set(known)
+        name_width = max((len(n) for n in known), default=12)
+        for name in known:
+            click.echo(f"  {name:<{name_width}}  {_fmt_age(entries.get(name))}")
+        # Surface unknown-but-present plugins (someone added a plugin
+        # without registering it; show it so we don't lose it silently).
+        extras = sorted(n for n in entries if n not in seen)
+        for name in extras:
+            click.echo(f"  {name:<{name_width}}  {_fmt_age(entries.get(name))} (unregistered)")
+
+    _print_surface("OpenCode plugins", SURFACE_OPENCODE, KNOWN_OPENCODE_PLUGINS)
+    click.echo()
+    _print_surface("Claude Code hooks", SURFACE_CLAUDE, KNOWN_CLAUDE_HOOKS)

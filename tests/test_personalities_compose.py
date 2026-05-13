@@ -25,6 +25,7 @@ from allmight.core.personalities import (
     Personality,
     PersonalityTemplate,
     compose,
+    compose_role_agents,
     stage_compose_conflicts,
     write_init_scaffold,
 )
@@ -220,3 +221,247 @@ class TestWriteInitScaffold:
     def test_creates_dot_opencode_skeleton(self, tmp_path: Path) -> None:
         write_init_scaffold(tmp_path)
         assert (tmp_path / ".opencode" / "opencode.json").is_file()
+
+
+class TestReflectionPlugin:
+    """Project-level reflection-check OpenCode plugin (mirrors reflection.py)."""
+
+    def test_writes_reflection_plugin(self, tmp_path: Path) -> None:
+        write_init_scaffold(tmp_path)
+        plugin = tmp_path / ".opencode" / "plugins" / "reflection.ts"
+        assert plugin.is_file()
+
+    def test_reflection_plugin_carries_marker(self, tmp_path: Path) -> None:
+        write_init_scaffold(tmp_path)
+        body = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
+        assert body.startswith(ALLMIGHT_MARKER_TS)
+
+    def test_reflection_plugin_uses_chat_message_hook(self, tmp_path: Path) -> None:
+        """Pin the exact OpenCode hook signature.
+
+        OpenCode distinguishes the global ``event`` handler from
+        top-level keys like ``chat.message`` which are hooks with
+        input/output contracts. The reflection plugin uses the hook
+        form so it can mutate ``output.parts``; the negative
+        assertion below catches the regression where someone places
+        the hook inside the event handler's if-chain.
+        """
+        write_init_scaffold(tmp_path)
+        body = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
+        assert '"chat.message": async (input: any, output: any)' in body
+        assert "output.parts.unshift" in body
+        # The reflection check is stateless — no per-session gate
+        # (would defeat the point: each turn needs the same prompt).
+        assert "new Set" not in body
+        assert "primed.add" not in body
+        assert "sessions.set" not in body
+        # Negative assertion: not the broken "msg.content = ..." shape.
+        assert "msg.content =" not in body
+
+    def test_reflection_plugin_contains_reflection_prompt(
+        self, tmp_path: Path
+    ) -> None:
+        write_init_scaffold(tmp_path)
+        body = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
+        # The user-facing prompt content.
+        assert "Reflection Check" in body
+        assert "What went wrong?" in body
+        assert "Why did it happen?" in body
+        assert "How will I avoid" in body
+
+    def test_reflection_plugin_preserves_user_authored(
+        self, tmp_path: Path
+    ) -> None:
+        """write_guarded contract — never overwrite a user-authored file."""
+        plugins_dir = tmp_path / ".opencode" / "plugins"
+        plugins_dir.mkdir(parents=True)
+        custom = "// my own plugin\n"
+        (plugins_dir / "reflection.ts").write_text(custom)
+        write_init_scaffold(tmp_path)
+        assert (plugins_dir / "reflection.ts").read_text() == custom
+
+    def test_reflection_plugin_idempotent(self, tmp_path: Path) -> None:
+        write_init_scaffold(tmp_path)
+        first = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
+        write_init_scaffold(tmp_path)
+        second = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
+        assert first == second
+
+
+def _instance_with_role(
+    tmp_path: Path,
+    name: str = "stdcell_owner",
+    role_body: str = (
+        "# stdcell_owner\n\n"
+        "Standard-cell library characterisation.\n"
+    ),
+) -> Personality:
+    """Pre-stage a personality with a ROLE.md so compose_role_agents has input.
+
+    ``role_body`` is the markdown that goes under the marker line. The
+    first non-heading paragraph becomes the agent's ``description:``
+    so test cases can pin the extraction directly by varying it.
+    """
+    inst = Personality(
+        template=_dummy_template(),
+        project_root=tmp_path,
+        name=name,
+        capabilities=["database"],
+    )
+    inst.root.mkdir(parents=True)
+    (inst.root / "ROLE.md").write_text(f"{ALLMIGHT_MARKER_MD}\n{role_body}")
+    return inst
+
+
+class TestComposeRoleAgents:
+    """`.opencode/agents/<name>.md` — OpenCode subagent file per personality.
+
+    Pin the documented OpenCode contract:
+      * file is at ``.opencode/agents/<name>.md`` (plural ``agents``)
+      * frontmatter has required ``description``, ``mode: subagent``,
+        and ``prompt: "{file:...}"`` pointing back at ROLE.md
+      * marker lives inside the body so write_guarded recognises
+        ownership without breaking OpenCode's frontmatter parser
+        (which requires ``---`` to be the first line)
+    """
+
+    def test_writes_agent_file_with_documented_frontmatter(
+        self, tmp_path: Path
+    ) -> None:
+        inst = _instance_with_role(tmp_path)
+        written = compose_role_agents(tmp_path, [inst])
+        target = tmp_path / ".opencode" / "agents" / f"{inst.name}.md"
+        assert target in written
+        body = target.read_text()
+        # First line must be `---` so OpenCode's frontmatter parser sees
+        # the YAML block before anything else.
+        assert body.startswith("---\n")
+        # The three frontmatter fields we depend on are present.
+        # Description comes from ROLE.md's first paragraph (not from a
+        # registry field), so we pin the actual extracted text.
+        assert 'description: "Standard-cell library characterisation."' in body
+        assert "mode: subagent" in body
+        assert (
+            'prompt: "{file:../personalities/stdcell_owner/ROLE.md}"' in body
+        )
+
+    def test_marker_in_body_not_before_frontmatter(self, tmp_path: Path) -> None:
+        """Marker is in the body so frontmatter stays the first thing OpenCode sees."""
+        inst = _instance_with_role(tmp_path)
+        compose_role_agents(tmp_path, [inst])
+        body = (tmp_path / ".opencode" / "agents" / f"{inst.name}.md").read_text()
+        # Marker present (write_guarded will recognise on re-init)…
+        assert ALLMIGHT_MARKER_MD in body
+        # …but not before the first ``---``.
+        assert body.index(ALLMIGHT_MARKER_MD) > body.index("---\n")
+
+    def test_description_skips_headings_and_html_comments(
+        self, tmp_path: Path
+    ) -> None:
+        """First *prose* paragraph wins — not the marker, not the heading."""
+        inst = _instance_with_role(
+            tmp_path,
+            role_body=(
+                "# stdcell_owner\n\n"
+                "<!-- internal note, not for the agent picker -->\n\n"
+                "Owns the stdcell flow end-to-end.\n\n"
+                "Second paragraph that should not appear.\n"
+            ),
+        )
+        compose_role_agents(tmp_path, [inst])
+        body = (tmp_path / ".opencode" / "agents" / f"{inst.name}.md").read_text()
+        assert 'description: "Owns the stdcell flow end-to-end."' in body
+        assert "Second paragraph" not in body
+
+    def test_description_collapses_internal_whitespace(
+        self, tmp_path: Path
+    ) -> None:
+        """Multi-line paragraph collapses to one YAML line."""
+        inst = _instance_with_role(
+            tmp_path,
+            role_body=(
+                "# stdcell_owner\n\n"
+                "Characterises the standard-cell library\n"
+                "across   PVT corners and writes\nliberty files.\n"
+            ),
+        )
+        compose_role_agents(tmp_path, [inst])
+        body = (tmp_path / ".opencode" / "agents" / f"{inst.name}.md").read_text()
+        assert (
+            'description: "Characterises the standard-cell library '
+            'across PVT corners and writes liberty files."'
+        ) in body
+
+    def test_description_truncates_long_paragraphs(self, tmp_path: Path) -> None:
+        """Cap description at ~200 chars so the agent picker stays readable."""
+        long = "alpha " * 200  # ~1200 chars
+        inst = _instance_with_role(
+            tmp_path,
+            role_body=f"# stdcell_owner\n\n{long}\n",
+        )
+        compose_role_agents(tmp_path, [inst])
+        body = (tmp_path / ".opencode" / "agents" / f"{inst.name}.md").read_text()
+        # Find the description line, parse out the quoted value, check
+        # its length + ellipsis sentinel.
+        for line in body.splitlines():
+            if line.startswith('description: "'):
+                value = line[len('description: "'):-1]
+                assert len(value) <= 200
+                assert value.endswith("…")
+                break
+        else:  # pragma: no cover
+            raise AssertionError("expected a description: line")
+
+    def test_description_falls_back_when_role_md_has_only_heading(
+        self, tmp_path: Path
+    ) -> None:
+        """OpenCode requires non-empty `description`; fallback uses the name."""
+        inst = _instance_with_role(
+            tmp_path, role_body="# stdcell_owner\n",  # nothing after the heading
+        )
+        compose_role_agents(tmp_path, [inst])
+        body = (tmp_path / ".opencode" / "agents" / f"{inst.name}.md").read_text()
+        assert 'description: ""' not in body
+        assert 'description: "stdcell_owner personality"' in body
+
+    def test_skips_instance_without_role_md(self, tmp_path: Path) -> None:
+        """No ROLE.md → no agent file. Symmetric with compose_agents_md."""
+        inst = Personality(
+            template=_dummy_template(),
+            project_root=tmp_path,
+            name="rolemissing",
+        )
+        inst.root.mkdir(parents=True)  # but no ROLE.md
+        written = compose_role_agents(tmp_path, [inst])
+        assert written == []
+        assert not (
+            tmp_path / ".opencode" / "agents" / "rolemissing.md"
+        ).exists()
+
+    def test_idempotent_on_rerun(self, tmp_path: Path) -> None:
+        inst = _instance_with_role(tmp_path)
+        compose_role_agents(tmp_path, [inst])
+        first = (tmp_path / ".opencode" / "agents" / f"{inst.name}.md").read_text()
+        compose_role_agents(tmp_path, [inst])
+        second = (tmp_path / ".opencode" / "agents" / f"{inst.name}.md").read_text()
+        assert first == second
+
+    def test_user_authored_file_preserved_and_staged_for_sync(
+        self, tmp_path: Path
+    ) -> None:
+        """User-authored .opencode/agents/<n>.md → preserved; fresh content staged for /sync."""
+        inst = _instance_with_role(tmp_path)
+        target = tmp_path / ".opencode" / "agents" / f"{inst.name}.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        custom = "# my hand-rolled agent — no marker\nbody\n"
+        target.write_text(custom)
+        written = compose_role_agents(tmp_path, [inst])
+        # Working file untouched.
+        assert target.read_text() == custom
+        # Fresh template staged at the documented /sync location.
+        staged = (
+            tmp_path / ".allmight" / "templates" / "agents" / f"{inst.name}.md"
+        )
+        assert staged in written
+        assert staged.is_file()
+        assert "mode: subagent" in staged.read_text()

@@ -87,6 +87,32 @@ class TestWriteClaudeBridge:
         assert mode & stat.S_IXGRP
         assert mode & stat.S_IXOTH
 
+    def test_writes_reflection_hook(self, project):
+        write_claude_bridge(project)
+        hook = project / ".claude" / "hooks" / "reflection.py"
+        body = hook.read_text()
+        assert body.startswith("#!/usr/bin/env python3")
+        assert "all-might generated" in body
+        assert "DO NOT EDIT" in body
+        # Mirror-of relationship is documented in the header.
+        assert "reflection.ts" in body
+        # Prompt content is present.
+        assert "Reflection Check" in body
+        assert "What went wrong?" in body
+        # Hook contract: emits hookSpecificOutput with additionalContext.
+        assert "hookSpecificOutput" in body
+        assert "additionalContext" in body
+        # Defaults to UserPromptSubmit when no event is given by stdin.
+        assert "UserPromptSubmit" in body
+
+    def test_reflection_hook_is_executable(self, project):
+        write_claude_bridge(project)
+        hook = project / ".claude" / "hooks" / "reflection.py"
+        mode = hook.stat().st_mode
+        assert mode & stat.S_IXUSR
+        assert mode & stat.S_IXGRP
+        assert mode & stat.S_IXOTH
+
     def test_writes_settings_json_with_both_hooks(self, project):
         write_claude_bridge(project)
         settings = json.loads(
@@ -100,6 +126,19 @@ class TestWriteClaudeBridge:
             ]
             assert any("memory_load.py" in c for c in commands)
             assert any("role_load.py" in c for c in commands)
+
+    def test_writes_settings_json_with_user_prompt_submit(self, project):
+        """Reflection hook is registered on UserPromptSubmit."""
+        write_claude_bridge(project)
+        settings = json.loads(
+            (project / ".claude" / "settings.json").read_text()
+        )
+        commands = [
+            h["command"]
+            for block in settings["hooks"]["UserPromptSubmit"]
+            for h in block["hooks"]
+        ]
+        assert any("reflection.py" in c for c in commands)
 
     def test_idempotent_on_rerun(self, project):
         write_claude_bridge(project)
@@ -226,3 +265,81 @@ class TestHooksRunCleanly:
         assert result.returncode == 0
         # No personalities → no context to inject → empty stdout (no JSON).
         assert result.stdout.strip() == ""
+
+    def test_reflection_hook_returns_valid_json(self, project):
+        """End-to-end: the reflection hook prints the contract shape."""
+        write_claude_bridge(project)
+        hook = project / ".claude" / "hooks" / "reflection.py"
+
+        env = dict(os.environ)
+        env["CLAUDE_PROJECT_DIR"] = str(project)
+        result = subprocess.run(
+            [sys.executable, str(hook)],
+            input='{"hook_event_name": "UserPromptSubmit"}',
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(result.stdout)
+        ctx = payload["hookSpecificOutput"]["additionalContext"]
+        assert "Reflection Check" in ctx
+        assert "What went wrong?" in ctx
+        assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+
+    def test_reflection_hook_defaults_event_name(self, project):
+        """No stdin (TTY-style invocation) still produces valid JSON."""
+        write_claude_bridge(project)
+        hook = project / ".claude" / "hooks" / "reflection.py"
+
+        env = dict(os.environ)
+        env["CLAUDE_PROJECT_DIR"] = str(project)
+        result = subprocess.run(
+            [sys.executable, str(hook)],
+            input="",
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+        assert "Reflection Check" in payload["hookSpecificOutput"]["additionalContext"]
+
+
+class TestHeartbeatWiring:
+    """Each generated hook writes a heartbeat marker when invoked.
+
+    This is the touch-file observability contract — without it,
+    ``allmight plugin status`` cannot tell whether a hook ever fired.
+    """
+
+    def _run(self, project, hook_name: str, event_name: str) -> None:
+        write_claude_bridge(project)
+        hook = project / ".claude" / "hooks" / hook_name
+        env = dict(os.environ)
+        env["CLAUDE_PROJECT_DIR"] = str(project)
+        result = subprocess.run(
+            [sys.executable, str(hook)],
+            input=json.dumps({"hook_event_name": event_name}),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+
+    def test_reflection_writes_heartbeat(self, project):
+        self._run(project, "reflection.py", "UserPromptSubmit")
+        marker = (
+            project / ".allmight" / "plugins" / "heartbeats" / "cc" / "reflection"
+        )
+        assert marker.is_file()
+
+    def test_role_load_writes_heartbeat(self, project):
+        # role-load fires even with no personalities (the heartbeat is
+        # before the early-return, by design).
+        self._run(project, "role_load.py", "SessionStart")
+        marker = (
+            project / ".allmight" / "plugins" / "heartbeats" / "cc" / "role_load"
+        )
+        assert marker.is_file()

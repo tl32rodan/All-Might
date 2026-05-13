@@ -491,6 +491,7 @@ def write_init_scaffold(project_root: Path) -> None:
         pkg_json.write_text(_OPENCODE_PACKAGE_JSON)
 
     _write_role_load_plugin(project_root)
+    _write_reflection_plugin(project_root)
 
     # Claude Code compatibility bridge — markdown surface via dir
     # symlinks, agent context via @-import shim, runtime hooks for
@@ -513,6 +514,147 @@ _AGENTS_MD_HEADER = (
     "-->\n\n"
     "# {project_name}\n\n"
 )
+
+
+def compose_role_agents(
+    project_root: Path,
+    instances: list["Personality"],
+) -> list[Path]:
+    """Project each personality as an OpenCode subagent file.
+
+    For every instance with a ``ROLE.md`` on disk, write
+    ``.opencode/agents/<name>.md`` — a thin OpenCode agent file whose
+    ``prompt:`` frontmatter points back at the personality's
+    ``ROLE.md`` (so ROLE.md stays the single source of truth and
+    editing it updates the agent's behaviour without re-running
+    ``allmight init``).
+
+    Agents are emitted as **subagents**: the user does not switch
+    sessions to use a personality. Instead they ``@<name>`` mention
+    it from any conversation and OpenCode invokes the personality
+    for that one task. This matches All-Might's "no default
+    personality switch" UX — personalities are specialised helpers,
+    not interaction modes.
+
+    Re-init safety:
+
+    * First write: creates ``.opencode/agents/<name>.md`` directly.
+    * User-authored ``.opencode/agents/<name>.md`` (no All-Might
+      marker): preserved untouched; the fresh content stages to
+      ``.allmight/templates/agents/<name>.md`` so ``/sync`` can
+      reconcile (same pattern as command / plugin re-init staging).
+    * Already-All-Might-owned file: refreshed in place.
+
+    Returns the list of paths actually written (working file or
+    staging file), in instance order. Missing ROLE.md is skipped.
+    """
+    from .markers import ALLMIGHT_MARKER_MD
+    from .safe_write import write_guarded
+
+    written: list[Path] = []
+    agents_dir = project_root / ".opencode" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    staging_dir = project_root / ".allmight" / "templates" / "agents"
+
+    for instance in instances:
+        role_md = instance.root / "ROLE.md"
+        if not role_md.is_file():
+            continue
+        content = _role_agent_content(instance)
+        target = agents_dir / f"{instance.name}.md"
+        wrote = write_guarded(target, content, ALLMIGHT_MARKER_MD)
+        if wrote:
+            written.append(target)
+            continue
+        # User-authored conflict — stage the fresh content so ``/sync``
+        # can merge it. The user's working file is left untouched.
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        staged = staging_dir / f"{instance.name}.md"
+        staged.write_text(content)
+        written.append(staged)
+    return written
+
+
+def _role_agent_content(instance: "Personality") -> str:
+    """Render the ``.opencode/agents/<name>.md`` body for one instance.
+
+    Frontmatter fields:
+
+    * ``description`` — required by OpenCode. Extracted from the
+      first paragraph of ``ROLE.md`` (the natural "what this
+      personality does" prose). ROLE.md is the single source of
+      truth; we deliberately do **not** read this from a separate
+      registry field that would have to be kept in sync.
+    * ``mode: subagent`` — invoked via ``@<name>`` mention, never
+      via Tab-switch.
+    * ``prompt: "{file:../personalities/<name>/ROLE.md}"`` — the
+      documented OpenCode way to point an agent at an external
+      system-prompt file. Path is relative to the agent file's
+      location, which is always ``.opencode/agents/``.
+
+    The All-Might marker lives in the body (after the frontmatter)
+    so write_guarded recognises the file as ours on re-init without
+    breaking OpenCode's frontmatter parser (which requires
+    ``---`` to be the first line).
+    """
+    desc = _extract_role_description(instance.root / "ROLE.md", instance.name)
+    # YAML double-quoted scalar — escape backslashes and double-quotes.
+    desc = desc.replace("\\", "\\\\").replace('"', '\\"')
+    return (
+        "---\n"
+        f'description: "{desc}"\n'
+        "mode: subagent\n"
+        f'prompt: "{{file:../personalities/{instance.name}/ROLE.md}}"\n'
+        "---\n"
+        "<!-- all-might generated -->\n"
+        f"<!-- Edit personalities/{instance.name}/ROLE.md to change "
+        "this agent's behaviour; this file is just a pointer. -->\n"
+    )
+
+
+_DESCRIPTION_MAX_LEN = 200
+
+
+def _extract_role_description(role_md: Path, fallback_name: str) -> str:
+    """Return a one-line description suitable for OpenCode's frontmatter.
+
+    Strategy: parse ROLE.md and take the first non-empty *paragraph*
+    that isn't a heading or HTML comment. Collapse internal whitespace
+    so the result fits on one YAML line, and truncate to
+    ``_DESCRIPTION_MAX_LEN`` characters (with an ellipsis) so the agent
+    picker UI doesn't get a wall of text.
+
+    Falls back to ``"<fallback_name> personality"`` if no usable
+    paragraph is found — OpenCode requires ``description`` to be
+    non-empty, so we always return something.
+    """
+    fallback = f"{fallback_name} personality"
+    try:
+        text = role_md.read_text(encoding="utf-8")
+    except OSError:
+        return fallback
+
+    # Walk paragraph by paragraph. A paragraph is a blank-line-delimited
+    # run; the first one that is neither a heading nor an HTML comment
+    # wins.
+    paragraphs = text.split("\n\n")
+    for raw in paragraphs:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        # Skip headings ('#', '##', ...) and HTML comments
+        # (``<!-- all-might generated -->`` etc.).
+        if stripped.startswith("#") or stripped.startswith("<!--"):
+            continue
+        # Collapse internal newlines + repeated whitespace into single
+        # spaces so the YAML scalar is one line.
+        flat = " ".join(stripped.split())
+        if not flat:
+            continue
+        if len(flat) > _DESCRIPTION_MAX_LEN:
+            flat = flat[: _DESCRIPTION_MAX_LEN - 1].rstrip() + "…"
+        return flat
+    return fallback
 
 
 def compose_agents_md(
@@ -569,12 +711,19 @@ def _write_role_load_plugin(project_root: Path) -> None:
     plugins_dir.mkdir(parents=True, exist_ok=True)
     write_guarded(
         plugins_dir / "role-load.ts",
-        _ROLE_LOAD_PLUGIN_CONTENT,
+        _role_load_plugin_content(),
         ALLMIGHT_MARKER_TS,
     )
 
 
-_ROLE_LOAD_PLUGIN_CONTENT = """\
+def _role_load_plugin_content() -> str:
+    from .plugin_telemetry import TS_HEARTBEAT_SNIPPET
+    return _ROLE_LOAD_PLUGIN_TEMPLATE.replace(
+        "__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET,
+    )
+
+
+_ROLE_LOAD_PLUGIN_TEMPLATE = """\
 // all-might generated
 /**
  * Role Loader — OpenCode plugin (All-Might)
@@ -596,6 +745,7 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 
+__TS_HEARTBEAT_SNIPPET__
 const primed = new Set<string>();
 
 function readAllRoles(cwd: string): string {
@@ -635,6 +785,7 @@ export const RoleLoadPlugin: Plugin = async ({ directory }: any) => {
 
   return {
     event: async ({ event }: { event: any }) => {
+      emitHeartbeat("role-load", cwd);
       const type = event?.type;
       const sid = event?.properties?.sessionID ?? "";
       if (!sid) return;
@@ -648,6 +799,7 @@ export const RoleLoadPlugin: Plugin = async ({ directory }: any) => {
     },
 
     "chat.message": async (input: any, output: any) => {
+      emitHeartbeat("role-load", cwd);
       const sid = input?.sessionID;
       if (!sid) return;
       if (primed.has(sid)) return;
@@ -672,6 +824,128 @@ export const RoleLoadPlugin: Plugin = async ({ directory }: any) => {
 };
 
 export default RoleLoadPlugin;
+"""
+
+
+# ---------------------------------------------------------------------------
+# Reflection-check plugin (project-level, every chat.message)
+# ---------------------------------------------------------------------------
+
+
+REFLECTION_PROMPT = (
+    "--- Reflection Check ---\n"
+    "Before this turn's work, glance at the user's latest message:\n"
+    "- If they pointed out a mistake or course-corrected a previous action,\n"
+    "  reflect first in 2-3 sentences before proceeding:\n"
+    "    * What went wrong?\n"
+    "    * Why did it happen?\n"
+    "    * How will I avoid the same class of mistake next time?\n"
+    "  Then proceed with the turn.\n"
+    "- If feedback is neutral, positive, or there is no prior action to reflect\n"
+    "  on (e.g. the first user turn), skip the reflection and proceed.\n"
+    "--- End Reflection Check ---"
+)
+
+
+def _write_reflection_plugin(project_root: Path) -> None:
+    """Write ``.opencode/plugins/reflection.ts`` if absent or owned.
+
+    Project-level plugin (same status as role-load). At every
+    ``chat.message`` it prepends a short instruction asking the agent
+    to glance at the user's latest message and, if it points out a
+    mistake, do a 2-3 sentence reflection (what / why / how to avoid)
+    before proceeding. Positive or neutral feedback skips the
+    reflection — the gating happens inside the agent's head, so the
+    plugin itself is stateless and fires every turn.
+
+    Sibling Claude Code hook is ``.claude/hooks/reflection.py`` (see
+    ``core.claude_bridge``); both surfaces inject the same prompt.
+    """
+    from .markers import ALLMIGHT_MARKER_TS
+    from .safe_write import write_guarded
+
+    plugins_dir = project_root / ".opencode" / "plugins"
+    plugins_dir.mkdir(parents=True, exist_ok=True)
+    write_guarded(
+        plugins_dir / "reflection.ts",
+        _reflection_plugin_content(),
+        ALLMIGHT_MARKER_TS,
+    )
+
+
+def _reflection_plugin_content() -> str:
+    from .plugin_telemetry import TS_HEARTBEAT_SNIPPET
+    # The prompt is interpolated into a TS backtick-string, so escape
+    # backslashes, backticks, and ${ to keep the literal intact.
+    escaped = (
+        REFLECTION_PROMPT
+        .replace("\\", "\\\\")
+        .replace("`", "\\`")
+        .replace("${", "\\${")
+    )
+    return (
+        _REFLECTION_PLUGIN_TEMPLATE
+        .replace("__REFLECTION_PROMPT__", escaped)
+        .replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
+    )
+
+
+_REFLECTION_PLUGIN_TEMPLATE = """\
+// all-might generated
+/**
+ * Reflection Check — OpenCode plugin (All-Might)
+ *
+ * On every chat.message, prepends a brief instruction asking the
+ * agent to glance at the user's latest message and, if it points
+ * out a mistake, do a 2-3 sentence reflection (what went wrong /
+ * why / how to avoid) before proceeding with the turn. Positive or
+ * neutral feedback skips the reflection.
+ *
+ * The plugin is stateless — the agent itself decides whether the
+ * latest user message constitutes negative feedback. Firing every
+ * turn (no per-session "primed" gate) keeps the cue present even
+ * after compaction, and the prompt is small enough that the
+ * repeated injection cost is negligible.
+ *
+ * Sibling Claude Code hook is .claude/hooks/reflection.py — both
+ * surfaces inject the same prompt; changes to one MUST land in the
+ * other (see All-Might CLAUDE.md -> Editor Compatibility).
+ *
+ * Hook:
+ *   chat.message -> inject the reflection-check prefix every turn
+ */
+import type { Plugin } from "@opencode-ai/plugin";
+
+__TS_HEARTBEAT_SNIPPET__
+const REFLECTION_PROMPT = `__REFLECTION_PROMPT__`;
+
+export const ReflectionPlugin: Plugin = async ({ directory }: any) => {
+  const cwd = (directory as string | undefined) ?? process.cwd();
+
+  return {
+    "chat.message": async (input: any, output: any) => {
+      emitHeartbeat("reflection", cwd);
+      const sid = input?.sessionID;
+      if (!sid) return;
+      // Each Part requires id / sessionID / messageID (see OpenCode's
+      // TextPart schema in session/message-v2.ts); omitting them makes
+      // SyncEvent.run reject the mutated part with "sessionID required".
+      const mid = output?.message?.id;
+      if (!mid) return;
+      if (!Array.isArray(output?.parts)) return;
+      output.parts.unshift({
+        id: "prt_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10),
+        sessionID: sid,
+        messageID: mid,
+        type: "text",
+        text: REFLECTION_PROMPT,
+        synthetic: true,
+      });
+    },
+  };
+};
+
+export default ReflectionPlugin;
 """
 
 

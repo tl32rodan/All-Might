@@ -197,12 +197,51 @@ truth. The mirror has three layers, each with a different sync model:
 | Skills | `.opencode/skills/<name>/` | `.claude/skills` (dir symlink) | Same |
 | Agent context | `AGENTS.md`, `MEMORY.md`, `personalities/*/ROLE.md` | root `CLAUDE.md` (`@`-import shim) | Single set of files, both editors read |
 | Runtime hooks | `.opencode/plugins/*.ts` | `.claude/hooks/*.py` + `.claude/settings.json` | **Hand-mirrored** — updates to one require updates to the other |
+| Per-personality subagents | `personalities/<name>/ROLE.md` | `.opencode/agents/<name>.md` (pointer with `prompt: "{file:…}"`) | **OpenCode-only.** Claude Code's subagent format differs; not mirrored yet. |
 
 The bridge is wired by `src/allmight/core/claude_bridge.py`
 (project-level pieces: root `CLAUDE.md`, dir symlinks, settings.json,
-`role_load.py`) plus per-capability hook scripts (e.g.
+`role_load.py`, `reflection.py`) plus per-capability hook scripts (e.g.
 `MemoryInitializer._claude_memory_load_hook_content` mirroring
-`memory-load.ts`).
+`memory-load.ts`). The personality-subagent projection lives in
+`core/personalities.py::compose_role_agents`.
+
+### Personality subagents (`.opencode/agents/<name>.md`)
+
+Each personality is exposed to OpenCode as a **subagent** so the
+user can `@<name>` mention it from any conversation without
+Tab-switching out of their main session. The generated file is a
+thin pointer:
+
+```yaml
+---
+description: "<role_summary>"
+mode: subagent
+prompt: "{file:../personalities/<name>/ROLE.md}"
+---
+<!-- all-might generated -->
+```
+
+This keeps `ROLE.md` as the single source of truth — editing
+`personalities/<name>/ROLE.md` changes the agent's behaviour
+without re-running `allmight init`.
+
+Why `mode: subagent` (not `primary`):
+
+- Primary agents are session-level — the user `Tab`-switches to one
+  and the whole conversation becomes that agent. That fights All-
+  Might's "no default personality switching" UX.
+- Subagents are `@`-mentioned for one task at a time; the user's
+  main conversation persists.
+
+The directory is `.opencode/agents/` (plural). Singular `agent/` is
+also accepted by OpenCode for backwards compatibility, but plural
+is canonical.
+
+On re-init: `compose_role_agents` rewrites all-might-owned agent
+files in place; a user-customised file (without our marker) is
+preserved and the fresh template is staged at
+`.allmight/templates/agents/<name>.md` for `/sync` to merge.
 
 ### Dual-platform invariant for plugin/hook changes
 
@@ -214,6 +253,7 @@ mirrors it **must** be updated in the same commit:
 | `memory-load.ts` | `memory_load.py` (in `MemoryInitializer`) |
 | `memory-history.ts` | `memory_history.py` (in `MemoryInitializer`) — `Stop` hook |
 | `role-load.ts` | `role_load.py` (in `core.claude_bridge`) |
+| `reflection.ts` | `reflection.py` (in `core.claude_bridge`) — `UserPromptSubmit` hook |
 | `remember-trigger.ts` | *(not yet mirrored — see TODO in claude_bridge)* |
 | `usage-logger.ts` | *(not yet mirrored)* |
 | `trajectory-writer.ts` | *(not yet mirrored)* |
@@ -233,6 +273,38 @@ If you skip the dual update, the OpenCode and Claude Code surfaces
 will silently drift, and bug reports will look like "behaviour
 depends on which editor I open the project with" — by the time
 anyone notices, several plugin generations may be stale.
+
+### Plugin observability (heartbeats)
+
+Every plugin / hook touches a marker file when it fires:
+
+```
+.allmight/plugins/heartbeats/oc/<plugin-basename>   # OpenCode .ts
+.allmight/plugins/heartbeats/cc/<hook-basename>     # Claude Code .py
+```
+
+`allmight plugin status` reads these markers and prints last-fired
+mtimes per surface. Plugins that have never fired show
+`never fired` — the signal to investigate.
+
+The two snippets that emit heartbeats live in
+`src/allmight/core/plugin_telemetry.py` as `TS_HEARTBEAT_SNIPPET`
+(inlined into every generated `.ts` plugin) and `PY_HEARTBEAT_SNIPPET`
+(inlined into every generated Claude `.py` hook). When you add a new
+plugin or hook:
+
+1. Inline the matching snippet near the top of the generated file.
+2. Call `emitHeartbeat("<name>", cwd)` (TS) or `_hb("<name>")` (Python)
+   inside every top-level event handler / hook entry point.
+3. Register the name in `KNOWN_OPENCODE_PLUGINS` or
+   `KNOWN_CLAUDE_HOOKS` in `core/plugin_telemetry.py` so `plugin
+   status` lists it explicitly (even before its first fire).
+
+The design rationale and the **plugin-reduction plan** (which existing
+plugins are likely to be deleted, reduced, or rewired once we have
+heartbeat data) live in `docs/plugin-observability.md`. Read it before
+proposing structured / JSONL telemetry — touch-file simplicity is
+deliberate.
 
 ---
 
@@ -274,7 +346,7 @@ my-chip-project/                          ← One All-Might project
 │   │   ├── all-for-one.md
 │   │   ├── sync.md
 │   │   └── stdcell-special.md            ← downward symlink → personalities/stdcell_owner/commands/...
-│   └── plugins/{role-load,memory-load,remember-trigger,todo-curator,trajectory-writer,usage-logger}.ts
+│   └── plugins/{role-load,reflection,memory-load,memory-history,remember-trigger,todo-curator,trajectory-writer,usage-logger}.ts
 │
 ├── personalities/
 │   ├── stdcell_owner/
