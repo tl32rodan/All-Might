@@ -464,6 +464,33 @@ class TestMemoryInitializer:
         )
         assert marker.is_file()
 
+    def test_reinit_staging_path_still_writes_claude_hooks(self, project_root):
+        """Re-init (staging mode) must backfill .claude/hooks/memory_*.py.
+
+        Regression: the Claude Code hook scripts used to be inside the
+        ``else`` branch of ``initialize_globals``, so projects that
+        pre-dated the .claude/ mirror layer (or had .claude/ deleted)
+        kept getting `.claude/settings.json` entries for hooks that did
+        not exist. The Stop event then failed every turn with
+        "no such file or directory", and OMO's claude-code-hooks bridge
+        re-injected the stderr as a user prompt.
+        """
+        # Delete the Claude hooks (simulates the "old project" state).
+        hooks_dir = project_root / ".claude" / "hooks"
+        for name in ("memory_load.py", "memory_history.py"):
+            target = hooks_dir / name
+            if target.exists():
+                target.unlink()
+        assert not (hooks_dir / "memory_load.py").exists()
+        assert not (hooks_dir / "memory_history.py").exists()
+
+        # Re-run initialize_globals with staging=True — the path that
+        # used to skip writing these scripts.
+        MemoryInitializer().initialize_globals(project_root, staging=True)
+
+        assert (hooks_dir / "memory_load.py").is_file()
+        assert (hooks_dir / "memory_history.py").is_file()
+
     def test_memory_load_hook_is_executable(self, project_root):
         """Hook script needs +x — Claude Code runs it as a command."""
         import stat

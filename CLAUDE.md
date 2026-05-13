@@ -306,6 +306,42 @@ heartbeat data) live in `docs/plugin-observability.md`. Read it before
 proposing structured / JSONL telemetry — touch-file simplicity is
 deliberate.
 
+### Interaction with `oh-my-opencode` (OMO)
+
+OMO 4.x ships a built-in hook called `claude-code-hooks` that scans
+`.claude/settings.json` and re-runs every Claude Code hook from
+**inside OpenCode** on equivalent OpenCode lifecycle events. For an
+All-Might project this is doubly broken:
+
+1. **Duplicate fire.** We already emit OpenCode-native plugins
+   (`memory-history.ts`, `memory-load.ts`, `reflection.ts`,
+   `role-load.ts`) for every Claude hook we mirror, so the bridge
+   makes each one fire twice.
+2. **Failure cascade.** If anything in `.claude/settings.json` points
+   at a hook script that does not exist (which used to happen on
+   re-init — see the regression test
+   `test_reinit_staging_path_still_writes_claude_hooks`), OMO
+   honours Claude Code's "Stop hook with exit ≠ 0 injects stderr as
+   next user prompt" semantics. The error text gets fed back into
+   the next turn with no chance to cancel.
+
+We deliberately do **not** auto-write `.opencode/oh-my-opencode.json`
+into the init scaffold to disable the bridge — touching a
+third-party tool's config from inside our init is overreach.
+Affected users add it themselves at the project level:
+
+```json
+{
+  "disabled_hooks": ["claude-code-hooks"]
+}
+```
+
+When the dual-platform invariant tempts someone to skip writing a
+Claude hook ("we have an OpenCode plugin, isn't that enough?"), this
+interaction is the reason the answer is still no. The Claude side
+must always exist as a real, executable file with our marker —
+that's what makes OMO's mirror harmless instead of fatal.
+
 ---
 
 ## Design Philosophy
