@@ -98,8 +98,18 @@ class MemoryInitializer:
             self._generate_memory_commands(root, force=force)
             self._generate_opencode_json(root, force=force)
             self._install_recover_skill(root, force=force)
-            self._write_claude_memory_load_hook(root, force=force)
-            self._write_claude_memory_history_hook(root, force=force)
+        # Claude Code hooks: internal infrastructure mirroring the
+        # OpenCode plugins. Written on EVERY init (fresh or re-init) —
+        # they carry our marker, write_guarded protects user-edited
+        # versions, and projects that predate the .claude/ mirror layer
+        # need them backfilled. Placing them only in the ``else`` branch
+        # is the bug we used to ship: re-init silently left them
+        # missing while .claude/settings.json kept registering them,
+        # producing "no such file" errors on every Stop event (and
+        # those errors got fed back as user prompts by the OMO
+        # claude-code-hooks bridge).
+        self._write_claude_memory_load_hook(root, force=force)
+        self._write_claude_memory_history_hook(root, force=force)
         self._init_memory_history(root)
 
     def initialize(
