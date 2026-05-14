@@ -121,8 +121,8 @@ The merge unit is **the workspace** (a single directory under
      source.
 
 3. **Never copy ``store/``.** It's the SMAK vector index — derived
-   data, machine-specific, large. The user re-runs ``/ingest`` after
-   the merge to rebuild it.
+   data, machine-specific, large. After the merge the user rebuilds
+   it out-of-band via the SMAK CLI.
 
 #### 4b. ``memory/understanding/<topic>.md``
 
@@ -232,8 +232,8 @@ Short summary:
 > All For One! Absorbed <N> sources into ``<target>``. Capabilities:
 > <union>. Merged: <count> understanding files (<conflicts> needed
 > review), <count> journal entries (<dupes> deduped), <count>
-> database workspaces. Sources kept: <list>. Re-run ``/ingest`` in
-> any merged database workspace to rebuild SMAK indices.
+> database workspaces. Sources kept: <list>. Rebuild the SMAK index
+> out-of-band via the SMAK CLI for any merged database workspace.
 
 ## Important
 
@@ -241,8 +241,8 @@ Short summary:
   target is an existing personality. Do not skip step 4 just because
   you're "importing into" — the target is itself a source for
   conflict resolution.
-- **``store/`` is never touched** under any capability. Always end
-  with the ``/ingest`` reminder for database, and let
+- **``store/`` is never touched** under any capability. Always remind
+  the user to rebuild SMAK indices out-of-band for database, and let
   ``/remember``-cycle rebuilds happen for memory.
 - **ROLE.md merge always requires explicit user confirmation.**
   Never write a merged ROLE.md without the user signing off on the
@@ -278,13 +278,14 @@ share pull`` installs them directly without going through this skill.
      (pick / overwrite / concat / agent-rewrite).
    - ``memory/journal/``: append + sort by timestamp + dedupe.
    - ``ROLE.md``: agent drafts a merged version, user confirms.
-   - ``store/`` (any): never copied; rebuild via ``/ingest``.
+   - ``store/`` (any): never copied; rebuild out-of-band with the
+     SMAK CLI.
 4. Update ``.allmight/personalities.yaml`` with a ``derived_from``
    list recording every source.
 5. Ask whether to keep or remove the in-project source personalities
    (default: keep).
-6. Print a summary and remind the user to ``/ingest`` merged
-   workspaces.
+6. Print a summary and remind the user to rebuild SMAK indices for
+   merged workspaces out-of-band.
 
 ## How to execute
 

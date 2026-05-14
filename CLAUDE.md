@@ -38,7 +38,7 @@ When the task requires designing before coding:
 All-Might/                          ← This repo (the framework)
 ├── src/allmight/                    ← Framework source code
 │   ├── capabilities/                ← Built-in capability templates
-│   │   ├── database/                ← knowledge-graph workspaces + /search /enrich /ingest /sync /onboard /one-for-all /all-for-one
+│   │   ├── database/                ← knowledge-graph workspaces + /search /sync /onboard /one-for-all /all-for-one
 │   │   └── memory/                  ← L1/L2/L3 agent memory + /remember (Record + Reflect) + /recall
 │   ├── personalities/               ← Deprecation shim only — re-exports allmight.capabilities
 │   ├── bridge/                      ← SMAK CLI subprocess wrapper (internal)
@@ -373,8 +373,6 @@ my-chip-project/                          ← One All-Might project
 │   │   └── sync/SKILL.md
 │   ├── commands/
 │   │   ├── search.md                     ← real file (capability global)
-│   │   ├── enrich.md
-│   │   ├── ingest.md
 │   │   ├── remember.md
 │   │   ├── recall.md
 │   │   ├── onboard.md
@@ -427,9 +425,9 @@ project.
 or overwritten data is recoverable via `allmight memory log` +
 `allmight memory restore <file> [--rev <sha>]`. SMAK vector
 indices (`store/`) are excluded from the mirror — they're
-rebuildable by `/ingest`. The mirror's `.git` is separate from the
-project's main `.git` so neither side sees the other in
-`git status`.
+rebuildable out-of-band via the `smak ingest` CLI. The mirror's
+`.git` is separate from the project's main `.git` so neither side
+sees the other in `git status`.
 
 `allmight init` is **idempotent and safe in pre-populated
 directories.** Files that carry an All-Might marker
@@ -446,7 +444,7 @@ for `/sync` to resolve.
 | **Skills/Commands** | Agent | Low-level HOW | SMAK CLI commands, YAML schemas, troubleshooting |
 | **README.md** | Human | Conversational | "Tell the agent to search for..." |
 
-- **AGENTS.md** knows about `/search`, `/enrich` but NOT about `smak search --config ...`
+- **AGENTS.md** knows about `/search` but NOT about `smak search --config ...`
 - **Skills** know about SMAK internals but never expose them to the human user
 - **README.md** doesn't mention SMAK, sidecars, or YAML — only natural-language examples
 

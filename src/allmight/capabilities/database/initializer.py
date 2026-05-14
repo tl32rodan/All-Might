@@ -32,7 +32,6 @@ class ProjectInitializer:
         manifest: ProjectManifest,
         *,
         force: bool = False,
-        writable: bool = False,
         staging: bool = False,
     ) -> None:
         """Project-wide install — skills, commands, ``.allmight/`` setup.
@@ -43,26 +42,17 @@ class ProjectInitializer:
         to refresh on every call.
         """
         allmight_dir = root / ".allmight"
-        mode_file = allmight_dir / "mode"
-        if mode_file.exists():
-            current_mode = mode_file.read_text().strip()
-            if current_mode == "read-only" and writable:
-                raise ValueError(
-                    "Cannot upgrade from read-only to writable mode. "
-                    "Read-only projects cannot be converted to writable."
-                )
 
         if staging:
-            self._stage_templates_globals(root, manifest, writable=writable)
-            current_mode = (
-                mode_file.read_text().strip() if mode_file.exists() else None
-            )
-            if current_mode == "writable" and not writable:
-                tpl = root / ".allmight" / "templates"
-                tpl.mkdir(parents=True, exist_ok=True)
-                (tpl / "remove.txt").write_text("enrich.md\ningest.md\n")
+            self._stage_templates_globals(root, manifest)
+            # Always stage removal of the deprecated commands so /sync
+            # can clean up projects that still have enrich.md/ingest.md
+            # from before the slash commands were retired.
+            tpl = root / ".allmight" / "templates"
+            tpl.mkdir(parents=True, exist_ok=True)
+            (tpl / "remove.txt").write_text("enrich.md\ningest.md\n")
         else:
-            self._generate_commands(root, manifest, writable=writable, force=force)
+            self._generate_commands(root, manifest, force=force)
             self._install_onboard_skill(root, force=force)
             self._install_one_for_all_skill(root, force=force)
             self._install_all_for_one_skill(root, force=force)
@@ -72,16 +62,21 @@ class ProjectInitializer:
             if templates_dir.exists():
                 import shutil
                 shutil.rmtree(templates_dir)
+            # Clean up legacy enrich.md / ingest.md if they survived
+            # from an older writable-mode install. The slash commands
+            # are gone; the files should not linger.
+            commands_dir = root / ".opencode" / "commands"
+            for stale in ("enrich.md", "ingest.md"):
+                stale_path = commands_dir / stale
+                if stale_path.exists():
+                    stale_path.unlink()
 
-        (allmight_dir / "mode").write_text(
-            "writable" if writable else "read-only"
-        )
+        (allmight_dir / "mode").write_text("read-only")
 
     def initialize(
         self,
         manifest: ProjectManifest,
         force: bool = False,
-        writable: bool = False,
         instance_root: Path | None = None,
     ) -> None:
         """Execute Detroit SMAK — bootstrap globals + one personality instance.
@@ -89,8 +84,6 @@ class ProjectInitializer:
         Args:
             manifest: Project characteristics from the Scanner.
             force: If True, overwrite everything even on re-init.
-            writable: If True, generate ingest/enrich commands (full access).
-                      Default is read-only (search only).
             instance_root: Personality instance directory under
                 ``personalities/<name>/``. The per-instance content
                 (database/, skills/, commands/) lives here. If ``None``,
@@ -106,15 +99,15 @@ class ProjectInitializer:
         # Project-wide writes
         self.initialize_globals(
             root, manifest,
-            force=force, writable=writable, staging=is_reinit,
+            force=force, staging=is_reinit,
         )
 
         # Per-instance writes
         self._create_metadata(root, manifest)
         if is_reinit:
-            self._stage_templates_role(root, manifest, writable=writable)
+            self._stage_templates_role(root, manifest)
         else:
-            self._write_role_md(root, manifest, writable=writable, force=force)
+            self._write_role_md(root, manifest, force=force)
 
     def _create_metadata(self, root: Path, manifest: ProjectManifest) -> None:
         """Create database/ inside the instance dir.
@@ -128,7 +121,6 @@ class ProjectInitializer:
         self,
         root: Path,
         manifest: ProjectManifest,
-        writable: bool = False,
     ) -> None:
         """Re-init: stage project-wide templates to ``.allmight/templates/``.
 
@@ -138,7 +130,7 @@ class ProjectInitializer:
         tpl = root / ".allmight" / "templates"
         cmds_tpl = tpl / "commands"
         cmds_tpl.mkdir(parents=True, exist_ok=True)
-        self._stage_command_content(cmds_tpl, manifest, writable=writable)
+        self._stage_command_content(cmds_tpl, manifest)
         # /sync skill + command are written directly to .opencode/, not staged
         self._install_sync_skill(root)
 
@@ -146,7 +138,6 @@ class ProjectInitializer:
         self,
         root: Path,
         manifest: ProjectManifest,
-        writable: bool = False,
     ) -> None:
         """Re-init: stage one personality's ROLE.md to ``.allmight/templates/``."""
         tpl = root / ".allmight" / "templates"
@@ -154,19 +145,19 @@ class ProjectInitializer:
             inst_rel = self._instance_root.relative_to(root)
             staged_role = tpl / inst_rel / "ROLE.md"
             staged_role.parent.mkdir(parents=True, exist_ok=True)
-            write_guarded(staged_role, self._role_md_body(manifest, writable=writable), ALLMIGHT_MARKER_MD)
+            write_guarded(staged_role, self._role_md_body(manifest), ALLMIGHT_MARKER_MD)
         else:
             # Legacy: stage the marker-fenced section file like before
             # so existing /sync flow + tests keep working.
             marker = "<!-- ALL-MIGHT -->"
-            body = self._role_md_body(manifest, writable=writable)
+            body = self._role_md_body(manifest)
             if body.startswith(ALLMIGHT_MARKER_MD):
                 body = body[len(ALLMIGHT_MARKER_MD):].lstrip("\n")
             tpl.mkdir(parents=True, exist_ok=True)
             (tpl / "claude-md-section.md").write_text(f"{marker}\n{body}")
 
     def _stage_command_content(
-        self, cmds_tpl: Path, manifest: ProjectManifest, writable: bool = False,
+        self, cmds_tpl: Path, manifest: ProjectManifest,
     ) -> None:
         """Write fresh command template content to staging dir."""
         write_guarded(
@@ -174,17 +165,6 @@ class ProjectInitializer:
             self._search_command_body(),
             ALLMIGHT_MARKER_MD,
         )
-        if writable:
-            write_guarded(
-                cmds_tpl / "enrich.md",
-                self._enrich_command_body(manifest.has_path_env),
-                ALLMIGHT_MARKER_MD,
-            )
-            write_guarded(
-                cmds_tpl / "ingest.md",
-                self._ingest_command_body(),
-                ALLMIGHT_MARKER_MD,
-            )
 
     def _install_sync_skill(self, root: Path) -> None:
         """Install /sync skill + command (project-wide; not staged)."""
@@ -274,16 +254,15 @@ class ProjectInitializer:
         """
         return root / ".opencode" / "skills", root / ".opencode" / "commands"
 
-    def _role_md_body(
-        self, manifest: ProjectManifest, writable: bool = False,
-    ) -> str:
-        """Return the corpus keeper's ROLE.md body."""
-        if writable:
-            return self._role_md_writable(manifest)
-        return self._role_md_readonly(manifest)
+    def _role_md_body(self, manifest: ProjectManifest) -> str:
+        """Return the corpus keeper's ROLE.md body.
 
-    def _role_md_readonly(self, manifest: ProjectManifest) -> str:
-        """ROLE.md for the corpus keeper, read-only mode."""
+        The knowledge graph is read-only: agents search the SMAK
+        index via ``/search`` but never mutate the corpus through
+        All-Might slash commands. Index builds and sidecar edits
+        are handled directly by SMAK CLI / SOS workflows outside the
+        agent surface.
+        """
         db_root = "personalities/<active>/database"
         sos_prereq = ""
         if manifest.has_path_env:
@@ -301,7 +280,8 @@ You manage a **knowledge graph** for this project — searching code by
 meaning and tracking what the agent has learned across sessions.
 
 **Access: read-only** — you may search the knowledge graph but must NOT
-modify corpora (no ingesting, no enriching, no sidecar edits).
+modify corpora through agent slash commands. Index rebuilds and sidecar
+edits happen out-of-band via the SMAK CLI.
 
 ### Capabilities
 
@@ -324,55 +304,6 @@ The `/search` command has a detailed operational guide in `.opencode/commands/`.
 ### Getting Started
 
 1. `/search "query"` — explore the codebase
-"""
-
-    def _role_md_writable(self, manifest: ProjectManifest) -> str:
-        """ROLE.md for the corpus keeper, writable mode."""
-        db_root = "personalities/<active>/database"
-        sos_prereq = ""
-        if manifest.has_path_env:
-            sos_prereq = """
-### SOS Environment Prerequisite
-
-This project uses **CliosoftSOS**. Set `$DDI_ROOT_PATH` before opening
-the project — it determines which source layer (online vs. version
-control) the corpus operates on.
-"""
-        return f"""{ALLMIGHT_MARKER_MD}
-# Corpus Keeper
-
-You manage a **knowledge graph** for this project — searching code by
-meaning, annotating what the agent learns, and tracking knowledge
-across sessions.
-
-### Capabilities
-
-| Command | What it does |
-|---------|-------------|
-| `/search <query>` | Search code by meaning (not just keywords) |
-| `/enrich` | Annotate a symbol — record what it does and what it relates to |
-| `/ingest` | Build or rebuild the search index from source files |
-
-### Concepts
-
-- **Corpus** (= **workspace**) — one independently-indexed source domain.
-  Each corpus maps to `{db_root}/<workspace>/` and has its own SMAK
-  vector store. A project may have multiple corpora (e.g. `stdcell`, `pll`).
-  Source files are indexed **in-place** — only the index is stored locally.
-  The corpus name and workspace name are the same string throughout All-Might.
-- **Annotation** = a note on a code symbol (function, class) describing its
-  purpose and connections. Stored in `.sidecar.yaml` files beside the source code.
-
-### How to learn the details
-
-Each command (`/search`, `/enrich`, `/ingest`) has a detailed operational
-guide in `.opencode/commands/`.
-{sos_prereq}
-### Getting Started
-
-1. `/ingest` — build the search index (first time)
-2. `/search "query"` — explore the codebase
-3. `/enrich` — annotate symbols as you learn them
 """
 
     def _search_command_body(self) -> str:
@@ -414,63 +345,14 @@ JSON output with a `results` array. Each result contains:
 ## After searching
 
 - If a result has a sidecar (`.{filename}.sidecar.yaml` beside it), read the
-  sidecar to see its enriched intent and relations.
-- If a result has NO sidecar or missing intent, consider enriching it with `/enrich`.
+  sidecar for its annotated intent and relations.
 - Present results to the user in terms of "knowledge graph" — do not mention SMAK.
-"""
-
-    def _ingest_command_body(self) -> str:
-        """Return ingest.md command content (generic — agent resolves <active>)."""
-        from ...core.routing import ROUTING_PREAMBLE
-        db_root = "personalities/<active>/database"
-        return ROUTING_PREAMBLE + self._INGEST_BODY.replace("{db_root}", db_root)
-
-    _INGEST_BODY = """\
-Build the SMAK vector index from source files.
-
-SMAK indexes source files **in-place** at their original paths.
-No files are copied — only the vector index (in `store/`) is created
-inside the workspace.
-
-## When to run
-
-- **First time**: after `allmight init` to build the initial index
-- **After significant changes**: new files added, major refactoring
-- **After adding a workspace**: to populate the new index
-
-You do NOT need to re-ingest after enrichment — sidecars are separate
-from the search index.
-
-## How to execute
-
-Rebuild all corpora in a workspace:
-```bash
-smak ingest --config {db_root}/<workspace>/config.yaml --json
-```
-
-Rebuild a specific corpus:
-```bash
-smak ingest --config {db_root}/<workspace>/config.yaml --index source_code --json
-```
-
-## What to expect
-
-- The `store/` directory inside the workspace is populated with vector index data
-- `/search` will return results from the indexed files
-- Source files remain at their original paths — nothing is copied
-
-## Troubleshooting
-
-- If `smak` is not found, ensure SMAK is installed and on PATH
-- Check `smak health --config {db_root}/<workspace>/config.yaml --json` for diagnostics
-- List available corpora: `smak describe --config {db_root}/<workspace>/config.yaml --json`
 """
 
     def _generate_commands(
         self,
         root: Path,
         manifest: ProjectManifest,
-        writable: bool = False,
         force: bool = False,
     ) -> None:
         """Generate database capability command guides inside the instance dir."""
@@ -483,25 +365,11 @@ smak ingest --config {db_root}/<workspace>/config.yaml --index source_code --jso
             ALLMIGHT_MARKER_MD,
             force=force,
         )
-        if writable:
-            write_guarded(
-                commands_dir / "enrich.md",
-                self._enrich_command_body(manifest.has_path_env),
-                ALLMIGHT_MARKER_MD,
-                force=force,
-            )
-            write_guarded(
-                commands_dir / "ingest.md",
-                self._ingest_command_body(),
-                ALLMIGHT_MARKER_MD,
-                force=force,
-            )
 
     def _write_role_md(
         self,
         root: Path,
         manifest: ProjectManifest,
-        writable: bool = False,
         force: bool = False,
     ) -> None:
         """Write the corpus keeper's role description **once**.
@@ -536,14 +404,14 @@ smak ingest --config {db_root}/<workspace>/config.yaml --index source_code --jso
             self._instance_root.mkdir(parents=True, exist_ok=True)
             write_guarded(
                 target,
-                self._role_md_body(manifest, writable=writable),
+                self._role_md_body(manifest),
                 ALLMIGHT_MARKER_MD,
             )
         else:
-            self._write_legacy_agents_md(root, manifest, writable=writable)
+            self._write_legacy_agents_md(root, manifest)
 
     def _write_legacy_agents_md(
-        self, root: Path, manifest: ProjectManifest, writable: bool = False,
+        self, root: Path, manifest: ProjectManifest,
     ) -> None:
         """Splice the corpus section into root AGENTS.md (legacy path)."""
         agents_md = root / "AGENTS.md"
@@ -551,7 +419,7 @@ smak ingest --config {db_root}/<workspace>/config.yaml --index source_code --jso
             agents_md.unlink()
 
         marker = "<!-- ALL-MIGHT -->"
-        body = self._role_md_body(manifest, writable=writable)
+        body = self._role_md_body(manifest)
         if body.startswith(ALLMIGHT_MARKER_MD):
             body = body[len(ALLMIGHT_MARKER_MD):].lstrip("\n")
         section = f"{marker}\n{body}"
@@ -566,109 +434,4 @@ smak ingest --config {db_root}/<workspace>/config.yaml --index source_code --jso
             agents_md.write_text(content)
         else:
             agents_md.write_text(f"# {manifest.name}\n\n{section}")
-
-    @staticmethod
-    def _enrich_command_body(has_path_env: bool) -> str:
-        """Return the enrich.md command content, SOS-aware when applicable.
-
-        Prepends the routing preamble so the agent resolves
-        ``<active>`` before substituting it into the SMAK paths
-        below.
-        """
-        from ...core.routing import ROUTING_PREAMBLE
-        base = """\
-Annotate a code symbol with intent and/or relations.
-
-## How to execute
-
-Set intent (what the symbol does and why):
-```bash
-smak enrich --config personalities/<active>/database/<workspace>/config.yaml \\
-    --index source_code \\
-    --file <relative_path> --symbol "<SymbolName>" \\
-    --intent "Human-readable description of purpose"
-```
-
-Add a relation to another symbol:
-```bash
-smak enrich --config personalities/<active>/database/<workspace>/config.yaml \\
-    --index source_code \\
-    --file <relative_path> --symbol "<SymbolName>" \\
-    --relation "<other_file>::<OtherSymbol>" --bidirectional
-```
-
-## When to enrich
-
-- **Reading code**: symbol has no intent → add one
-- **Discovering relationships**: two entities are related → link them
-- **After modifying code**: existing intent may be stale → update it
-
-## Priority
-
-1. Entry points — main functions, API handlers, CLI commands
-2. Complex logic — algorithms, state machines, non-obvious flow
-3. Cross-cutting concerns — error handling, auth, logging
-4. Frequently modified files (high git activity)
-
-Skip auto-generated code, simple getters, and obvious boilerplate.
-
-## What to expect
-
-- A `.{filename}.sidecar.yaml` file is created/updated beside the source file
-- The sidecar contains structured YAML with `symbols[].intent` and `symbols[].relations`
-- Do NOT edit sidecar files by hand — always use `smak enrich`
-
-## UID format
-
-`<file_path>::<symbol_name>` — e.g., `src/auth.py::AuthHandler.validate`
-- File path is relative to project root
-- Dot notation for nested symbols: `ClassName.method_name`
-- Wildcard `*` for entire file: `path/to/file.py::*`
-- Never invent UIDs — use `/search` to discover valid ones
-"""
-        if not has_path_env:
-            return ROUTING_PREAMBLE + base
-
-        sos_section = """
-## SOS Environment (CliosoftSOS)
-
-In SOS environments, sidecar files are version-controlled objects.
-Use `--dry-run` with the `cliosoft-sos` MCP tools to enrich safely:
-
-### Recommended workflow: dry-run + cliosoft-sos MCP tools
-
-1. **Preview** the enriched sidecar (no write):
-   ```bash
-   smak enrich --config config.yaml --index source_code \\
-       --file <relative_path> --symbol "<SymbolName>" \\
-       --intent "description" --dry-run --json
-   ```
-   This returns `sidecar_yaml` (the full sidecar content) and
-   `sidecar_path` (where it belongs) without writing anything.
-
-2. **Check out** the sidecar via `cliosoft-sos` MCP tool:
-   - If the sidecar already exists: use `sos_checkout` on the sidecar path
-   - If this is the first enrichment for the file: skip this step
-
-3. **Write** the `sidecar_yaml` content to the sidecar path.
-
-4. **Register** new sidecars (first enrichment only):
-   - Use `sos_create` on the new sidecar file
-
-5. **Check in** via `cliosoft-sos` MCP tool:
-   - Use `sos_checkin` with a descriptive log message
-
-### Alternative: direct enrich with SOS checkout
-
-1. Use `sos_checkout` on the existing sidecar file
-2. Run `smak enrich` normally (writes to the now-writable file)
-3. Use `sos_checkin` to commit
-
-### Important
-
-- **Never** run `soscmd` directly — always use `cliosoft-sos` MCP tools
-- Path mismatch warnings in workspaces are normal — you're editing in a workspace while relations point to the canonical path
-- After check-in, re-ingest to update the search index
-"""
-        return ROUTING_PREAMBLE + base + sos_section
 

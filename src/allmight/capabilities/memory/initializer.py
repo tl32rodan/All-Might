@@ -1388,8 +1388,6 @@ Read `memory/usage.log` and analyze this session's activity:
 - **Remembers**: What categories? Are you remembering broadly or narrowly?
   - All in one workspace → good depth
   - Scattered across many → check if L1 project map needs updating
-- **Enrichments**: Did you `/enrich` any symbols this session?
-  - If you read code but didn't enrich → were there opportunities missed?
 - **Stale L2**: List `memory/understanding/*.md` files. Any not loaded this
   session that haven't been updated in a while? Flag them.
 - **Scope drift**: Count `remember` entries grouped by `scope=` and

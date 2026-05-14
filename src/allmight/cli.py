@@ -38,8 +38,8 @@ def _build_init_command() -> click.Command:
     The only universal option is ``--force``; everything else is
     declared by a personality template's ``cli_options`` and registered
     here at startup. This is the *core decoupling* from the old
-    hardcoded ``--sos`` / ``--writable`` knobs — ``cli.py`` does not
-    interpret them, it just forwards them as a raw dict to every
+    hardcoded ``--sos`` knob — ``cli.py`` does not interpret it, it
+    just forwards every flag as a raw dict into every
     ``Personality.options``.
     """
     from .core.personalities import discover
@@ -162,9 +162,6 @@ def _init_callback(
     # deterministic list to propose from.
     seed_suggestions(root, force=force)
 
-    writable = bool(template_options.get("writable"))
-    mode_label = "writable" if writable else "read-only"
-
     if is_reinit:
         tpl_dir = root / ".allmight" / "templates"
         file_count = sum(1 for _ in tpl_dir.rglob("*") if _.is_file()) if tpl_dir.exists() else 0
@@ -174,7 +171,7 @@ def _init_callback(
         click.echo("  Run /sync in your agent to merge with your customizations.")
         click.echo("  Or run 'allmight init --force' to overwrite everything.")
     else:
-        click.echo(f"All-Might! Project '{manifest.name}' initialized ({mode_label}).")
+        click.echo(f"All-Might! Project '{manifest.name}' initialized.")
         click.echo(f"  Languages:  {', '.join(manifest.languages) or 'none detected'}")
         click.echo("")
         click.echo("What's next:")
@@ -599,7 +596,10 @@ def _import_bundle(
             f"  Database subscriptions: {len(subscriptions)} "
             f"({sub_warnings} warning(s))."
         )
-    click.echo("  Next: re-run /ingest to rebuild the search index.")
+    click.echo(
+        "  Next: rebuild the SMAK index out-of-band (smak ingest) for the "
+        "imported database workspaces."
+    )
 
 
 # ------------------------------------------------------------------
@@ -793,8 +793,9 @@ def clone(source: str, path: str):
     Creates a read-only clone where database/ workspaces are
     symlinks to the source project. Memory is fresh (new L1/L2/L3).
 
-    The clone can search the source's corpora but cannot ingest or
-    enrich. File-system permissions control write access.
+    The clone can search the source's corpora. The All-Might agent
+    surface is search-only — there are no slash commands that mutate
+    the corpus; SMAK CLI handles ingest/enrich out-of-band.
     """
     from pathlib import Path as P
 

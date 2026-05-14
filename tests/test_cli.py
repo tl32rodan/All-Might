@@ -33,20 +33,18 @@ class TestCliHelp(unittest.TestCase):
         self.assertNotIn("config", result.output)
 
 
-class TestCliWritableFlag(unittest.TestCase):
-    """--writable flag on init command."""
+class TestCliInitMessages(unittest.TestCase):
+    """``allmight init`` summary message after a fresh init."""
 
-    def test_writable_flag_in_help(self) -> None:
+    def test_no_writable_flag(self) -> None:
+        """The retired ``--writable`` flag must not be advertised."""
         runner = CliRunner()
         result = runner.invoke(main, ["init", "--help"])
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("--writable", result.output)
+        self.assertNotIn("--writable", result.output)
 
-    def test_init_readonly_default_message(self) -> None:
-        """Default init (read-only) labels the project read-only and points
-        the user at /onboard. Detailed command suggestions live inside
-        /onboard now, not the CLI tail.
-        """
+    def test_init_points_user_at_onboard(self) -> None:
+        """Fresh init points the user at /onboard."""
         import tempfile
         import os
 
@@ -58,23 +56,6 @@ class TestCliWritableFlag(unittest.TestCase):
             runner = CliRunner()
             result = runner.invoke(main, ["init", td])
             self.assertEqual(result.exit_code, 0)
-            self.assertIn("read-only", result.output)
-            self.assertIn("/onboard", result.output)
-
-    def test_init_writable_message(self) -> None:
-        """Writable init labels the project writable and points the user at /onboard."""
-        import tempfile
-        import os
-
-        with tempfile.TemporaryDirectory() as td:
-            os.makedirs(os.path.join(td, "src"))
-            with open(os.path.join(td, "src", "main.py"), "w") as f:
-                f.write("def hello(): pass\n")
-
-            runner = CliRunner()
-            result = runner.invoke(main, ["init", "--writable", td])
-            self.assertEqual(result.exit_code, 0)
-            self.assertIn("writable", result.output)
             self.assertIn("/onboard", result.output)
 
 

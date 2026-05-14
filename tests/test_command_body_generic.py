@@ -35,8 +35,8 @@ DISTINCTIVE = "stdcell_owner_uniq_xyz"
 
 @pytest.fixture
 def initted_project(tmp_path: Path) -> Path:
-    """Init a writable project rooted at ``tmp_path`` with the
-    distinctive personality name."""
+    """Init a project rooted at ``tmp_path`` with the distinctive
+    personality name."""
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "main.py").write_text("def hello(): pass\n")
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'test'\n")
@@ -45,7 +45,7 @@ def initted_project(tmp_path: Path) -> Path:
     scanner = ProjectScanner()
     manifest = scanner.scan(tmp_path)
     ProjectInitializer().initialize(
-        manifest, instance_root=instance_root, writable=True,
+        manifest, instance_root=instance_root,
     )
     MemoryInitializer().initialize(tmp_path, instance_root=instance_root)
     return tmp_path

@@ -24,7 +24,7 @@ def source_project(tmp_path):
     (source / "pyproject.toml").write_text("[project]\nname = 'source'\n")
 
     manifest = ProjectScanner().scan(source)
-    ProjectInitializer().initialize(manifest, writable=True)
+    ProjectInitializer().initialize(manifest)
     MemoryInitializer().initialize(source)
 
     # Create a fake workspace with config.yaml

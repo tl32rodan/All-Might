@@ -182,8 +182,8 @@ Short summary:
 > One For All! Exported ``<name>`` to ``<path>``. Capabilities:
 > database, memory. Files included: ROLE.md, database/config.yaml,
 > memory/understanding (3 files), memory/journal (skipped — user opted
-> out). The vector index (``store/``) is not exported — re-run
-> ``/ingest`` after import to rebuild it.
+> out). The vector index (``store/``) is not exported — the receiver
+> rebuilds it out-of-band via the SMAK CLI after import.
 
 ## Important
 

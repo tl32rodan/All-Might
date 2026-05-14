@@ -20,10 +20,10 @@ one needs:
 A single project can hold one personality (the default after
 `allmight init`) or many (`allmight add` adds more). All personalities
 share **one** flat slash-command surface — `/search`, `/remember`,
-`/recall`, `/recover`, `/enrich`, `/ingest`, `/onboard`,
-`/one-for-all`, `/all-for-one`, `/sync` — and the agent decides
-which personality to act for from conversation context plus a
-`> **Default personality**: <name>` hint at the top of `MEMORY.md`.
+`/recall`, `/recover`, `/onboard`, `/one-for-all`, `/all-for-one`,
+`/sync` — and the agent decides which personality to act for from
+conversation context plus a `> **Default personality**: <name>` hint
+at the top of `MEMORY.md`.
 
 ## Setup
 
@@ -115,14 +115,16 @@ command against that personality's data dir.
 |-----------|--------------|
 | `/onboard`  | Capture each personality's role and (if 2+ personalities) pick the default. Run once after `allmight init`. |
 | `/search`   | "Search for ..." |
-| `/enrich`   | "Annotate this symbol" |
-| `/ingest`   | "Build the search index" |
 | `/remember` | "Remember that ..." (records *or* reviews — agent picks based on trigger) |
 | `/recall`   | "What do you know about ...?" |
 | `/recover`  | "Get back what I just deleted" — agent walks you through picking the right snapshot from `.allmight/memory-history/` and restores it |
 | `/one-for-all` | "Export `<name>` so I can share it" — agent applies per-capability rules and reviews for PII (1 personality → 1 bundle) |
 | `/all-for-one` | "Merge these into one personality" — fold multiple bundles or in-project personalities into one target (N → 1) with per-file dialog |
 | `/sync`     | Merge staged template updates after re-init / resolve compose conflicts |
+
+The All-Might agent surface is search-only against the knowledge graph
+— there is no slash command that mutates a corpus. Index builds and
+sidecar edits happen out-of-band via the SMAK CLI.
 
 ## Sharing personalities between projects
 
@@ -147,7 +149,8 @@ stdcell_owner-export/
     └── journal/                    ← only if the user opted in
 ```
 
-`store/` is never bundled — the receiver runs `/ingest` to rebuild it.
+`store/` is never bundled — the receiver rebuilds the SMAK index
+out-of-band (via `smak ingest`) after import.
 
 ### Import (single bundle, no merge): `allmight import`
 
@@ -178,8 +181,8 @@ short dialog. By default the source personalities are kept after the
 merge (the agent asks before removing them). Lineage from every
 source is recorded in the target's `derived_from` list.
 
-After any import or merge, run `/ingest` in the merged workspaces to
-rebuild SMAK indices.
+After any import or merge, rebuild SMAK indices for the merged
+workspaces out-of-band via the `smak ingest` CLI.
 
 ## Team Share
 
@@ -255,7 +258,8 @@ The friendly path: just tell the agent.
 
 The `/recover` skill walks you through picking the right snapshot
 and restores the file. SMAK vector indices (`store/`) are excluded
-from the mirror — they're rebuilt by `/ingest`.
+from the mirror — they're rebuilt out-of-band via the `smak ingest`
+CLI.
 
 For scripting / power users, the same operations are exposed as CLI
 subcommands:

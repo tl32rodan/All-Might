@@ -50,19 +50,17 @@ SYNC_SKILL_BODY = """\
    - Never touch content outside the markers
 6. After all files are merged, delete `.allmight/templates/`
 
-### Mode-aware cleanup (after mode change)
+### Deprecated-command cleanup
 
-If `.allmight/mode` exists, check whether the project's access mode has changed:
-
-1. Read `.allmight/mode` to determine the current access mode (`read-only` or `writable`)
-2. If `.allmight/templates/remove.txt` exists:
+1. If `.allmight/templates/remove.txt` exists:
    - Read the list of command files to remove (one filename per line)
    - Delete each listed file from `.opencode/commands/`
    - Delete `remove.txt` when done
-3. Verify only commands appropriate for the current mode remain:
-   - **read-only**: only `search.md` (remove `enrich.md`, `ingest.md` if present)
-   - **writable**: `search.md`, `enrich.md`, `ingest.md`
-4. Update the AGENTS.md ALL-MIGHT section to match the staged `claude-md-section.md`
+2. The legacy slash commands `/enrich` and `/ingest` were retired —
+   delete `.opencode/commands/enrich.md` and `.opencode/commands/ingest.md`
+   if they are still present. The knowledge graph is now read-only from
+   the agent surface; SMAK CLI handles ingest/enrich out-of-band.
+3. Update the AGENTS.md ALL-MIGHT section to match the staged `claude-md-section.md`
 
 ### Compose conflicts (`.opencode/` entries you authored)
 
@@ -150,7 +148,8 @@ add / import; if you customised `.opencode/agents/<name>.md` directly
 ## Important
 
 - **MEMORY.md** is never staged or overwritten — it is agent-writable
-- After syncing, run `/ingest` if workspace configs changed
+- If workspace configs changed, rebuild the SMAK index out-of-band via
+  the `smak ingest` CLI — All-Might no longer ships an `/ingest` slash command
 - Any legacy `.claude/` directory can be deleted manually once sync is complete
 """
 

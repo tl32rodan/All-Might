@@ -11,3 +11,9 @@ build/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+.venv/
+
+# This repo is the All-Might framework source, not an All-Might-managed
+# project. Hook heartbeats and any stray scaffold output from local
+# smoke tests should never be committed back into the framework itself.
+.allmight/

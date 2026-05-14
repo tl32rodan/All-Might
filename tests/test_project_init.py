@@ -20,17 +20,17 @@ def project_root(tmp_path):
     return tmp_path
 
 
-def _init(root, writable=False):
+def _init(root):
     scanner = ProjectScanner()
     manifest = scanner.scan(root)
-    ProjectInitializer().initialize(manifest, writable=writable)
+    ProjectInitializer().initialize(manifest)
 
 
-def _init_with_memory(root, writable=False):
+def _init_with_memory(root):
     """Mirrors what `allmight init` does: project init + memory init."""
     from allmight.capabilities.memory.initializer import MemoryInitializer
 
-    _init(root, writable=writable)
+    _init(root)
     MemoryInitializer().initialize(root)
 
 
@@ -49,13 +49,14 @@ class TestProjectInit:
         assert agents.is_file()
         assert not agents.is_symlink()
 
-    def test_creates_core_commands_writable(self, project_root):
-        """Writable: 3 core commands: search.md, enrich.md, ingest.md."""
-        _init(project_root, writable=True)
+    def test_creates_core_commands(self, project_root):
+        """The database capability emits only ``/search``; the legacy
+        ``/enrich`` and ``/ingest`` slash commands were retired."""
+        _init(project_root)
         cmds = project_root / ".opencode" / "commands"
         assert (cmds / "search.md").exists()
-        assert (cmds / "enrich.md").exists()
-        assert (cmds / "ingest.md").exists()
+        assert not (cmds / "enrich.md").exists()
+        assert not (cmds / "ingest.md").exists()
         assert not (cmds / "status.md").exists()
 
     def test_creates_database_dir(self, project_root):
@@ -117,100 +118,57 @@ class TestProjectInitIncludesMemory:
 
 
 # ------------------------------------------------------------------
-# Access Mode: read-only (default) vs writable
+# Agent-surface contract: search-only, no retired commands
 # ------------------------------------------------------------------
 
 
-class TestReadOnlyMode:
-    """Default init is read-only: no ingest/enrich, AGENTS.md emphasizes read-only."""
+class TestAgentSurfaceIsSearchOnly:
+    """The All-Might agent surface against the knowledge graph is
+    search-only — ``/enrich`` and ``/ingest`` were retired."""
 
-    def test_default_is_readonly(self, project_root):
-        """allmight init without --writable produces read-only project."""
+    def test_mode_marker_is_read_only(self, project_root):
+        """``.allmight/mode`` is pinned to ``read-only``."""
         _init(project_root)
         mode_file = project_root / ".allmight" / "mode"
         assert mode_file.exists()
         assert mode_file.read_text().strip() == "read-only"
 
-    def test_readonly_no_ingest_command(self, project_root):
-        """read-only mode does NOT generate ingest.md."""
+    def test_no_ingest_command(self, project_root):
         _init(project_root)
         assert not (project_root / ".opencode" / "commands" / "ingest.md").exists()
 
-    def test_readonly_no_enrich_command(self, project_root):
-        """read-only mode does NOT generate enrich.md."""
+    def test_no_enrich_command(self, project_root):
         _init(project_root)
         assert not (project_root / ".opencode" / "commands" / "enrich.md").exists()
 
-    def test_readonly_has_search_command(self, project_root):
-        """read-only mode still has search.md."""
+    def test_has_search_command(self, project_root):
         _init(project_root)
         assert (project_root / ".opencode" / "commands" / "search.md").exists()
 
-    def test_readonly_agents_md_no_ingest(self, project_root):
-        """AGENTS.md in read-only mode does NOT mention /ingest."""
+    def test_agents_md_no_ingest(self, project_root):
         _init(project_root)
         content = (project_root / "AGENTS.md").read_text()
         assert "/ingest" not in content
 
-    def test_readonly_agents_md_no_enrich(self, project_root):
-        """AGENTS.md in read-only mode does NOT mention /enrich."""
+    def test_agents_md_no_enrich(self, project_root):
         _init(project_root)
         content = (project_root / "AGENTS.md").read_text()
         assert "/enrich" not in content
 
-    def test_readonly_agents_md_emphasizes_readonly(self, project_root):
-        """AGENTS.md in read-only mode explicitly states read-only access."""
+    def test_agents_md_emphasizes_readonly(self, project_root):
         _init(project_root)
         content = (project_root / "AGENTS.md").read_text()
         assert "read-only" in content.lower() or "read only" in content.lower()
-
-    def test_readonly_agents_md_no_annotation(self, project_root):
-        """AGENTS.md in read-only mode does NOT mention annotation."""
-        _init(project_root)
-        content = (project_root / "AGENTS.md").read_text()
-        assert "Annotation" not in content and "annotate" not in content.lower()
-
-
-class TestWritableMode:
-    """--writable flag preserves current (full) behavior."""
-
-    def test_writable_mode_persisted(self, project_root):
-        """--writable stores 'writable' in .allmight/mode."""
-        _init(project_root, writable=True)
-        mode_file = project_root / ".allmight" / "mode"
-        assert mode_file.exists()
-        assert mode_file.read_text().strip() == "writable"
-
-    def test_writable_has_all_commands(self, project_root):
-        """Writable mode has search, enrich, and ingest commands."""
-        _init(project_root, writable=True)
-        cmds = project_root / ".opencode" / "commands"
-        assert (cmds / "search.md").exists()
-        assert (cmds / "enrich.md").exists()
-        assert (cmds / "ingest.md").exists()
-
-    def test_writable_agents_md_has_ingest(self, project_root):
-        """AGENTS.md in writable mode mentions /ingest."""
-        _init(project_root, writable=True)
-        content = (project_root / "AGENTS.md").read_text()
-        assert "/ingest" in content
-
-    def test_writable_agents_md_has_enrich(self, project_root):
-        """AGENTS.md in writable mode mentions /enrich."""
-        _init(project_root, writable=True)
-        content = (project_root / "AGENTS.md").read_text()
-        assert "/enrich" in content
 
 
 class TestOverwriteGuard:
     """init must not silently clobber user-owned files at the same paths."""
 
-    def test_init_emits_marker_on_commands(self, project_root):
-        """Every generated command file carries the All-Might marker."""
-        _init(project_root, writable=True)
+    def test_init_emits_marker_on_search_command(self, project_root):
+        """The generated ``search.md`` carries the All-Might marker."""
+        _init(project_root)
         cmds = project_root / ".opencode" / "commands"
-        for name in ("search.md", "enrich.md", "ingest.md"):
-            assert "<!-- all-might generated -->" in (cmds / name).read_text(), name
+        assert "<!-- all-might generated -->" in (cmds / "search.md").read_text()
 
     def test_reinit_emits_marker_on_sync_skill(self, project_root):
         """Sync SKILL.md (installed on re-init) keeps frontmatter on line 1
