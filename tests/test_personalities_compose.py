@@ -25,6 +25,7 @@ from allmight.core.personalities import (
     Personality,
     PersonalityTemplate,
     compose,
+    compose_agents_md,
     compose_role_agents,
     stage_compose_conflicts,
     write_init_scaffold,
@@ -465,3 +466,95 @@ class TestComposeRoleAgents:
         assert staged in written
         assert staged.is_file()
         assert "mode: subagent" in staged.read_text()
+
+
+class TestAgentsMdFrameworkPrimer:
+    """`compose_agents_md` must always emit the framework primer.
+
+    The primer is the air-gap agent's only baseline understanding of
+    All-Might before any personality exists; it must survive both the
+    empty-registry case (right after ``allmight init``) and the
+    populated-registry case (after ``/onboard`` runs ``allmight add``).
+    """
+
+    def test_empty_registry_emits_primer(self, tmp_path: Path) -> None:
+        """`allmight init` calls ``compose_agents_md(root, [])`` — the
+        primer headings must all appear so the agent has framework
+        context before ``/onboard`` runs."""
+        compose_agents_md(tmp_path, [], project_name="demo")
+        content = (tmp_path / "AGENTS.md").read_text()
+        for heading in (
+            "## About All-Might",
+            "## Slash commands",
+            "## Routing",
+            "## Personality subagents",
+            "## When to suggest user actions",
+            "## Memory model — scope-first",
+            "## Recovery awareness",
+            "## Layering — what lives where",
+        ):
+            assert heading in content, f"missing primer section: {heading}"
+
+    def test_empty_registry_lists_every_slash_command(
+        self, tmp_path: Path,
+    ) -> None:
+        """The slash-command table must enumerate every command All-Might
+        installs; agents that can't reach the README rely on this list."""
+        compose_agents_md(tmp_path, [], project_name="demo")
+        content = (tmp_path / "AGENTS.md").read_text()
+        for cmd in (
+            "/onboard",
+            "/search",
+            "/remember",
+            "/recall",
+            "/recover",
+            "/one-for-all",
+            "/all-for-one",
+            "/sync",
+        ):
+            assert cmd in content, f"primer omits slash command: {cmd}"
+
+    def test_empty_registry_suggests_onboard(self, tmp_path: Path) -> None:
+        """No personalities yet → the personalities section must point at
+        ``/onboard``, otherwise the agent has no actionable next step."""
+        compose_agents_md(tmp_path, [], project_name="demo")
+        content = (tmp_path / "AGENTS.md").read_text()
+        assert "no personalities yet" in content
+        assert "/onboard" in content
+
+    def test_empty_registry_emphasises_search_only_for_database(
+        self, tmp_path: Path,
+    ) -> None:
+        """SRP rule: the agent surface against the knowledge graph is
+        search-only. Keep the wording explicit so the agent never tries
+        to mutate a corpus via slash commands."""
+        compose_agents_md(tmp_path, [], project_name="demo")
+        content = (tmp_path / "AGENTS.md").read_text()
+        assert "search-only" in content
+
+    def test_populated_registry_keeps_primer_then_personality(
+        self, tmp_path: Path,
+    ) -> None:
+        """A real personality with ROLE.md must land *after* the primer,
+        not in place of it. Without this we'd lose framework context
+        the moment ``/onboard`` creates the first personality."""
+        inst = _instance_with_role(
+            tmp_path, name="stdcell_owner",
+            role_body="# stdcell_owner\n\nStandard-cell characterisation.\n",
+        )
+        compose_agents_md(tmp_path, [inst], project_name="demo")
+        content = (tmp_path / "AGENTS.md").read_text()
+        assert "## About All-Might" in content
+        # Personality body appears strictly after the primer's last section.
+        primer_anchor = content.index("## Layering — what lives where")
+        personalities_anchor = content.index("## Personalities")
+        personality_body = content.index("Standard-cell characterisation")
+        assert primer_anchor < personalities_anchor < personality_body
+
+    def test_marker_stays_on_first_line(self, tmp_path: Path) -> None:
+        """Re-init safety: the file is recognised as All-Might-owned by
+        ``write_guarded`` / conflict staging only if the marker is on
+        line 1. Don't let the primer push it out of place."""
+        compose_agents_md(tmp_path, [], project_name="demo")
+        first_line = (tmp_path / "AGENTS.md").read_text().splitlines()[0]
+        assert first_line == "<!-- all-might generated -->"
