@@ -32,7 +32,7 @@ def sample_project(tmp_path):
     return tmp_path
 
 
-def _full_init(root, force=False, writable=False):
+def _full_init(root, force=False):
     """Run the full init sequence: scaffold + ProjectInitializer + MemoryInitializer.
 
     Mirrors the logic in ``cli.py``: detect re-init before calling
@@ -45,7 +45,7 @@ def _full_init(root, force=False, writable=False):
     manifest = scanner.scan(root)
     is_reinit = (root / ".allmight").is_dir() and not force
     write_init_scaffold(root)
-    ProjectInitializer().initialize(manifest, force=force, writable=writable)
+    ProjectInitializer().initialize(manifest, force=force)
     MemoryInitializer().initialize(root, staging=is_reinit)
     return manifest
 
@@ -68,11 +68,13 @@ class TestFirstInit:
         assert not (sample_project / ".allmight" / "templates").exists()
 
     def test_first_init_writes_commands_directly(self, sample_project):
-        _full_init(sample_project, writable=True)
+        _full_init(sample_project)
         commands = sample_project / ".opencode" / "commands"
+        # /search is the only database-capability slash command.
+        # /enrich and /ingest were retired.
         assert (commands / "search.md").exists()
-        assert (commands / "enrich.md").exists()
-        assert (commands / "ingest.md").exists()
+        assert not (commands / "enrich.md").exists()
+        assert not (commands / "ingest.md").exists()
 
     def test_full_init_writes_claude_bridge(self, sample_project):
         """Full init writes the Claude Code bridge alongside .opencode/.
@@ -295,14 +297,15 @@ class TestSyncSkillContent:
         content = (sample_project / ".opencode" / "commands" / "sync.md").read_text()
         assert "sync" in content.lower()
 
-    def test_sync_skill_mentions_mode_cleanup(self, sample_project):
-        """Sync skill instructs agent to check .allmight/mode and remove
-        commands that don't belong to the current mode."""
+    def test_sync_skill_mentions_deprecated_cleanup(self, sample_project):
+        """Sync skill instructs the agent to remove the retired
+        ``/enrich`` and ``/ingest`` slash commands if they linger."""
         _full_init(sample_project)
         _full_init(sample_project)
 
         content = (sample_project / ".opencode" / "skills" / "sync" / "SKILL.md").read_text()
-        assert ".allmight/mode" in content
+        assert "enrich.md" in content
+        assert "ingest.md" in content
 
     def test_sync_skill_references_opencode_paths(self, sample_project):
         """Sync skill only references .opencode paths, not .claude paths."""
@@ -313,77 +316,51 @@ class TestSyncSkillContent:
 
 
 # ======================================================================
-# Mode Transitions — re-init with different mode
+# Deprecated /enrich and /ingest cleanup
 # ======================================================================
 
 
-class TestModeTransitions:
-    """Mode transition rules on re-init.
+class TestDeprecatedCommandCleanup:
+    """The retired ``/enrich`` and ``/ingest`` slash commands must not
+    survive a re-init, regardless of whether they were left over from
+    an older install or hand-authored."""
 
-    Legal:   writable → read-only, same → same
-    Illegal: read-only → writable
-    """
-
-    # -- Legal: same mode --
-
-    def test_reinit_readonly_to_readonly(self, sample_project):
-        """Re-init read-only → read-only is fine."""
-        _full_init(sample_project, writable=False)
-        _full_init(sample_project, writable=False)
+    def test_mode_is_always_read_only(self, sample_project):
+        """All-Might no longer has a writable mode — ``.allmight/mode``
+        is pinned to ``read-only``."""
+        _full_init(sample_project)
         assert (sample_project / ".allmight" / "mode").read_text().strip() == "read-only"
 
-    def test_reinit_writable_to_writable(self, sample_project):
-        """Re-init writable → writable is fine."""
-        _full_init(sample_project, writable=True)
-        _full_init(sample_project, writable=True)
-        assert (sample_project / ".allmight" / "mode").read_text().strip() == "writable"
-
-    # -- Legal: writable → read-only (downgrade) --
-
-    def test_writable_to_readonly_allowed(self, sample_project):
-        """Re-init writable → read-only is allowed (downgrade)."""
-        _full_init(sample_project, writable=True)
-        _full_init(sample_project, writable=False)  # should not raise
-
-    def test_writable_to_readonly_updates_mode(self, sample_project):
-        """Downgrade updates .allmight/mode to read-only."""
-        _full_init(sample_project, writable=True)
-        _full_init(sample_project, writable=False)
-        assert (sample_project / ".allmight" / "mode").read_text().strip() == "read-only"
-
-    def test_writable_to_readonly_stages_readonly_templates(self, sample_project):
-        """Downgrade stages read-only templates (no enrich/ingest)."""
-        _full_init(sample_project, writable=True)
-        _full_init(sample_project, writable=False)
-        tpl = sample_project / ".allmight" / "templates" / "commands"
-        assert (tpl / "search.md").exists()
-        assert not (tpl / "enrich.md").exists()
-        assert not (tpl / "ingest.md").exists()
-
-    def test_writable_to_readonly_stages_removal_list(self, sample_project):
-        """Downgrade stages a remove.txt listing commands to delete."""
-        _full_init(sample_project, writable=True)
-        _full_init(sample_project, writable=False)
+    def test_reinit_stages_removal_list(self, sample_project):
+        """Re-init always stages a ``remove.txt`` for the retired
+        commands so ``/sync`` can purge any stragglers."""
+        _full_init(sample_project)
+        _full_init(sample_project)
         remove_file = sample_project / ".allmight" / "templates" / "remove.txt"
         assert remove_file.exists()
         content = remove_file.read_text()
         assert "enrich.md" in content
         assert "ingest.md" in content
 
-    # -- Illegal: read-only → writable (upgrade) --
+    def test_first_init_cleans_legacy_enrich(self, sample_project):
+        """If a pre-existing ``enrich.md`` is on disk, init removes it."""
+        _full_init(sample_project)
+        commands = sample_project / ".opencode" / "commands"
+        legacy = commands / "enrich.md"
+        legacy.write_text("legacy content")
+        # Re-run with --force so we hit the non-staging path.
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        ProjectInitializer().initialize(manifest, force=True)
+        assert not legacy.exists()
 
-    def test_readonly_to_writable_rejected(self, sample_project):
-        """Re-init read-only → writable is rejected."""
-        _full_init(sample_project, writable=False)
-        with pytest.raises(ValueError, match="read-only.*writable"):
-            scanner = ProjectScanner()
-            manifest = scanner.scan(sample_project)
-            ProjectInitializer().initialize(manifest, writable=True)
-
-    def test_force_readonly_to_writable_also_rejected(self, sample_project):
-        """Even --force cannot upgrade read-only → writable."""
-        _full_init(sample_project, writable=False)
-        with pytest.raises(ValueError, match="read-only.*writable"):
-            scanner = ProjectScanner()
-            manifest = scanner.scan(sample_project)
-            ProjectInitializer().initialize(manifest, force=True, writable=True)
+    def test_first_init_cleans_legacy_ingest(self, sample_project):
+        """If a pre-existing ``ingest.md`` is on disk, init removes it."""
+        _full_init(sample_project)
+        commands = sample_project / ".opencode" / "commands"
+        legacy = commands / "ingest.md"
+        legacy.write_text("legacy content")
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        ProjectInitializer().initialize(manifest, force=True)
+        assert not legacy.exists()

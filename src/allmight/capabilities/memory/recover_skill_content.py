@@ -7,8 +7,8 @@ fine for scripting but unfriendly for the typical recovery moment
 know which sha to pass, doesn't want to read the diff, and just
 needs the right thing to come back. The skill walks the agent
 through that conversation: identify the file, surface recent
-snapshots, pick the right revision, restore, prompt to re-ingest if
-database/ files were involved.
+snapshots, pick the right revision, restore, and prompt the user to
+rebuild the SMAK index out-of-band if database/ files were involved.
 
 The CLI surface (``allmight memory log``, ``allmight memory
 restore``, etc.) stays — it's the layer scripts and power users
@@ -118,11 +118,11 @@ Notes:
 A one-line summary, plus two follow-ups:
 
 - If the restored file is under ``personalities/<p>/database/``,
-  remind the user to re-run ``/ingest`` so the SMAK index reflects
-  the restored content.
+  remind the user to rebuild the SMAK index out-of-band (via the
+  ``smak ingest`` CLI) so the index reflects the restored content.
 - If the restored file is ``MEMORY.md`` or ``memory/journal/``,
   remind the user that the next ``/remember`` cycle will re-index
-  the journal automatically — no manual ``/ingest`` needed.
+  the journal automatically — no manual rebuild needed.
 
 Example:
 
@@ -176,7 +176,8 @@ CLI subcommands stay available.
 3. Confirms with the user (shows ``allmight memory diff <sha>`` if
    the choice isn't obvious).
 4. Runs ``allmight memory restore <file> --rev <sha> --yes``.
-5. Prompts ``/ingest`` if the restored file lives under
+5. Prompts the user to rebuild the SMAK index out-of-band (via
+   ``smak ingest``) if the restored file lives under
    ``personalities/<active>/database/``.
 
 ## How to execute

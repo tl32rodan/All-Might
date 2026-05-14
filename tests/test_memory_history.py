@@ -502,12 +502,13 @@ class TestRecoverSurface:
         self, initted_project: Path,
     ) -> None:
         """The skill must remind the agent to confirm with the user
-        and to prompt /ingest when database files are restored."""
+        and to prompt the user to rebuild the SMAK index out-of-band
+        when database files are restored."""
         body = (
             initted_project / ".opencode" / "skills" / "recover" / "SKILL.md"
         ).read_text().lower()
         assert "confirm" in body
-        assert "/ingest" in body
+        assert "smak ingest" in body
 
     def test_recover_command_points_at_skill(
         self, initted_project: Path,

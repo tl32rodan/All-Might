@@ -31,7 +31,7 @@ def initted_project(tmp_path: Path) -> Path:
     (project / "src").mkdir()
     (project / "src" / "main.py").write_text("def f(): pass\n")
     runner = CliRunner()
-    result = runner.invoke(main, ["init", "--writable", "--yes", str(project)])
+    result = runner.invoke(main, ["init", "--yes", str(project)])
     assert result.exit_code == 0, result.output
     return project
 
@@ -39,7 +39,7 @@ def initted_project(tmp_path: Path) -> Path:
 # Commands that read or write personality data and therefore need the
 # routing preamble. ``onboard.md`` is omitted — it operates on the
 # ``onboard.yaml`` itself, not on a single active personality's data.
-ROUTED_COMMANDS = ("search.md", "enrich.md", "ingest.md", "remember.md", "recall.md")
+ROUTED_COMMANDS = ("search.md", "remember.md", "recall.md")
 
 
 def _command_body(project: Path, name: str) -> str:

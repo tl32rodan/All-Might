@@ -1,8 +1,9 @@
 """Project Cloner — create a read-only clone with symlinked workspaces.
 
 The clone's database/ entries are symlinks pointing to the source
-project's workspaces.  The clone is always read-only (no ingest/enrich).
-Memory is fresh (not copied from source).
+project's workspaces. The agent surface is search-only — the All-Might
+slash commands never mutate the corpus. Memory is fresh (not copied
+from source).
 """
 
 from __future__ import annotations
@@ -92,6 +93,5 @@ class ProjectCloner:
         manifest = scanner.scan(source)
         manifest.root_path = target
 
-        # Initialize in read-only mode
-        ProjectInitializer().initialize(manifest, writable=False)
+        ProjectInitializer().initialize(manifest)
         MemoryInitializer().initialize(target)

@@ -69,9 +69,9 @@ class InstallContext:
     ``install_globals`` call.
 
     ``options`` carries CLI-level flags that templates need at the
-    project-wide install step (e.g. ``writable=True`` for the
-    database capability) — there's no ``Personality`` instance at
-    that point so options can't ride on ``Personality.options``.
+    project-wide install step (e.g. ``sos=True`` for the database
+    capability) — there's no ``Personality`` instance at that point
+    so options can't ride on ``Personality.options``.
     """
 
     project_root: Path
