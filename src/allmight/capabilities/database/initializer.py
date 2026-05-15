@@ -56,6 +56,7 @@ class ProjectInitializer:
             self._install_onboard_skill(root, force=force)
             self._install_one_for_all_skill(root, force=force)
             self._install_all_for_one_skill(root, force=force)
+            self._install_split_skill(root, force=force)
 
             allmight_dir.mkdir(exist_ok=True)
             templates_dir = allmight_dir / "templates"
@@ -218,6 +219,35 @@ class ProjectInitializer:
             ),
             skill_body=ALL_FOR_ONE_SKILL_BODY,
             command_body=ALL_FOR_ONE_COMMAND_BODY,
+            force=force,
+        )
+
+    def _install_split_skill(self, root: Path, *, force: bool = False) -> None:
+        """Install /split skill + command (1 personality → 1 personality, in-project).
+
+        Personality-lifecycle refactor: extract a slice of one
+        personality's memory + ROLE.md scope into another (new or
+        existing) personality in the same project. Database
+        workspaces are deliberately untouched (see skill body for
+        rationale). Trigger is manual-only — no plugin, no
+        "When to suggest" entry in the AGENTS.md primer.
+        """
+        from .split_skill_content import (
+            SPLIT_COMMAND_BODY,
+            SPLIT_SKILL_BODY,
+        )
+
+        install_skill(
+            root,
+            name="split",
+            description=(
+                "Refactor responsibilities within a project — extract "
+                "memory and scope from one personality into another "
+                "(existing or new). Same-project 1 → 1. Rare; manual "
+                "only."
+            ),
+            skill_body=SPLIT_SKILL_BODY,
+            command_body=SPLIT_COMMAND_BODY,
             force=force,
         )
 

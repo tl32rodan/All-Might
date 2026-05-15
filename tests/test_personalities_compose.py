@@ -510,9 +510,35 @@ class TestAgentsMdFrameworkPrimer:
             "/recover",
             "/one-for-all",
             "/all-for-one",
+            "/split",
             "/sync",
         ):
             assert cmd in content, f"primer omits slash command: {cmd}"
+
+    def test_split_listed_but_not_in_when_to_suggest(
+        self, tmp_path: Path,
+    ) -> None:
+        """``/split`` is a manual-only personality refactor. Its design
+        forbids agent self-evaluation: it must appear in the Slash
+        commands enumeration (so the agent knows it exists when the
+        user types it) but must **not** appear in the
+        "When to suggest user actions" table (which teaches the agent
+        to volunteer the command on context cues). False positives in
+        that table are the failure mode this test guards against."""
+        compose_agents_md(tmp_path, [], project_name="demo")
+        content = (tmp_path / "AGENTS.md").read_text()
+
+        slash_section_start = content.index("## Slash commands")
+        when_to_suggest_start = content.index("## When to suggest user actions")
+        memory_model_start = content.index("## Memory model — scope-first")
+
+        slash_section = content[slash_section_start:when_to_suggest_start]
+        when_to_suggest_section = content[when_to_suggest_start:memory_model_start]
+
+        assert "/split" in slash_section, "/split must be enumerated"
+        assert "/split" not in when_to_suggest_section, (
+            "/split must NOT be in the When-to-suggest table — manual only"
+        )
 
     def test_empty_registry_suggests_onboard(self, tmp_path: Path) -> None:
         """No personalities yet → the personalities section must point at
