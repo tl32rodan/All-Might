@@ -547,6 +547,7 @@ personality a command acts for is resolved at call time — see
 | `/recover` | Walk the user through restoring a deleted or overwritten memory file from `.allmight/memory-history/` (per-turn snapshots). |
 | `/one-for-all` | Bundle one personality outward for sharing (1 → 1). Reviews each file for PII, writes a manifest with lineage. |
 | `/all-for-one` | Absorb N sources into one personality (N → 1). Owns per-file dialog and ROLE.md prose reconciliation. |
+| `/split` | Refactor responsibilities within a project — extract memory + scope from one personality into another (new or existing). Same-project 1 → 1. **Rare**, manual only; database workspaces are not moved. |
 | `/sync` | Merge templates staged at `.allmight/templates/` after an `allmight init` re-run, or resolve compose conflicts. |
 
 The agent surface against the knowledge graph is **search-only** —
