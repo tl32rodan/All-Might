@@ -1318,6 +1318,95 @@ class TestRememberReflectsFirst:
         )
 
 
+class TestIncrementalDistill:
+    """``/remember#Record`` runs a bounded pattern check after writing
+    the new entry, promoting cross-entry patterns into L2 understanding.
+
+    Work item B' in ``docs/plan.md`` — the design replaces a separate
+    ``/distill`` command with an in-flow step that has token-bounded
+    scope (last 5 entries, same workspace). Pre-compaction safe by
+    construction: bounded reads keep cost predictable even at the
+    worst trigger point.
+    """
+
+    @staticmethod
+    def _slice_section(content: str, header: str) -> str:
+        idx = content.index(header)
+        next_h2 = content.find("\n## ", idx + 1)
+        next_h1 = content.find("\n# ", idx + 1)
+        ends = [x for x in (next_h2, next_h1) if x != -1]
+        end = min(ends) if ends else len(content)
+        return content[idx:end]
+
+    def test_remember_body_has_pattern_check_section(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        assert "## After Recording: Pattern Check" in content
+
+    def test_pattern_check_describes_bounded_recent_entries(self, project_root):
+        """Section must specify N=5 to bound token cost; unbounded
+        reads at pre-compaction would explode context budget."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        section = self._slice_section(content, "## After Recording: Pattern Check")
+        assert "5" in section
+
+    def test_pattern_check_scoped_to_same_workspace(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        section = self._slice_section(content, "## After Recording: Pattern Check")
+        assert "workspace" in section.lower()
+
+    def test_pattern_check_conditional_l2_update(self, project_root):
+        """Update L2 only when a pattern emerges. The design decision
+        that keeps L2 from filling up with one-offs."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        section = self._slice_section(content, "## After Recording: Pattern Check")
+        assert "only if" in section.lower() or "only when" in section.lower() \
+            or "skip" in section.lower()
+        assert "understanding" in section.lower()
+
+    def test_pattern_check_lists_pattern_kinds(self, project_root):
+        """Agent needs concrete pattern criteria, not 'something
+        important emerges'. The plan names three: repeated theme,
+        correction of earlier note, completion of a hypothesis.
+        """
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        section = self._slice_section(content, "## After Recording: Pattern Check").lower()
+        # Pinning the trio: at least two of the three.
+        signals = [
+            "repeat" in section or "recurr" in section,
+            "correct" in section or "contradict" in section,
+            "hypothesis" in section or "complet" in section,
+        ]
+        assert sum(signals) >= 2, f"Expected ≥2 pattern signals, got {signals}"
+
+    def test_pattern_check_placed_inside_record_before_what_not(self, project_root):
+        """Pattern check belongs in # Record, after the write steps,
+        before the general 'what NOT to remember' filter. Order
+        affects how the agent reads the procedure."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        record_idx = content.find("\n# Record")
+        reflect_idx = content.find("\n# Reflect")
+        pattern_idx = content.find("## After Recording: Pattern Check")
+        whatnot_idx = content.find("## What NOT to remember")
+        assert record_idx != -1 and reflect_idx != -1
+        assert record_idx < pattern_idx < whatnot_idx < reflect_idx
+
+    def test_pattern_check_section_is_generic(self, project_root):
+        """No personality literal in the section body. Pinned by
+        the wider generic-command test, but pin here too because
+        future edits to this section are likely to introduce names."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        section = self._slice_section(content, "## After Recording: Pattern Check")
+        for name in ("stdcell_owner", "pll_owner", "code_reviewer"):
+            assert name not in section, f"Personality literal {name!r} leaked"
+
+
 class TestMemoryConfigAbsolutePaths:
     """memory/config.yaml stores resolve to absolute paths so SMAK and
     the agent never depend on the caller's cwd."""

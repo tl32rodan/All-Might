@@ -1318,8 +1318,48 @@ writes `memory/.l1-over-cap` to nudge the next turn into the
    project map in `MEMORY.md` may also have an "Active focus"
    column reflecting this — keep them consistent if both exist.
 
-3. Run `smak ingest --config memory/smak_config.yaml` periodically to
-   re-index the journal for `/recall` searches.
+3. The journal is **auto-indexed between sessions** — the Stop hook
+   marks the index as pending and the next session drains it via
+   `allmight memory ingest --incremental`. No manual `smak ingest`
+   needed for `/recall` to find this entry from the next session.
+
+## After Recording: Pattern Check
+
+Once the new entry is written, do a short bounded sweep to see if
+this observation forms a **pattern** with recent same-workspace
+entries — and only then promote the pattern up to L2 understanding.
+
+Why bounded: a `/remember` call can fire near pre-compaction when
+context budget is tight. Reading old journal entries without a cap
+is the fastest way to overflow at the worst moment. Five entries
+is the budget. Hold it.
+
+### Procedure
+
+1. List the **5 most recent** journal entries in this same workspace
+   (`memory/journal/<workspace>/`). Skip if fewer than 2 exist —
+   no pattern is possible.
+2. Read those entries (≤5) plus the one you just wrote.
+3. Decide: does a pattern emerge across them? Patterns worth promoting:
+   - **Repeated theme** — the same observation showing up in 2+ entries.
+   - **Correction of an earlier note** — this entry contradicts or
+     refines a previous one. The refined version is the L2 truth.
+   - **Completion of a hypothesis** — a guess you logged earlier is
+     now confirmed or ruled out.
+4. **Only if** a pattern emerged: append/update
+   `memory/understanding/<workspace>.md` with the synthesized rule.
+   Keep it terse — one paragraph or a short list. The journal still
+   holds the raw evidence; L2 is the distilled rule.
+5. **No pattern → skip cleanly.** Most `/remember` calls will land
+   here. Not writing L2 is the correct default; L2 fills up fast
+   with one-offs otherwise.
+
+### What this is NOT
+
+- Not a full historical sweep. If you want to revisit older entries,
+  that is a Reflect-mode operation (see `# Reflect` below).
+- Not a license to rewrite L2 to match every new entry. L2 changes
+  only when the pattern is real.
 
 ## What NOT to remember
 
