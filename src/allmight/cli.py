@@ -104,8 +104,11 @@ def _init_callback(
 
     from .core.personalities import (
         InstallContext,
+        Personality,
         compose_agents_md,
+        compose_role_agents,
         discover,
+        read_registry,
         write_init_scaffold,
         write_registry,
     )
@@ -144,13 +147,38 @@ def _init_callback(
         if template.install_globals is not None:
             template.install_globals(ctx)
 
-    # Empty AGENTS.md compose — no personalities yet, but the file
-    # must exist so OpenCode can pick it up. /onboard + allmight add
-    # populate it via compose_agents_md once personalities exist.
-    compose_agents_md(root, [], project_name=manifest.name)
-
-    # Empty registry — allmight add will append.
-    write_registry(root, [])
+    # Re-init on a populated project must NOT lose the existing
+    # personality registry — preserve it and recompose AGENTS.md +
+    # the .opencode/agents/<name>.md subagent files from the existing
+    # rows so per-role sections survive the update.
+    #
+    # Fresh init (no .allmight/) and `--force` still wipe to empty:
+    # `--force` is the documented "overwrite everything" escape hatch.
+    existing = read_registry(root) if is_reinit else []
+    if existing:
+        template_by_name = {t.name: t for t in templates}
+        instances: list[Personality] = []
+        for entry in existing:
+            primary_name = (
+                entry.capabilities[0] if entry.capabilities else entry.template
+            )
+            primary = template_by_name.get(primary_name)
+            if primary is None:
+                continue
+            instances.append(Personality(
+                template=primary,
+                project_root=root,
+                name=entry.instance,
+                capabilities=list(entry.capabilities),
+            ))
+        compose_agents_md(root, instances, project_name=manifest.name)
+        compose_role_agents(root, instances)
+        # Registry on disk is already correct; no rewrite needed.
+    else:
+        # Fresh init (or --force): empty AGENTS.md + empty registry.
+        # /onboard + allmight add populate them once personalities exist.
+        compose_agents_md(root, [], project_name=manifest.name)
+        write_registry(root, [])
 
     # Persist the (possibly preserved) onboard state.
     captured.setdefault("onboarded", False)
@@ -167,6 +195,12 @@ def _init_callback(
         file_count = sum(1 for _ in tpl_dir.rglob("*") if _.is_file()) if tpl_dir.exists() else 0
         click.echo(f"All-Might! Project '{manifest.name}' — new templates staged.")
         click.echo(f"  Templates:  .allmight/templates/ ({file_count} files)")
+        if existing:
+            click.echo(
+                f"  Preserved:  {len(existing)} personality "
+                f"row(s) in .allmight/personalities.yaml; "
+                f"AGENTS.md + .opencode/agents/ refreshed."
+            )
         click.echo("")
         click.echo("  Run /sync in your agent to merge with your customizations.")
         click.echo("  Or run 'allmight init --force' to overwrite everything.")
