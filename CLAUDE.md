@@ -184,6 +184,51 @@ rejected before and will be rejected again.
 
 ---
 
+## Memory Layer Strategy
+
+The `memory` capability stores three tiers with **different loading
+strategies per tier**. Mixing them up produces token explosions or
+stale results.
+
+| Tier | Storage | Loading strategy | Why this tier, not another |
+|------|---------|------------------|----------------------------|
+| **L1** `MEMORY.md` | Project root | Always in context (memory-load hook injects every session start + post-compaction) | It *is* the project-wide truth; searching it makes no sense |
+| **L2** `personalities/<p>/memory/understanding/` | Per-personality | **TOC + on-demand single-file read** via `understanding/_index.md` | Structured knowledge; narrative integrity matters; RAG chunking fragments meaning |
+| **L3** `personalities/<p>/memory/journal/` | Per-personality | **SMAK vector search** invoked by `/recall` | Append-only, unbounded growth, narrative-weak — RAG is the right primitive |
+
+### L3 auto-ingest closure
+
+`/recall` is only as useful as the SMAK index is fresh. Manual
+`smak ingest` is unreliable — agents forget. The closure:
+
+1. `memory-history.ts` Stop hook (per turn) — if any journal file is
+   newer than `.allmight/ingest.pending`, touch the marker. Cheap
+   (≤10 ms); never runs the embedder on the hot path.
+2. `memory-load.ts` `session.created` handler — if the marker exists,
+   spawn `smak ingest --incremental` async and clear the marker on
+   success.
+
+Trade-off: same-session `/recall` may miss the just-written entry
+(acceptable — the agent still has it in context). Next session sees
+the indexed version. Embedding cost (5–30 s) never blocks a turn.
+
+### Non-goals (locked decisions — see `docs/plan.md`)
+
+- **No L2 RAG until L2 demonstrably crosses ~200 files** for any
+  single personality. The L2 TOC mechanism keeps the same access
+  pattern viable up to that scale. Proposing L2 embedding before
+  that threshold regresses on a decision already made — point
+  the proposer at `docs/plan.md` first.
+- **No SQLite memory store** (pro-workflow's choice). YAML + git
+  mirror keeps memory human-readable, diff-able, and recoverable.
+  SMAK provides the vector layer where it is justified (L3 only).
+- **No `/distill` slash command.** Incremental pattern detection is
+  folded into `/remember#Record`. Batch distillation, if ever
+  needed, becomes a CLI (`allmight memory distill`) that calls the
+  Claude API directly — out of the agent's context window entirely.
+
+---
+
 ## Editor Compatibility
 
 `.opencode/` is the canonical agent surface; `.claude/` is a
@@ -273,6 +318,17 @@ If you skip the dual update, the OpenCode and Claude Code surfaces
 will silently drift, and bug reports will look like "behaviour
 depends on which editor I open the project with" — by the time
 anyone notices, several plugin generations may be stale.
+
+**Forward note.** The hand-maintained table above is today's source
+of truth. Work item A' in `docs/plan.md` replaces it with a
+declarative `PLUGIN_MANIFEST` in
+`src/allmight/core/plugin_telemetry.py` — each plugin declares the
+platform capabilities it requires, and the manifest decides whether
+a Claude Code mirror is possible at all (some OpenCode capabilities
+like `session.idle` have no Claude Code equivalent — those plugins
+stay OC-only by design, **not** as a TODO). Until the manifest
+lands, every plugin add/remove must update both this table *and*
+`KNOWN_OPENCODE_PLUGINS` / `KNOWN_CLAUDE_HOOKS`.
 
 ### Plugin observability (heartbeats)
 
