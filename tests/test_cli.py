@@ -102,20 +102,25 @@ class TestCliPluginStatus(unittest.TestCase):
         with runner.isolated_filesystem():
             result = runner.invoke(main, ["plugin", "status", "."])
             self.assertEqual(result.exit_code, 0, result.output)
-            # Every registered plugin / hook is enumerated, even
-            # without a heartbeat — that's the whole point of the
-            # "never fired" line.
+            # Every registered plugin is enumerated under both
+            # surfaces (OC fires + CC mirror status). Capability
+            # Manifest (work item A') made the CC section list
+            # plugins by their canonical name rather than the
+            # legacy Python file name — every plugin gets a row
+            # regardless of whether it has a mirror.
             for name in (
                 "role-load", "reflection", "memory-load", "memory-history",
                 "remember-trigger", "todo-curator", "trajectory-writer",
                 "usage-logger",
             ):
                 self.assertIn(name, result.output)
-            for name in (
-                "role_load", "reflection", "memory_load", "memory_history",
-            ):
-                self.assertIn(name, result.output)
+            # OC plugins that have a mirror show "never fired" on
+            # the CC side when no heartbeat exists; OC-only plugins
+            # show "unavailable (requires: ...)" instead — see
+            # tests/test_capability_manifest.py for the precise
+            # contract.
             self.assertIn("never fired", result.output)
+            self.assertIn("unavailable (requires:", result.output)
 
     def test_status_shows_recent_fire(self) -> None:
         from pathlib import Path

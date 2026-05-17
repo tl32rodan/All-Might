@@ -290,45 +290,63 @@ preserved and the fresh template is staged at
 
 ### Dual-platform invariant for plugin/hook changes
 
-When you change an OpenCode plugin, the Claude Code hook script that
-mirrors it **must** be updated in the same commit:
+The single source of truth is **`PLUGIN_MANIFEST`** in
+`src/allmight/core/plugin_telemetry.py`. Each plugin entry declares:
 
-| OpenCode plugin (`.ts`) | Claude Code hook (`.py`) |
-|---|---|
-| `memory-load.ts` | `memory_load.py` (in `MemoryInitializer`) |
-| `memory-history.ts` | `memory_history.py` (in `MemoryInitializer`) — `Stop` hook |
-| `role-load.ts` | `role_load.py` (in `core.claude_bridge`) |
-| `reflection.ts` | `reflection.py` (in `core.claude_bridge`) — `UserPromptSubmit` hook |
-| `remember-trigger.ts` | *(not yet mirrored — see TODO in claude_bridge)* |
-| `usage-logger.ts` | *(not yet mirrored)* |
-| `trajectory-writer.ts` | *(not yet mirrored)* |
+- `requires` — the platform capabilities the plugin needs (entries in
+  `PLATFORM_CAPABILITIES`).
+- `claude_code_mirror` — the Python hook filename, or `None` if the
+  plugin is OpenCode-only because at least one required capability
+  has no Claude Code equivalent.
+- `purpose` — one-line description used by the README compatibility
+  matrix.
 
-The two scripts are not generated from a shared template; each is
-hand-authored in its native language because the runtime contracts
-differ (TS plugin returns objects mutating chat parts; Claude Code
-hook reads JSON from stdin and prints JSON to stdout). The
-behavioural equivalence is enforced by:
+Run `allmight plugin matrix` to render the current matrix.
+
+**Three update rules** the test suite enforces:
+
+1. Every plugin in `KNOWN_OPENCODE_PLUGINS` is declared in
+   `PLUGIN_MANIFEST`, and every entry in `requires:` is a key of
+   `PLATFORM_CAPABILITIES`.
+2. A plugin with `claude_code_mirror: <name>` must produce that file
+   on init with our marker. A plugin with `claude_code_mirror: None`
+   must **not** produce a Python hook with the matching name — no
+   no-op stubs. Pinned by `test_capability_manifest.py::
+   TestMirrorFilesOnDisk`.
+3. Any user-visible string both surfaces emit must originate from a
+   single Python generator function (see `_reminder_nudge_text`,
+   `_l2_index_schema`). TS templates substitute via
+   `__SHARED_CONSTANT__`; Python hooks reference the same variable.
+
+When you change a plugin:
+
+- If the change touches code both surfaces emit, update the shared
+  Python generator. Do NOT edit the TS and the Python hook
+  separately — that is how the surfaces drift.
+- If the change adds a new event or capability dependency, update
+  `requires:` first; if a previously-OC-only plugin's `requires:`
+  becomes all-CC-available, the coherence test will flag it as a
+  TODO promotion candidate.
+
+Promotion (OC-only → mirrored) requires:
+
+(a) every `requires:` capability available on Claude Code,
+(b) a Python implementation,
+(c) test coverage parity.
+
+Behavioural equivalence of mirrored hooks is pinned by:
 
 - `tests/test_claude_bridge.py::TestHooksRunCleanly` — runs each
   generated hook end-to-end and asserts the JSON output shape.
-- `tests/test_memory_init.py::test_writes_claude_memory_load_hook` —
-  pins the memory-load hook content alongside its OpenCode sibling.
+- `tests/test_memory_init.py::test_writes_claude_memory_load_hook`
+  and siblings — content presence on both surfaces.
+- `tests/test_capability_manifest.py::TestMirrorCoherence` — proves
+  every declared mirror has all its required capabilities available.
 
 If you skip the dual update, the OpenCode and Claude Code surfaces
-will silently drift, and bug reports will look like "behaviour
-depends on which editor I open the project with" — by the time
-anyone notices, several plugin generations may be stale.
-
-**Forward note.** The hand-maintained table above is today's source
-of truth. Work item A' in `docs/plan.md` replaces it with a
-declarative `PLUGIN_MANIFEST` in
-`src/allmight/core/plugin_telemetry.py` — each plugin declares the
-platform capabilities it requires, and the manifest decides whether
-a Claude Code mirror is possible at all (some OpenCode capabilities
-like `session.idle` have no Claude Code equivalent — those plugins
-stay OC-only by design, **not** as a TODO). Until the manifest
-lands, every plugin add/remove must update both this table *and*
-`KNOWN_OPENCODE_PLUGINS` / `KNOWN_CLAUDE_HOOKS`.
+will silently drift, and bug reports look like "behaviour depends on
+which editor I open the project with" — by the time anyone notices,
+several plugin generations may be stale.
 
 ### Plugin observability (heartbeats)
 
