@@ -473,6 +473,7 @@ See `/remember` and `/recall` commands for detailed guides.
 import type { Plugin } from "@opencode-ai/plugin";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
+import { spawn } from "child_process";
 
 """ + TS_HEARTBEAT_SNIPPET + """
 const SCOPE_FIRST_PRINCIPLE = `--- Memory Scope-First Principle ---
@@ -491,6 +492,29 @@ or memory/journal/general/. See /remember for the full guide.
 // Cleared on session.created / session.compacted so the next chat.message
 // re-injects.
 const primed = new Set<string>();
+
+// L3 auto-ingest drain — see docs/plan.md work item C'. On every fresh
+// session, if the Stop hook left an `.allmight/ingest.pending` marker
+// behind, spawn `allmight memory ingest --incremental` fire-and-forget.
+// Embedding cost (5–30s) runs off the hot path; the CLI clears the
+// marker on success.
+function maybeDrainIngest(cwd: string): void {
+  try {
+    const pending = join(cwd, ".allmight", "ingest.pending");
+    if (!existsSync(pending)) return;
+    const child = spawn("allmight", ["memory", "ingest", "--incremental"], {
+      cwd,
+      stdio: "ignore",
+      detached: true,
+    });
+    child.unref();
+    child.on("error", () => {
+      // allmight not on PATH — silent. Next session re-tries.
+    });
+  } catch {
+    // Plugin must never throw.
+  }
+}
 
 function buildPrefix(cwd: string): string {
   const parts: string[] = [];
@@ -522,6 +546,10 @@ export const MemoryLoadPlugin: Plugin = async ({ directory }: any) => {
         type === "session.deleted"
       ) {
         primed.delete(sid);
+      }
+      if (type === "session.created") {
+        // Drain any L3 ingest the previous session marked as pending.
+        maybeDrainIngest(cwd);
       }
     },
 
@@ -1878,14 +1906,39 @@ Log the recall to `memory/usage.log`:
 Primes the agent with MEMORY.md (L1) plus the scope-first memory
 principle. Same content the OpenCode memory-load plugin injects via
 chat.message.
+
+Also drains any L3 SMAK ingest pending from the previous session —
+see docs/plan.md work item C'.
 """
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 
 __PY_HEARTBEAT_SNIPPET__
+
+
+def _maybe_drain_ingest(cwd):
+    # L3 auto-ingest drain — fires once per fresh session. If the
+    # Stop hook left `.allmight/ingest.pending` behind, spawn
+    # `allmight memory ingest --incremental` fire-and-forget. The
+    # CLI clears the marker on success.
+    try:
+        pending = Path(cwd) / ".allmight" / "ingest.pending"
+        if not pending.exists():
+            return
+        subprocess.Popen(
+            ["allmight", "memory", "ingest", "--incremental"],
+            cwd=str(cwd),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+        )
+    except (FileNotFoundError, OSError):
+        # allmight not on PATH — silent. Next session re-tries.
+        pass
 
 SCOPE_FIRST_PRINCIPLE = """--- Memory Scope-First Principle ---
 Before writing anything to memory, decide the scope:
@@ -1903,6 +1956,7 @@ or memory/journal/general/. See /remember for the full guide.
 def main() -> int:
     _hb("memory_load")
     cwd = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    _maybe_drain_ingest(cwd)
     parts: list[str] = []
     memory_md = cwd / "MEMORY.md"
     if memory_md.is_file():
@@ -1992,8 +2046,67 @@ if __name__ == "__main__":
  */
 import type { Plugin } from "@opencode-ai/plugin";
 import { spawn } from "child_process";
+import {
+  existsSync, statSync, readdirSync, mkdirSync, closeSync, openSync,
+} from "fs";
+import { join, dirname } from "path";
 
 __TS_HEARTBEAT_SNIPPET__
+
+// L3 auto-ingest marker-write — see docs/plan.md work item C'. If any
+// journal entry is newer than `.allmight/last_ingest`, touch
+// `.allmight/ingest.pending` so the next session.created drain
+// triggers `allmight memory ingest --incremental`. Inline (no module
+// import) so the hook stays self-contained and fast.
+function maybeMarkIngestPending(cwd: string): void {
+  try {
+    const lastIngest = join(cwd, ".allmight", "last_ingest");
+    let cutoff = 0;
+    if (existsSync(lastIngest)) {
+      cutoff = statSync(lastIngest).mtimeMs;
+    }
+    const personalitiesDir = join(cwd, "personalities");
+    if (!existsSync(personalitiesDir)) return;
+    const personalities = readdirSync(personalitiesDir);
+    for (const p of personalities) {
+      const journal = join(personalitiesDir, p, "memory", "journal");
+      if (!existsSync(journal)) continue;
+      if (anyFileNewer(journal, cutoff)) {
+        const pending = join(cwd, ".allmight", "ingest.pending");
+        mkdirSync(dirname(pending), { recursive: true });
+        closeSync(openSync(pending, "w"));
+        return;
+      }
+    }
+  } catch {
+    // Plugin must never throw.
+  }
+}
+
+function anyFileNewer(dir: string, cutoff: number): boolean {
+  // Recursive walk; short-circuits on first newer file.
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return false;
+  }
+  for (const name of entries) {
+    const full = join(dir, name);
+    let st;
+    try {
+      st = statSync(full);
+    } catch {
+      continue;
+    }
+    if (st.isDirectory()) {
+      if (anyFileNewer(full, cutoff)) return true;
+    } else if (st.mtimeMs > cutoff) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function snapshot(cwd: string, trigger: string, sid?: string): void {
   const args = ["memory", "snapshot", `--trigger=${trigger}`];
@@ -2023,6 +2136,7 @@ export const MemoryHistoryPlugin: Plugin = async ({ directory }: any) => {
       emitHeartbeat("memory-history", cwd);
       const sid = input?.sessionID;
       snapshot(cwd, "chat-message", sid);
+      maybeMarkIngestPending(cwd);
       void _output;
     },
 
@@ -2072,9 +2186,37 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 
 __PY_HEARTBEAT_SNIPPET__
+
+def _maybe_mark_ingest_pending(cwd):
+    # L3 auto-ingest marker — see docs/plan.md work item C'. If any
+    # journal entry is newer than `.allmight/last_ingest`, touch
+    # `.allmight/ingest.pending` so the next SessionStart drain
+    # triggers `allmight memory ingest --incremental`. Inline (no
+    # all-might module import) so the hook stays self-contained.
+    try:
+        root = Path(cwd)
+        last_ingest = root / ".allmight" / "last_ingest"
+        cutoff = last_ingest.stat().st_mtime if last_ingest.exists() else 0.0
+        personalities = root / "personalities"
+        if not personalities.is_dir():
+            return
+        for journal_dir in personalities.glob("*/memory/journal"):
+            for entry in journal_dir.rglob("*.md"):
+                try:
+                    if entry.stat().st_mtime > cutoff:
+                        pending = root / ".allmight" / "ingest.pending"
+                        pending.parent.mkdir(parents=True, exist_ok=True)
+                        pending.touch()
+                        return
+                except OSError:
+                    continue
+    except OSError:
+        pass  # hook must never block
+
 
 def main() -> None:
     _hb("memory_history")
@@ -2103,6 +2245,8 @@ def main() -> None:
         # allmight not on PATH or spawn failed — silent. Recovery via
         # `allmight memory snapshot` by hand still works.
         pass
+
+    _maybe_mark_ingest_pending(cwd)
 
     # Empty output means: don't block, no extra context to inject.
     print("{}")

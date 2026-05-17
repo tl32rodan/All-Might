@@ -913,6 +913,53 @@ def memory():
     """Agent memory system — L1/L2/L3 persistent memory."""
 
 
+@memory.command("ingest")
+@click.option(
+    "--incremental/--full", default=True,
+    help="Pass --incremental to smak (default) or --full to rebuild.",
+)
+@click.option(
+    "--root", default=".", type=click.Path(exists=True),
+    help="Project root (defaults to the current directory).",
+)
+def memory_ingest(incremental: bool, root: str):
+    """Index every personality's journal into the SMAK store.
+
+    Walks ``personalities/*/memory/smak_config.yaml`` and runs
+    ``smak ingest --config <cfg>`` for each. On overall success,
+    touches ``.allmight/last_ingest`` and removes
+    ``.allmight/ingest.pending`` so the next Stop hook treats the
+    journal as indexed.
+
+    Spawned fire-and-forget by the memory-load drain when
+    ``.allmight/ingest.pending`` exists. Safe to invoke directly
+    too — incremental mode is cheap when nothing has changed.
+    """
+    import os as _os
+    from pathlib import Path as _Path
+
+    from .capabilities.memory.ingest import run_ingest_cycle
+
+    root_path = _Path(root).resolve()
+    smak_cmd = _os.environ.get("ALLMIGHT_SMAK_CMD", "smak")
+    result = run_ingest_cycle(
+        root_path, incremental=incremental, smak_cmd=smak_cmd,
+    )
+
+    if result.errors:
+        click.echo("smak ingest failures:", err=True)
+        for personality_dir, err in result.errors:
+            click.echo(f"  {personality_dir.name}: {err}", err=True)
+        raise click.exceptions.Exit(code=1)
+
+    if not result.succeeded:
+        click.echo("No personalities with memory capability found.")
+        return
+    click.echo(f"Ingested {len(result.succeeded)} personality(ies):")
+    for personality_dir in result.succeeded:
+        click.echo(f"  {personality_dir.name}")
+
+
 @memory.command("init")
 @click.argument("path", default=".", type=click.Path(exists=True))
 def memory_init(path: str):
