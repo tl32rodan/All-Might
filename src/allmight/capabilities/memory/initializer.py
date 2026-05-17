@@ -59,6 +59,102 @@ def _reminder_nudge_text() -> str:
     )
 
 
+DEFAULT_L2_WARN_FILES = 100
+DEFAULT_L2_WARN_BYTES = 1024 * 1024            # 1 MB
+DEFAULT_L3_WARN_FILES = 5000
+DEFAULT_L3_WARN_BYTES = 50 * 1024 * 1024       # 50 MB
+DEFAULT_L3_STALE_SECONDS = 24 * 3600           # 24 h
+
+
+def compute_size_watch_text(
+    root,
+    *,
+    l2_warn_files: int = DEFAULT_L2_WARN_FILES,
+    l2_warn_bytes: int = DEFAULT_L2_WARN_BYTES,
+    l3_warn_files: int = DEFAULT_L3_WARN_FILES,
+    l3_warn_bytes: int = DEFAULT_L3_WARN_BYTES,
+    l3_stale_seconds: int = DEFAULT_L3_STALE_SECONDS,
+) -> str:
+    """Return the ``[Memory Size Watch]`` block, or empty string.
+
+    Walks ``personalities/*/memory/`` and reports per-personality
+    L2 / L3 counts + sizes. Threshold-crossing personalities get
+    additional warning lines. Empty memory layout (or no
+    personalities) returns "" so the watch is invisible until there
+    is something worth watching.
+
+    Work item E' — see ``docs/plan.md``.
+    """
+    import time
+    from pathlib import Path as _Path
+    root = _Path(root)
+    personalities = root / "personalities"
+    if not personalities.is_dir():
+        return ""
+
+    last_ingest_path = root / ".allmight" / "last_ingest"
+    if last_ingest_path.exists():
+        try:
+            last_ingest_age = time.time() - last_ingest_path.stat().st_mtime
+        except OSError:
+            last_ingest_age = None
+    else:
+        last_ingest_age = None
+
+    blocks: list[str] = []
+    for personality_dir in sorted(personalities.iterdir()):
+        memory_dir = personality_dir / "memory"
+        if not memory_dir.is_dir():
+            continue
+        # L2 stats
+        l2_dir = memory_dir / "understanding"
+        l2_files = list(l2_dir.glob("*.md")) if l2_dir.is_dir() else []
+        l2_count = len(l2_files)
+        l2_bytes = sum(
+            (f.stat().st_size for f in l2_files if f.is_file()),
+            start=0,
+        )
+        # L3 stats
+        l3_dir = memory_dir / "journal"
+        l3_files = list(l3_dir.rglob("*.md")) if l3_dir.is_dir() else []
+        l3_count = len(l3_files)
+        l3_bytes = sum(
+            (f.stat().st_size for f in l3_files if f.is_file()),
+            start=0,
+        )
+
+        if l2_count == 0 and l3_count == 0:
+            continue
+
+        lines = [f"- **{personality_dir.name}**:"]
+        lines.append(f"  - L2: {l2_count} files / {l2_bytes // 1024} KB")
+        lines.append(f"  - L3: {l3_count} files / {l3_bytes // 1024} KB")
+        # Warnings
+        if l2_count >= l2_warn_files or l2_bytes >= l2_warn_bytes:
+            lines.append(
+                "  - L2 over threshold — approaching the L2-RAG "
+                "decision point at 200 files (see docs/plan.md non-goal)."
+            )
+        if l3_count >= l3_warn_files or l3_bytes >= l3_warn_bytes:
+            lines.append(
+                "  - L3 over threshold — consider `smak ingest --rebuild` "
+                "or trimming old journal entries."
+            )
+        if (
+            last_ingest_age is not None
+            and last_ingest_age > l3_stale_seconds
+        ):
+            hours = int(last_ingest_age // 3600)
+            lines.append(
+                f"  - L3 index stale (>{hours}h since last ingest)."
+            )
+        blocks.append("\n".join(lines))
+
+    if not blocks:
+        return ""
+    return "[Memory Size Watch]\n" + "\n".join(blocks)
+
+
 def _l2_index_schema() -> str:
     """Canonical schema for ``memory/understanding/_index.md``.
 
@@ -499,11 +595,93 @@ See `/remember` and `/recall` commands for detailed guides.
  *   chat.message → inject prefix once per (un-primed) session
  */
 import type { Plugin } from "@opencode-ai/plugin";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { spawn } from "child_process";
 
 """ + TS_HEARTBEAT_SNIPPET + """
+// Memory Size Watch thresholds — pinned in both TS and Python.
+// If you change them here, change them in
+// _claude_memory_load_hook_content too. See docs/plan.md E'.
+const L2_WARN_FILES = 100;
+const L2_WARN_BYTES = 1048576;       // 1 MB
+const L3_WARN_FILES = 5000;
+const L3_WARN_BYTES = 52428800;      // 50 MB
+const L3_STALE_SECONDS = 86400;      // 24 h
+
+function _statsFor(dir: string, recurse: boolean): { count: number; bytes: number } {
+  let count = 0;
+  let bytes = 0;
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return { count: 0, bytes: 0 };
+  }
+  for (const name of entries) {
+    const full = join(dir, name);
+    let st;
+    try {
+      st = statSync(full);
+    } catch {
+      continue;
+    }
+    if (st.isDirectory()) {
+      if (recurse) {
+        const sub = _statsFor(full, true);
+        count += sub.count;
+        bytes += sub.bytes;
+      }
+    } else if (name.endsWith(".md")) {
+      count += 1;
+      bytes += st.size;
+    }
+  }
+  return { count, bytes };
+}
+
+function computeSizeWatch(cwd: string): string {
+  const personalitiesDir = join(cwd, "personalities");
+  if (!existsSync(personalitiesDir)) return "";
+  let lastIngestAge: number | null = null;
+  const lastIngest = join(cwd, ".allmight", "last_ingest");
+  if (existsSync(lastIngest)) {
+    try {
+      lastIngestAge = (Date.now() / 1000) - (statSync(lastIngest).mtimeMs / 1000);
+    } catch { /* leave null */ }
+  }
+  let entries: string[];
+  try {
+    entries = readdirSync(personalitiesDir).sort();
+  } catch {
+    return "";
+  }
+  const blocks: string[] = [];
+  for (const name of entries) {
+    const memDir = join(personalitiesDir, name, "memory");
+    if (!existsSync(memDir)) continue;
+    const l2 = _statsFor(join(memDir, "understanding"), false);
+    const l3 = _statsFor(join(memDir, "journal"), true);
+    if (l2.count === 0 && l3.count === 0) continue;
+    const lines: string[] = [`- **${name}**:`];
+    lines.push(`  - L2: ${l2.count} files / ${Math.floor(l2.bytes / 1024)} KB`);
+    lines.push(`  - L3: ${l3.count} files / ${Math.floor(l3.bytes / 1024)} KB`);
+    if (l2.count >= L2_WARN_FILES || l2.bytes >= L2_WARN_BYTES) {
+      lines.push("  - L2 over threshold — approaching the L2-RAG decision point at 200 files (see docs/plan.md non-goal).");
+    }
+    if (l3.count >= L3_WARN_FILES || l3.bytes >= L3_WARN_BYTES) {
+      lines.push("  - L3 over threshold — consider `smak ingest --rebuild`.");
+    }
+    if (lastIngestAge !== null && lastIngestAge > L3_STALE_SECONDS) {
+      const hours = Math.floor(lastIngestAge / 3600);
+      lines.push(`  - L3 index stale (>${hours}h since last ingest).`);
+    }
+    blocks.push(lines.join("\\n"));
+  }
+  if (blocks.length === 0) return "";
+  return "[Memory Size Watch]\\n" + blocks.join("\\n");
+}
+
 const SCOPE_FIRST_PRINCIPLE = `--- Memory Scope-First Principle ---
 Before writing anything to memory, decide the scope:
 - Project-wide fact / preference / goal → MEMORY.md (L1)
@@ -556,6 +734,10 @@ function buildPrefix(cwd: string): string {
     );
   }
   parts.push(SCOPE_FIRST_PRINCIPLE, "");
+  const sizeWatch = computeSizeWatch(cwd);
+  if (sizeWatch) {
+    parts.push(sizeWatch, "");
+  }
   return parts.join("\\n");
 }
 
@@ -2048,6 +2230,74 @@ def _maybe_drain_ingest(cwd):
         # allmight not on PATH — silent. Next session re-tries.
         pass
 
+
+# Memory Size Watch thresholds — see docs/plan.md work item E'.
+L2_WARN_FILES = 100
+L2_WARN_BYTES = 1048576       # 1 MB
+L3_WARN_FILES = 5000
+L3_WARN_BYTES = 52428800      # 50 MB
+L3_STALE_SECONDS = 86400      # 24 h
+
+
+def _compute_size_watch(cwd):
+    # Inline copy of allmight.capabilities.memory.initializer
+    # .compute_size_watch_text — keeps the hook self-contained.
+    import time as _time
+    root = Path(cwd)
+    personalities = root / "personalities"
+    if not personalities.is_dir():
+        return ""
+    last_ingest_path = root / ".allmight" / "last_ingest"
+    if last_ingest_path.exists():
+        try:
+            last_age = _time.time() - last_ingest_path.stat().st_mtime
+        except OSError:
+            last_age = None
+    else:
+        last_age = None
+    blocks = []
+    for personality_dir in sorted(personalities.iterdir()):
+        memory_dir = personality_dir / "memory"
+        if not memory_dir.is_dir():
+            continue
+        l2_dir = memory_dir / "understanding"
+        l2_files = list(l2_dir.glob("*.md")) if l2_dir.is_dir() else []
+        l2_count = len(l2_files)
+        l2_bytes = sum(
+            (f.stat().st_size for f in l2_files if f.is_file()),
+            start=0,
+        )
+        l3_dir = memory_dir / "journal"
+        l3_files = list(l3_dir.rglob("*.md")) if l3_dir.is_dir() else []
+        l3_count = len(l3_files)
+        l3_bytes = sum(
+            (f.stat().st_size for f in l3_files if f.is_file()),
+            start=0,
+        )
+        if l2_count == 0 and l3_count == 0:
+            continue
+        lines = [f"- **{personality_dir.name}**:"]
+        lines.append(f"  - L2: {l2_count} files / {l2_bytes // 1024} KB")
+        lines.append(f"  - L3: {l3_count} files / {l3_bytes // 1024} KB")
+        if l2_count >= L2_WARN_FILES or l2_bytes >= L2_WARN_BYTES:
+            lines.append(
+                "  - L2 over threshold — approaching the L2-RAG "
+                "decision point at 200 files (see docs/plan.md non-goal)."
+            )
+        if l3_count >= L3_WARN_FILES or l3_bytes >= L3_WARN_BYTES:
+            lines.append(
+                "  - L3 over threshold — consider `smak ingest --rebuild`."
+            )
+        if last_age is not None and last_age > L3_STALE_SECONDS:
+            hours = int(last_age // 3600)
+            lines.append(
+                f"  - L3 index stale (>{hours}h since last ingest)."
+            )
+        blocks.append("\\n".join(lines))
+    if not blocks:
+        return ""
+    return "[Memory Size Watch]\\n" + "\\n".join(blocks)
+
 SCOPE_FIRST_PRINCIPLE = """--- Memory Scope-First Principle ---
 Before writing anything to memory, decide the scope:
 - Project-wide fact / preference / goal -> MEMORY.md (L1)
@@ -2066,6 +2316,7 @@ def main() -> int:
     cwd = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     _maybe_drain_ingest(cwd)
     parts: list[str] = []
+    size_watch = _compute_size_watch(cwd)
     memory_md = cwd / "MEMORY.md"
     if memory_md.is_file():
         try:
@@ -2078,6 +2329,9 @@ def main() -> int:
             parts.append("--- End Project Memory ---")
             parts.append("")
     parts.append(SCOPE_FIRST_PRINCIPLE)
+    if size_watch:
+        parts.append("")
+        parts.append(size_watch)
     text = "\\n".join(parts).strip()
     if not text:
         return 0

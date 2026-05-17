@@ -1407,6 +1407,124 @@ class TestIncrementalDistill:
             assert name not in section, f"Personality literal {name!r} leaked"
 
 
+class TestMemorySizeWatch:
+    """Size watch injected into the memory-load payload — surfaces L2
+    / L3 scaling pressure before users feel pain.
+
+    Work item E' in ``docs/plan.md``. Emit only when memory exists;
+    thresholds (configurable via helper kwargs) gate the warning
+    lines. The block is the signal that says "revisit the L2 TOC
+    vs RAG decision" when L2 crosses 200 files.
+    """
+
+    def test_helper_returns_empty_when_no_personalities(self, project_root):
+        from allmight.capabilities.memory.initializer import (
+            compute_size_watch_text,
+        )
+        assert compute_size_watch_text(project_root) == ""
+
+    def test_helper_emits_block_when_l2_has_files(
+        self, project_root, tmp_path
+    ):
+        from allmight.capabilities.memory.initializer import (
+            compute_size_watch_text,
+        )
+        # Build a minimal Part-D layout by hand (avoids running CLI
+        # init inside this unit-style test).
+        l2 = project_root / "personalities" / "demo" / "memory" / "understanding"
+        l2.mkdir(parents=True)
+        (l2 / "ws1.md").write_text("# topic\n")
+        text = compute_size_watch_text(project_root)
+        assert "Memory Size Watch" in text
+        assert "demo" in text
+        assert "L2" in text
+
+    def test_helper_warns_when_l2_over_file_threshold(self, project_root):
+        from allmight.capabilities.memory.initializer import (
+            compute_size_watch_text,
+        )
+        l2 = project_root / "personalities" / "demo" / "memory" / "understanding"
+        l2.mkdir(parents=True)
+        for i in range(5):
+            (l2 / f"ws{i}.md").write_text("seed\n")
+        # Pass low threshold to exercise warning path without writing
+        # 100 real files.
+        text = compute_size_watch_text(project_root, l2_warn_files=3)
+        assert "over threshold" in text.lower() or "threshold" in text.lower()
+        assert "L2" in text
+
+    def test_helper_warns_when_l3_index_stale(self, project_root):
+        import time
+        from allmight.capabilities.memory.initializer import (
+            compute_size_watch_text,
+        )
+        journal = project_root / "personalities" / "demo" / "memory" / "journal" / "general"
+        journal.mkdir(parents=True)
+        (journal / "2026-05-01-seed.md").write_text("seed\n")
+        last_ingest = project_root / ".allmight" / "last_ingest"
+        last_ingest.parent.mkdir(parents=True, exist_ok=True)
+        last_ingest.touch()
+        # Backdate to 25h ago.
+        old = time.time() - 25 * 3600
+        import os as _os
+        _os.utime(last_ingest, (old, old))
+        text = compute_size_watch_text(project_root, l3_stale_seconds=24 * 3600)
+        assert "stale" in text.lower()
+
+    def test_helper_no_warnings_under_thresholds(self, project_root):
+        from allmight.capabilities.memory.initializer import (
+            compute_size_watch_text,
+        )
+        l2 = project_root / "personalities" / "demo" / "memory" / "understanding"
+        l2.mkdir(parents=True)
+        (l2 / "ws.md").write_text("seed\n")
+        text = compute_size_watch_text(project_root)
+        # Block emitted (memory exists) but no warning lines.
+        assert "Memory Size Watch" in text
+        # Threshold language MUST be absent — one file is well below
+        # the default 100-file watermark.
+        assert "over threshold" not in text.lower()
+        assert "stale" not in text.lower()
+
+    def test_py_memory_load_hook_inlines_size_watch(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        body = (
+            project_root / ".claude" / "hooks" / "memory_load.py"
+        ).read_text()
+        assert "Memory Size Watch" in body
+        # The hook must reference the same thresholds (pin one
+        # representative number).
+        assert "100" in body  # L2 file threshold
+        assert "personalities" in body
+
+    def test_ts_memory_load_plugin_inlines_size_watch(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        body = (
+            project_root / ".opencode" / "plugins" / "memory-load.ts"
+        ).read_text()
+        assert "Memory Size Watch" in body
+        # Same threshold; if TS and PY diverge, users see different
+        # warnings depending on the editor.
+        assert "100" in body
+        assert "personalities" in body
+
+    def test_size_watch_thresholds_pinned_at_constants(self):
+        """The defaults are documented choices, not magic numbers.
+        Pin them so a casual edit shows up in code review."""
+        from allmight.capabilities.memory.initializer import (
+            DEFAULT_L2_WARN_FILES,
+            DEFAULT_L2_WARN_BYTES,
+            DEFAULT_L3_WARN_FILES,
+            DEFAULT_L3_WARN_BYTES,
+            DEFAULT_L3_STALE_SECONDS,
+        )
+        assert DEFAULT_L2_WARN_FILES == 100
+        assert DEFAULT_L2_WARN_BYTES == 1024 * 1024
+        assert DEFAULT_L3_WARN_FILES == 5000
+        assert DEFAULT_L3_WARN_BYTES == 50 * 1024 * 1024
+        assert DEFAULT_L3_STALE_SECONDS == 24 * 3600
+
+
 class TestL2Index:
     """L2 TOC mechanism — ``memory/understanding/_index.md`` is the
     table of contents the agent reads first to scope its per-workspace
