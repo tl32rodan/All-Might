@@ -559,18 +559,21 @@ class TestAgentsMdFrameworkPrimer:
         content = (tmp_path / "AGENTS.md").read_text()
         assert "search-only" in content
 
-    def test_smak_reference_section_teaches_pip_show(
+    def test_smak_reference_section_teaches_skill_discovery(
         self, tmp_path: Path,
     ) -> None:
         """The SMAK-reference section exists so the agent stops guessing
         SMAK flags from memory and instead reads SMAK's own canonical
-        SKILL.md. The discovery path is ``pip show smak`` → SKILL.md;
-        without this hint the agent has no way to find SMAK's docs when
-        All-Might shells out to a separately-installed package."""
+        SKILL.md. Without this hint the agent has no way to find SMAK's
+        docs when All-Might shells out to a separately-installed
+        package. We pin both discovery paths: the ``python -c "import
+        smak ..."`` one-liner (works for editable + wheel) and the
+        in-package SKILL.md path so SMAK can re-locate the files without
+        silently breaking the primer."""
         compose_agents_md(tmp_path, [], project_name="demo")
         content = (tmp_path / "AGENTS.md").read_text()
-        assert "pip show smak" in content
-        assert "smak-skill/SKILL.md" in content
+        assert "import smak" in content
+        assert "skills/smak-skill/SKILL.md" in content
 
     def test_populated_registry_keeps_primer_then_personality(
         self, tmp_path: Path,

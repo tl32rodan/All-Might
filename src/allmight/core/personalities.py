@@ -623,32 +623,39 @@ The `smak` CLI is a separate Python package; All-Might shells out to
 it rather than embedding it. When you need exact flags, JSON output
 shapes, config schema, or workflow conventions for SMAK, **read
 SMAK's own canonical docs** rather than inferring from this primer.
-Locate them with:
+
+SMAK ships its agent-facing skill files **inside** the installed
+Python package (under `smak/skills/`), so they travel with both
+editable and wheel installs. Discover the package directory with:
 
 ```bash
-pip show smak
+python -c "import smak, pathlib; print(pathlib.Path(smak.__path__[0]))"
 ```
 
-Take the `Location:` line (or `Editable project location:` for a dev
-install) — that directory is SMAK's installed source root. The files
-that matter:
+`pip show smak` also works as a sanity check (returns `Location:`
+for wheel installs, `Editable project location:` for dev installs);
+the python-`__path__` form is the robust path because it points
+directly at the package regardless of install mode.
 
-| Relative path | What it covers |
+From the package directory, the files that matter:
+
+| Path (relative to the package dir) | What it covers |
 |---|---|
-| `smak-skill/SKILL.md` | Canonical agent-facing guide: concepts, command reference, query formulation, anti-hallucination rules. **Pull this into context before any non-trivial SMAK use.** |
-| `sos-smak-skill/SKILL.md` | CliosoftSOS / EDA three-layer path model (only relevant when `$DDI_ROOT_PATH` is set on this project) |
-| `src/smak/cli.py` | Exact CLI flags + `--json` output shape per command |
-| `src/smak/core_ops.py` | Operation implementations when the SKILL.md is silent on an edge case |
+| `skills/smak-skill/SKILL.md` | Canonical agent-facing guide: concepts, command reference, query formulation, anti-hallucination rules. **Pull this into context before any non-trivial SMAK use.** |
+| `skills/sos-smak-skill/SKILL.md` | CliosoftSOS / EDA three-layer path model (only relevant when `$DDI_ROOT_PATH` is set on this project) |
+| `cli.py` | Exact CLI flags + `--json` output shape per command |
+| `core_ops.py` | Operation implementations when the SKILL.md is silent on an edge case |
 
 Workflow:
 
-1. Run `pip show smak`. If it returns nothing, SMAK is not installed
-   on this `PYTHONPATH` — surface that to the user and stop, rather
-   than guessing flags from memory.
-2. Read `smak-skill/SKILL.md` end-to-end the first time; on later
-   sessions, skim it for the specific command you need.
-3. Cross-check `src/smak/cli.py` only when SKILL.md is ambiguous —
-   it is the executable spec.
+1. Run the `python -c "import smak ..."` one-liner above. If it
+   raises `ModuleNotFoundError`, SMAK is not installed on this
+   `PYTHONPATH` — surface that to the user and stop, rather than
+   guessing flags from memory.
+2. Read `skills/smak-skill/SKILL.md` end-to-end the first time; on
+   later sessions, skim it for the specific command you need.
+3. Cross-check `cli.py` only when SKILL.md is ambiguous — it is the
+   executable spec.
 
 ## Layering — what lives where
 
