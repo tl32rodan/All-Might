@@ -617,6 +617,39 @@ Accidental deletes or overwrites are recoverable via `/recover` or
 (`store/`) are excluded from snapshots — rebuild them out-of-band via
 `smak ingest`.
 
+## SMAK reference — find before invoking
+
+The `smak` CLI is a separate Python package; All-Might shells out to
+it rather than embedding it. When you need exact flags, JSON output
+shapes, config schema, or workflow conventions for SMAK, **read
+SMAK's own canonical docs** rather than inferring from this primer.
+Locate them with:
+
+```bash
+pip show smak
+```
+
+Take the `Location:` line (or `Editable project location:` for a dev
+install) — that directory is SMAK's installed source root. The files
+that matter:
+
+| Relative path | What it covers |
+|---|---|
+| `smak-skill/SKILL.md` | Canonical agent-facing guide: concepts, command reference, query formulation, anti-hallucination rules. **Pull this into context before any non-trivial SMAK use.** |
+| `sos-smak-skill/SKILL.md` | CliosoftSOS / EDA three-layer path model (only relevant when `$DDI_ROOT_PATH` is set on this project) |
+| `src/smak/cli.py` | Exact CLI flags + `--json` output shape per command |
+| `src/smak/core_ops.py` | Operation implementations when the SKILL.md is silent on an edge case |
+
+Workflow:
+
+1. Run `pip show smak`. If it returns nothing, SMAK is not installed
+   on this `PYTHONPATH` — surface that to the user and stop, rather
+   than guessing flags from memory.
+2. Read `smak-skill/SKILL.md` end-to-end the first time; on later
+   sessions, skim it for the specific command you need.
+3. Cross-check `src/smak/cli.py` only when SKILL.md is ambiguous —
+   it is the executable spec.
+
 ## Layering — what lives where
 
 | File | Owner | Audience |

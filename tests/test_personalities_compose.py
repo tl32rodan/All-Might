@@ -491,6 +491,7 @@ class TestAgentsMdFrameworkPrimer:
             "## When to suggest user actions",
             "## Memory model — scope-first",
             "## Recovery awareness",
+            "## SMAK reference — find before invoking",
             "## Layering — what lives where",
         ):
             assert heading in content, f"missing primer section: {heading}"
@@ -557,6 +558,19 @@ class TestAgentsMdFrameworkPrimer:
         compose_agents_md(tmp_path, [], project_name="demo")
         content = (tmp_path / "AGENTS.md").read_text()
         assert "search-only" in content
+
+    def test_smak_reference_section_teaches_pip_show(
+        self, tmp_path: Path,
+    ) -> None:
+        """The SMAK-reference section exists so the agent stops guessing
+        SMAK flags from memory and instead reads SMAK's own canonical
+        SKILL.md. The discovery path is ``pip show smak`` → SKILL.md;
+        without this hint the agent has no way to find SMAK's docs when
+        All-Might shells out to a separately-installed package."""
+        compose_agents_md(tmp_path, [], project_name="demo")
+        content = (tmp_path / "AGENTS.md").read_text()
+        assert "pip show smak" in content
+        assert "smak-skill/SKILL.md" in content
 
     def test_populated_registry_keeps_primer_then_personality(
         self, tmp_path: Path,
