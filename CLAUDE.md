@@ -184,6 +184,51 @@ rejected before and will be rejected again.
 
 ---
 
+## Memory Layer Strategy
+
+The `memory` capability stores three tiers with **different loading
+strategies per tier**. Mixing them up produces token explosions or
+stale results.
+
+| Tier | Storage | Loading strategy | Why this tier, not another |
+|------|---------|------------------|----------------------------|
+| **L1** `MEMORY.md` | Project root | Always in context (memory-load hook injects every session start + post-compaction) | It *is* the project-wide truth; searching it makes no sense |
+| **L2** `personalities/<p>/memory/understanding/` | Per-personality | **TOC + on-demand single-file read** via `understanding/_index.md` | Structured knowledge; narrative integrity matters; RAG chunking fragments meaning |
+| **L3** `personalities/<p>/memory/journal/` | Per-personality | **SMAK vector search** invoked by `/recall` | Append-only, unbounded growth, narrative-weak — RAG is the right primitive |
+
+### L3 auto-ingest closure
+
+`/recall` is only as useful as the SMAK index is fresh. Manual
+`smak ingest` is unreliable — agents forget. The closure:
+
+1. `memory-history.ts` Stop hook (per turn) — if any journal file is
+   newer than `.allmight/ingest.pending`, touch the marker. Cheap
+   (≤10 ms); never runs the embedder on the hot path.
+2. `memory-load.ts` `session.created` handler — if the marker exists,
+   spawn `smak ingest --incremental` async and clear the marker on
+   success.
+
+Trade-off: same-session `/recall` may miss the just-written entry
+(acceptable — the agent still has it in context). Next session sees
+the indexed version. Embedding cost (5–30 s) never blocks a turn.
+
+### Non-goals (locked decisions — see `docs/plan.md`)
+
+- **No L2 RAG until L2 demonstrably crosses ~200 files** for any
+  single personality. The L2 TOC mechanism keeps the same access
+  pattern viable up to that scale. Proposing L2 embedding before
+  that threshold regresses on a decision already made — point
+  the proposer at `docs/plan.md` first.
+- **No SQLite memory store** (pro-workflow's choice). YAML + git
+  mirror keeps memory human-readable, diff-able, and recoverable.
+  SMAK provides the vector layer where it is justified (L3 only).
+- **No `/distill` slash command.** Incremental pattern detection is
+  folded into `/remember#Record`. Batch distillation, if ever
+  needed, becomes a CLI (`allmight memory distill`) that calls the
+  Claude API directly — out of the agent's context window entirely.
+
+---
+
 ## Editor Compatibility
 
 `.opencode/` is the canonical agent surface; `.claude/` is a
@@ -245,34 +290,63 @@ preserved and the fresh template is staged at
 
 ### Dual-platform invariant for plugin/hook changes
 
-When you change an OpenCode plugin, the Claude Code hook script that
-mirrors it **must** be updated in the same commit:
+The single source of truth is **`PLUGIN_MANIFEST`** in
+`src/allmight/core/plugin_telemetry.py`. Each plugin entry declares:
 
-| OpenCode plugin (`.ts`) | Claude Code hook (`.py`) |
-|---|---|
-| `memory-load.ts` | `memory_load.py` (in `MemoryInitializer`) |
-| `memory-history.ts` | `memory_history.py` (in `MemoryInitializer`) — `Stop` hook |
-| `role-load.ts` | `role_load.py` (in `core.claude_bridge`) |
-| `reflection.ts` | `reflection.py` (in `core.claude_bridge`) — `UserPromptSubmit` hook |
-| `remember-trigger.ts` | *(not yet mirrored — see TODO in claude_bridge)* |
-| `usage-logger.ts` | *(not yet mirrored)* |
-| `trajectory-writer.ts` | *(not yet mirrored)* |
+- `requires` — the platform capabilities the plugin needs (entries in
+  `PLATFORM_CAPABILITIES`).
+- `claude_code_mirror` — the Python hook filename, or `None` if the
+  plugin is OpenCode-only because at least one required capability
+  has no Claude Code equivalent.
+- `purpose` — one-line description used by the README compatibility
+  matrix.
 
-The two scripts are not generated from a shared template; each is
-hand-authored in its native language because the runtime contracts
-differ (TS plugin returns objects mutating chat parts; Claude Code
-hook reads JSON from stdin and prints JSON to stdout). The
-behavioural equivalence is enforced by:
+Run `allmight plugin matrix` to render the current matrix.
+
+**Three update rules** the test suite enforces:
+
+1. Every plugin in `KNOWN_OPENCODE_PLUGINS` is declared in
+   `PLUGIN_MANIFEST`, and every entry in `requires:` is a key of
+   `PLATFORM_CAPABILITIES`.
+2. A plugin with `claude_code_mirror: <name>` must produce that file
+   on init with our marker. A plugin with `claude_code_mirror: None`
+   must **not** produce a Python hook with the matching name — no
+   no-op stubs. Pinned by `test_capability_manifest.py::
+   TestMirrorFilesOnDisk`.
+3. Any user-visible string both surfaces emit must originate from a
+   single Python generator function (see `_reminder_nudge_text`,
+   `_l2_index_schema`). TS templates substitute via
+   `__SHARED_CONSTANT__`; Python hooks reference the same variable.
+
+When you change a plugin:
+
+- If the change touches code both surfaces emit, update the shared
+  Python generator. Do NOT edit the TS and the Python hook
+  separately — that is how the surfaces drift.
+- If the change adds a new event or capability dependency, update
+  `requires:` first; if a previously-OC-only plugin's `requires:`
+  becomes all-CC-available, the coherence test will flag it as a
+  TODO promotion candidate.
+
+Promotion (OC-only → mirrored) requires:
+
+(a) every `requires:` capability available on Claude Code,
+(b) a Python implementation,
+(c) test coverage parity.
+
+Behavioural equivalence of mirrored hooks is pinned by:
 
 - `tests/test_claude_bridge.py::TestHooksRunCleanly` — runs each
   generated hook end-to-end and asserts the JSON output shape.
-- `tests/test_memory_init.py::test_writes_claude_memory_load_hook` —
-  pins the memory-load hook content alongside its OpenCode sibling.
+- `tests/test_memory_init.py::test_writes_claude_memory_load_hook`
+  and siblings — content presence on both surfaces.
+- `tests/test_capability_manifest.py::TestMirrorCoherence` — proves
+  every declared mirror has all its required capabilities available.
 
 If you skip the dual update, the OpenCode and Claude Code surfaces
-will silently drift, and bug reports will look like "behaviour
-depends on which editor I open the project with" — by the time
-anyone notices, several plugin generations may be stale.
+will silently drift, and bug reports look like "behaviour depends on
+which editor I open the project with" — by the time anyone notices,
+several plugin generations may be stale.
 
 ### Plugin observability (heartbeats)
 

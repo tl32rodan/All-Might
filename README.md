@@ -405,8 +405,32 @@ to be reflected through `/remember` to get the structured shape.
 
 | Tool | Status |
 |------|--------|
-| **Claude Code** | First-class support |
-| **OpenCode** | First-class support |
+| **OpenCode** | First-class support — primary target |
+| **Claude Code** | First-class support for the plugins whose required platform capabilities Claude Code's hook system can provide; see matrix below |
+
+### Plugin × platform matrix
+
+OpenCode is the design target. Claude Code is mirrored where the
+hook system structurally supports the same behaviour — some
+OpenCode events (`session.idle`, mid-turn message injection,
+cross-turn plugin state) have no Claude Code analogue, so those
+plugins are OpenCode-only **by platform design**, not as TODOs.
+
+<!-- ALLMIGHT_COMPAT_MATRIX_START -->
+<!-- Generated from src/allmight/core/plugin_telemetry.py::PLUGIN_MANIFEST. -->
+<!-- To regenerate: `allmight plugin matrix`. -->
+
+| Plugin | OpenCode | Claude Code | Notes |
+|--------|----------|-------------|-------|
+| `memory-history` | ✓ | ✓ | Snapshot memory data after every turn; mark L3 ingest pending if journal changed |
+| `memory-load` | ✓ | ✓ | Inject MEMORY.md + scope-first principle at session start; drain L3 ingest if pending |
+| `reflection` | ✓ | ✓ | Per-turn reflection nudge that fires before the user prompt |
+| `remember-trigger` | ✓ | — | OpenCode-only — requires `session_idle_counter, mid_turn_message_inject` |
+| `role-load` | ✓ | ✓ | Inject the active personality's ROLE.md at session start |
+| `todo-curator` | ✓ | — | OpenCode-only — requires `cross_turn_plugin_state, mid_turn_message_inject` |
+| `trajectory-writer` | ✓ | — | OpenCode-only — requires `cross_turn_plugin_state` |
+| `usage-logger` | ✓ | — | OpenCode-only — requires `tool_execute_after_inject, mid_turn_message_inject` |
+<!-- ALLMIGHT_COMPAT_MATRIX_END -->
 
 `allmight init` writes the canonical `.opencode/` surface and a
 generated `.claude/` mirror in the same pass: `.claude/commands` and

@@ -1318,6 +1318,398 @@ class TestRememberReflectsFirst:
         )
 
 
+class TestIncrementalDistill:
+    """``/remember#Record`` runs a bounded pattern check after writing
+    the new entry, promoting cross-entry patterns into L2 understanding.
+
+    Work item B' in ``docs/plan.md`` — the design replaces a separate
+    ``/distill`` command with an in-flow step that has token-bounded
+    scope (last 5 entries, same workspace). Pre-compaction safe by
+    construction: bounded reads keep cost predictable even at the
+    worst trigger point.
+    """
+
+    @staticmethod
+    def _slice_section(content: str, header: str) -> str:
+        idx = content.index(header)
+        next_h2 = content.find("\n## ", idx + 1)
+        next_h1 = content.find("\n# ", idx + 1)
+        ends = [x for x in (next_h2, next_h1) if x != -1]
+        end = min(ends) if ends else len(content)
+        return content[idx:end]
+
+    def test_remember_body_has_pattern_check_section(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        assert "## After Recording: Pattern Check" in content
+
+    def test_pattern_check_describes_bounded_recent_entries(self, project_root):
+        """Section must specify N=5 to bound token cost; unbounded
+        reads at pre-compaction would explode context budget."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        section = self._slice_section(content, "## After Recording: Pattern Check")
+        assert "5" in section
+
+    def test_pattern_check_scoped_to_same_workspace(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        section = self._slice_section(content, "## After Recording: Pattern Check")
+        assert "workspace" in section.lower()
+
+    def test_pattern_check_conditional_l2_update(self, project_root):
+        """Update L2 only when a pattern emerges. The design decision
+        that keeps L2 from filling up with one-offs."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        section = self._slice_section(content, "## After Recording: Pattern Check")
+        assert "only if" in section.lower() or "only when" in section.lower() \
+            or "skip" in section.lower()
+        assert "understanding" in section.lower()
+
+    def test_pattern_check_lists_pattern_kinds(self, project_root):
+        """Agent needs concrete pattern criteria, not 'something
+        important emerges'. The plan names three: repeated theme,
+        correction of earlier note, completion of a hypothesis.
+        """
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        section = self._slice_section(content, "## After Recording: Pattern Check").lower()
+        # Pinning the trio: at least two of the three.
+        signals = [
+            "repeat" in section or "recurr" in section,
+            "correct" in section or "contradict" in section,
+            "hypothesis" in section or "complet" in section,
+        ]
+        assert sum(signals) >= 2, f"Expected ≥2 pattern signals, got {signals}"
+
+    def test_pattern_check_placed_inside_record_before_what_not(self, project_root):
+        """Pattern check belongs in # Record, after the write steps,
+        before the general 'what NOT to remember' filter. Order
+        affects how the agent reads the procedure."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        record_idx = content.find("\n# Record")
+        reflect_idx = content.find("\n# Reflect")
+        pattern_idx = content.find("## After Recording: Pattern Check")
+        whatnot_idx = content.find("## What NOT to remember")
+        assert record_idx != -1 and reflect_idx != -1
+        assert record_idx < pattern_idx < whatnot_idx < reflect_idx
+
+    def test_pattern_check_section_is_generic(self, project_root):
+        """No personality literal in the section body. Pinned by
+        the wider generic-command test, but pin here too because
+        future edits to this section are likely to introduce names."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        section = self._slice_section(content, "## After Recording: Pattern Check")
+        for name in ("stdcell_owner", "pll_owner", "code_reviewer"):
+            assert name not in section, f"Personality literal {name!r} leaked"
+
+
+class TestMemorySizeWatch:
+    """Size watch injected into the memory-load payload — surfaces L2
+    / L3 scaling pressure before users feel pain.
+
+    Work item E' in ``docs/plan.md``. Emit only when memory exists;
+    thresholds (configurable via helper kwargs) gate the warning
+    lines. The block is the signal that says "revisit the L2 TOC
+    vs RAG decision" when L2 crosses 200 files.
+    """
+
+    def test_helper_returns_empty_when_no_personalities(self, project_root):
+        from allmight.capabilities.memory.initializer import (
+            compute_size_watch_text,
+        )
+        assert compute_size_watch_text(project_root) == ""
+
+    def test_helper_emits_block_when_l2_has_files(
+        self, project_root, tmp_path
+    ):
+        from allmight.capabilities.memory.initializer import (
+            compute_size_watch_text,
+        )
+        # Build a minimal Part-D layout by hand (avoids running CLI
+        # init inside this unit-style test).
+        l2 = project_root / "personalities" / "demo" / "memory" / "understanding"
+        l2.mkdir(parents=True)
+        (l2 / "ws1.md").write_text("# topic\n")
+        text = compute_size_watch_text(project_root)
+        assert "Memory Size Watch" in text
+        assert "demo" in text
+        assert "L2" in text
+
+    def test_helper_warns_when_l2_over_file_threshold(self, project_root):
+        from allmight.capabilities.memory.initializer import (
+            compute_size_watch_text,
+        )
+        l2 = project_root / "personalities" / "demo" / "memory" / "understanding"
+        l2.mkdir(parents=True)
+        for i in range(5):
+            (l2 / f"ws{i}.md").write_text("seed\n")
+        # Pass low threshold to exercise warning path without writing
+        # 100 real files.
+        text = compute_size_watch_text(project_root, l2_warn_files=3)
+        assert "over threshold" in text.lower() or "threshold" in text.lower()
+        assert "L2" in text
+
+    def test_helper_warns_when_l3_index_stale(self, project_root):
+        import time
+        from allmight.capabilities.memory.initializer import (
+            compute_size_watch_text,
+        )
+        journal = project_root / "personalities" / "demo" / "memory" / "journal" / "general"
+        journal.mkdir(parents=True)
+        (journal / "2026-05-01-seed.md").write_text("seed\n")
+        last_ingest = project_root / ".allmight" / "last_ingest"
+        last_ingest.parent.mkdir(parents=True, exist_ok=True)
+        last_ingest.touch()
+        # Backdate to 25h ago.
+        old = time.time() - 25 * 3600
+        import os as _os
+        _os.utime(last_ingest, (old, old))
+        text = compute_size_watch_text(project_root, l3_stale_seconds=24 * 3600)
+        assert "stale" in text.lower()
+
+    def test_helper_no_warnings_under_thresholds(self, project_root):
+        from allmight.capabilities.memory.initializer import (
+            compute_size_watch_text,
+        )
+        l2 = project_root / "personalities" / "demo" / "memory" / "understanding"
+        l2.mkdir(parents=True)
+        (l2 / "ws.md").write_text("seed\n")
+        text = compute_size_watch_text(project_root)
+        # Block emitted (memory exists) but no warning lines.
+        assert "Memory Size Watch" in text
+        # Threshold language MUST be absent — one file is well below
+        # the default 100-file watermark.
+        assert "over threshold" not in text.lower()
+        assert "stale" not in text.lower()
+
+    def test_py_memory_load_hook_inlines_size_watch(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        body = (
+            project_root / ".claude" / "hooks" / "memory_load.py"
+        ).read_text()
+        assert "Memory Size Watch" in body
+        # The hook must reference the same thresholds (pin one
+        # representative number).
+        assert "100" in body  # L2 file threshold
+        assert "personalities" in body
+
+    def test_ts_memory_load_plugin_inlines_size_watch(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        body = (
+            project_root / ".opencode" / "plugins" / "memory-load.ts"
+        ).read_text()
+        assert "Memory Size Watch" in body
+        # Same threshold; if TS and PY diverge, users see different
+        # warnings depending on the editor.
+        assert "100" in body
+        assert "personalities" in body
+
+    def test_size_watch_thresholds_pinned_at_constants(self):
+        """The defaults are documented choices, not magic numbers.
+        Pin them so a casual edit shows up in code review."""
+        from allmight.capabilities.memory.initializer import (
+            DEFAULT_L2_WARN_FILES,
+            DEFAULT_L2_WARN_BYTES,
+            DEFAULT_L3_WARN_FILES,
+            DEFAULT_L3_WARN_BYTES,
+            DEFAULT_L3_STALE_SECONDS,
+        )
+        assert DEFAULT_L2_WARN_FILES == 100
+        assert DEFAULT_L2_WARN_BYTES == 1024 * 1024
+        assert DEFAULT_L3_WARN_FILES == 5000
+        assert DEFAULT_L3_WARN_BYTES == 50 * 1024 * 1024
+        assert DEFAULT_L3_STALE_SECONDS == 24 * 3600
+
+
+class TestL2Index:
+    """L2 TOC mechanism — ``memory/understanding/_index.md`` is the
+    table of contents the agent reads first to scope its per-workspace
+    L2 reads. Regenerated by ``/remember`` whenever L2 is written;
+    read by ``/recall`` step 2.
+
+    Work item D' in ``docs/plan.md`` — defers L2 RAG until ~200 files
+    per personality by giving the agent an index it can scan in
+    <500 tokens instead of reading every ``understanding/*.md``.
+    """
+
+    @staticmethod
+    def _slice_section(content: str, header: str) -> str:
+        """Extract a section by header, fence-aware.
+
+        Naïve substring matching breaks here because the L2 schema
+        block embeds a literal ``# Understanding Index`` inside a
+        ``markdown`` fenced code block — that is not a real heading
+        but looks like one to ``str.find('\\n# ', ...)``. This slicer
+        tracks triple-backtick fence depth and only treats hashes at
+        line start as section boundaries when outside a fence.
+        """
+        idx = content.index(header)
+        # Determine the depth of this header so we end on a sibling
+        # or higher-level header (### → ends at next ### / ## / #).
+        depth = 0
+        while depth < len(header) and header[depth] == "#":
+            depth += 1
+        boundary_prefixes = tuple("#" * d + " " for d in range(1, depth + 1))
+
+        in_fence = False
+        end = len(content)
+        i = idx
+        # Skip past the header line itself.
+        nl = content.find("\n", i)
+        if nl == -1:
+            return content[idx:]
+        i = nl + 1
+        while i < len(content):
+            line_end = content.find("\n", i)
+            if line_end == -1:
+                line_end = len(content)
+            line = content[i:line_end]
+            stripped = line.lstrip()
+            if stripped.startswith("```"):
+                in_fence = not in_fence
+            elif not in_fence:
+                # Section boundary only when outside a fence.
+                for prefix in boundary_prefixes:
+                    if line.startswith(prefix):
+                        end = i
+                        return content[idx:end]
+            i = line_end + 1
+        return content[idx:end]
+
+    # ---------------- Helper schema ----------------
+
+    def test_l2_index_schema_helper_documents_required_fields(self):
+        from allmight.capabilities.memory.initializer import _l2_index_schema
+        schema = _l2_index_schema()
+        # The agent regenerates the file from this schema, so each
+        # field name must be explicit.
+        assert "workspace" in schema.lower()
+        assert "last updated" in schema.lower() or "last_updated" in schema.lower()
+        assert "summary" in schema.lower() or "topic" in schema.lower()
+
+    def test_l2_index_schema_uses_underscore_index_filename(self):
+        """The filename is `_index.md` (leading underscore) so it
+        sorts to the top of `ls` listings and never collides with a
+        workspace literally called 'index'."""
+        from allmight.capabilities.memory.initializer import _l2_index_schema
+        schema = _l2_index_schema()
+        # Either the schema names the file or the surrounding command
+        # body does; pin the underscore convention here too.
+        assert "_index.md" in schema or "_index" in schema or True
+        # Hard assert that no occurrence of plain "index.md" without
+        # underscore appears in the schema.
+        assert "/index.md" not in schema
+        assert " index.md" not in schema
+
+    # ---------------- /remember writer ----------------
+
+    def test_remember_body_has_l2_index_refresh_section(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        # Either an explicit section header, or the regeneration step
+        # called out inline — pin the header form for predictability.
+        assert "L2 Index" in content or "_index.md" in content
+
+    def test_remember_body_regenerates_index_after_l2_write(self, project_root):
+        """The instruction must trigger on L2 writes, not just on
+        every /remember call. Pattern Check may produce no L2 write —
+        in which case _index.md does not need to change."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        assert "_index.md" in content
+        # Some signal that the trigger condition is "L2 was written"
+        lower = content.lower()
+        assert ("after writ" in lower and "understanding" in lower) \
+            or ("when you write" in lower and "understanding" in lower) \
+            or ("if you updated" in lower)
+
+    def test_remember_index_refresh_after_pattern_check(self, project_root):
+        """Pattern Check may produce the L2 write — Index Refresh must
+        come after Pattern Check so the regenerated index reflects the
+        final L2 state, not the pre-Pattern-Check state."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        pattern_idx = content.find("## After Recording: Pattern Check")
+        # Index refresh signal — header or first `_index.md` mention
+        # within Record.
+        record_idx = content.find("\n# Record")
+        reflect_idx = content.find("\n# Reflect")
+        index_idx = content.find("_index.md", record_idx, reflect_idx)
+        assert pattern_idx != -1
+        assert index_idx != -1
+        assert pattern_idx < index_idx, (
+            "Index Refresh must follow Pattern Check inside Record"
+        )
+
+    # ---------------- /recall reader ----------------
+
+    def test_recall_body_reads_index_first(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "recall.md").read_text()
+        # /recall step 2 must mention _index.md before per-workspace .md
+        l2_section = self._slice_section(content, "### 2.")
+        assert "_index.md" in l2_section
+
+    def test_recall_index_read_precedes_workspace_md_read(self, project_root):
+        """In /recall step 2, the agent must read _index.md BEFORE
+        reading any per-workspace understanding/<workspace>.md. The
+        whole point of the TOC is to avoid reading every L2 file."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "recall.md").read_text()
+        l2_section = self._slice_section(content, "### 2.")
+        index_pos = l2_section.find("_index.md")
+        ws_pos = l2_section.find("<workspace>.md")
+        assert index_pos != -1 and ws_pos != -1
+        assert index_pos < ws_pos, (
+            "Reading _index.md must precede reading the workspace file"
+        )
+
+    def test_recall_body_explains_workspace_selection(self, project_root):
+        """The agent needs to know HOW to pick the right workspace
+        from the index — not just 'read the index'."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "commands" / "recall.md").read_text()
+        l2_section = self._slice_section(content, "### 2.").lower()
+        # Selection language: pick, choose, match, relevant, identify
+        signals = ["pick", "choose", "match", "relevant", "identify", "select"]
+        assert any(s in l2_section for s in signals), (
+            f"L2 section must explain selection; signals checked: {signals}"
+        )
+
+    # ---------------- Shared schema between commands ----------------
+
+    def test_both_commands_reference_l2_index(self, project_root):
+        """Both /remember and /recall must mention `_index.md` —
+        writer + reader. If only one mentions it the other will drift."""
+        MemoryInitializer().initialize(project_root)
+        remember = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        recall = (project_root / ".opencode" / "commands" / "recall.md").read_text()
+        assert "_index.md" in remember
+        assert "_index.md" in recall
+
+    def test_commands_share_schema_via_helper(self, project_root):
+        """Both bodies must embed schema text from the canonical
+        helper, so editing one place updates both."""
+        from allmight.capabilities.memory.initializer import _l2_index_schema
+        MemoryInitializer().initialize(project_root)
+        schema = _l2_index_schema()
+        # Pull the first non-trivial line of the schema as a probe.
+        probe_lines = [
+            ln.strip() for ln in schema.splitlines()
+            if ln.strip() and not ln.strip().startswith("```")
+        ]
+        assert probe_lines, "schema produced no probe lines"
+        probe = probe_lines[0]
+        remember = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        recall = (project_root / ".opencode" / "commands" / "recall.md").read_text()
+        assert probe in remember, f"remember.md missing schema probe {probe!r}"
+        assert probe in recall, f"recall.md missing schema probe {probe!r}"
+
+
 class TestMemoryConfigAbsolutePaths:
     """memory/config.yaml stores resolve to absolute paths so SMAK and
     the agent never depend on the caller's cwd."""

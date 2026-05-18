@@ -913,6 +913,53 @@ def memory():
     """Agent memory system — L1/L2/L3 persistent memory."""
 
 
+@memory.command("ingest")
+@click.option(
+    "--incremental/--full", default=True,
+    help="Pass --incremental to smak (default) or --full to rebuild.",
+)
+@click.option(
+    "--root", default=".", type=click.Path(exists=True),
+    help="Project root (defaults to the current directory).",
+)
+def memory_ingest(incremental: bool, root: str):
+    """Index every personality's journal into the SMAK store.
+
+    Walks ``personalities/*/memory/smak_config.yaml`` and runs
+    ``smak ingest --config <cfg>`` for each. On overall success,
+    touches ``.allmight/last_ingest`` and removes
+    ``.allmight/ingest.pending`` so the next Stop hook treats the
+    journal as indexed.
+
+    Spawned fire-and-forget by the memory-load drain when
+    ``.allmight/ingest.pending`` exists. Safe to invoke directly
+    too — incremental mode is cheap when nothing has changed.
+    """
+    import os as _os
+    from pathlib import Path as _Path
+
+    from .capabilities.memory.ingest import run_ingest_cycle
+
+    root_path = _Path(root).resolve()
+    smak_cmd = _os.environ.get("ALLMIGHT_SMAK_CMD", "smak")
+    result = run_ingest_cycle(
+        root_path, incremental=incremental, smak_cmd=smak_cmd,
+    )
+
+    if result.errors:
+        click.echo("smak ingest failures:", err=True)
+        for personality_dir, err in result.errors:
+            click.echo(f"  {personality_dir.name}: {err}", err=True)
+        raise click.exceptions.Exit(code=1)
+
+    if not result.succeeded:
+        click.echo("No personalities with memory capability found.")
+        return
+    click.echo(f"Ingested {len(result.succeeded)} personality(ies):")
+    for personality_dir in result.succeeded:
+        click.echo(f"  {personality_dir.name}")
+
+
 @memory.command("init")
 @click.argument("path", default=".", type=click.Path(exists=True))
 def memory_init(path: str):
@@ -1117,10 +1164,11 @@ def plugin_status(path: str) -> None:
     from pathlib import Path as P
 
     from .core.plugin_telemetry import (
-        KNOWN_CLAUDE_HOOKS,
         KNOWN_OPENCODE_PLUGINS,
+        PLUGIN_MANIFEST,
         SURFACE_CLAUDE,
         SURFACE_OPENCODE,
+        cc_unavailable_reasons,
         read_heartbeats,
     )
 
@@ -1140,19 +1188,44 @@ def plugin_status(path: str) -> None:
             return f"fired {delta // 3600}h ago"
         return f"fired {delta // 86400}d ago"
 
-    def _print_surface(label: str, surface: str, known: tuple[str, ...]) -> None:
-        click.echo(f"{label}:")
-        entries = data.get(surface, {})
-        seen = set(known)
-        name_width = max((len(n) for n in known), default=12)
-        for name in known:
-            click.echo(f"  {name:<{name_width}}  {_fmt_age(entries.get(name))}")
-        # Surface unknown-but-present plugins (someone added a plugin
-        # without registering it; show it so we don't lose it silently).
-        extras = sorted(n for n in entries if n not in seen)
-        for name in extras:
-            click.echo(f"  {name:<{name_width}}  {_fmt_age(entries.get(name))} (unregistered)")
+    # ---- OpenCode plugins (all known plugins, fire-time only) ----
+    click.echo("OpenCode plugins:")
+    oc_entries = data.get(SURFACE_OPENCODE, {})
+    oc_width = max((len(n) for n in KNOWN_OPENCODE_PLUGINS), default=12)
+    for name in KNOWN_OPENCODE_PLUGINS:
+        click.echo(f"  {name:<{oc_width}}  {_fmt_age(oc_entries.get(name))}")
+    extras = sorted(n for n in oc_entries if n not in set(KNOWN_OPENCODE_PLUGINS))
+    for name in extras:
+        click.echo(f"  {name:<{oc_width}}  {_fmt_age(oc_entries.get(name))} (unregistered)")
 
-    _print_surface("OpenCode plugins", SURFACE_OPENCODE, KNOWN_OPENCODE_PLUGINS)
+    # ---- Claude Code hooks: manifest-derived (Capability Manifest) ----
+    # OC-only plugins show "unavailable (requires: <cap>)" so users
+    # can tell structural absence apart from never-fired bugs.
     click.echo()
-    _print_surface("Claude Code hooks", SURFACE_CLAUDE, KNOWN_CLAUDE_HOOKS)
+    click.echo("Claude Code hooks:")
+    cc_entries = data.get(SURFACE_CLAUDE, {})
+    cc_width = max((len(n) for n in PLUGIN_MANIFEST), default=12)
+    for plugin_name in KNOWN_OPENCODE_PLUGINS:
+        entry = PLUGIN_MANIFEST.get(plugin_name, {})
+        mirror = entry.get("claude_code_mirror")
+        if mirror:
+            hook_stem = mirror.removesuffix(".py")
+            status = _fmt_age(cc_entries.get(hook_stem))
+            click.echo(f"  {plugin_name:<{cc_width}}  {status}")
+        else:
+            blockers = cc_unavailable_reasons(plugin_name)
+            reason = ", ".join(blockers) if blockers else "OpenCode-only"
+            click.echo(f"  {plugin_name:<{cc_width}}  unavailable (requires: {reason})")
+
+
+@plugin.command("matrix")
+def plugin_matrix() -> None:
+    """Print the plugin × platform compatibility matrix.
+
+    Single source of truth: ``src/allmight/core/plugin_telemetry.py::
+    PLUGIN_MANIFEST``. The README's matrix block must match this
+    output — tests in ``test_capability_manifest.py`` enforce drift
+    detection.
+    """
+    from .core.plugin_telemetry import format_compatibility_matrix
+    click.echo(format_compatibility_matrix())

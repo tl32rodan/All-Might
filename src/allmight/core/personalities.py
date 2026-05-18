@@ -552,8 +552,10 @@ personality a command acts for is resolved at call time — see
 
 The agent surface against the knowledge graph is **search-only** —
 only the `database` capability is read-only here; `memory` is written
-via `/remember`. Index builds and sidecar edits happen out-of-band via
-the `smak` CLI; no slash command mutates a corpus.
+via `/remember`. Database index builds and sidecar edits happen
+out-of-band via the `smak` CLI; the **memory journal is auto-indexed
+between sessions**, so entries written via `/remember` become
+searchable via `/recall` starting from the next session.
 
 ## Routing — which personality acts?
 
