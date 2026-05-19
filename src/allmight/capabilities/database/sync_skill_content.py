@@ -19,6 +19,10 @@ SYNC_SKILL_BODY = """\
 - After `allmight init` reports `.opencode/` **compose conflicts**
   (manifest at `.allmight/templates/conflicts.yaml`) — you authored a
   file All-Might also wanted to write
+- To register **orphan personalities** — directories under
+  `personalities/<name>/` that have a `ROLE.md` but aren't listed in
+  `.allmight/personalities.yaml` (e.g. copied in from another project
+  or created out-of-band)
 
 ## How it works
 
@@ -61,6 +65,37 @@ SYNC_SKILL_BODY = """\
    if they are still present. The knowledge graph is now read-only from
    the agent surface; SMAK CLI handles ingest/enrich out-of-band.
 3. Update the AGENTS.md ALL-MIGHT section to match the staged `claude-md-section.md`
+
+### Orphan personality reconciliation
+
+If `personalities/<name>/` exists on disk but isn't in
+`.allmight/personalities.yaml`, the personality is "orphaned" — the
+role-load plugin still injects its `ROLE.md` at every turn, but
+`allmight list` won't show it and `AGENTS.md` won't include it.
+This happens when a personality was copied in from another project,
+restored from `.allmight/memory-history/`, or created out-of-band.
+
+To reconcile:
+
+1. Run `allmight reconcile` (dry run). The CLI prints every
+   unregistered `personalities/*/` it finds, with auto-detected
+   capabilities inferred from subdir presence
+   (`personalities/<name>/database/` → `database`,
+   `personalities/<name>/memory/` → `memory`). Orphans missing
+   `ROLE.md` or any capability subdir are flagged `[skip: ...]`.
+2. Show the list to the user and confirm the detected capabilities
+   are correct. If a capability is missing from the detection
+   (e.g. the user intended `memory` but the `memory/` subdir
+   doesn't exist yet), tell them to create the missing subdir or use
+   `allmight add --force <name> --capabilities ...` instead.
+3. If everything looks right, run `allmight reconcile --yes`. The
+   command writes `.allmight/personalities.yaml` and recomposes
+   `AGENTS.md` plus the per-personality `.opencode/agents/<name>.md`
+   files so the new entries show up in agent-visible surfaces.
+
+Reconciliation is **additive only** — it never removes registry
+entries whose personality directory has been deleted. To prune
+stale entries, edit `.allmight/personalities.yaml` directly.
 
 ### Compose conflicts (`.opencode/` entries you authored)
 
