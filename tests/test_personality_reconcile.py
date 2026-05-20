@@ -1,11 +1,23 @@
-"""``allmight reconcile`` — register orphan personalities.
+"""Orphan personality reconciliation via ``/sync`` skill + ``allmight add --force``.
 
 A personality directory under ``personalities/<name>/`` becomes
 "orphaned" when it exists on disk but is absent from
 ``.allmight/personalities.yaml`` (copied in from another project,
-restored from ``memory-history``, or created out-of-band). The
-``reconcile`` CLI scans for these dirs, infers capabilities from
-subdir presence, and registers them.
+restored from ``memory-history``, or created out-of-band).
+
+There is **no dedicated reconcile CLI**. The ``/sync`` skill teaches
+the agent to discover orphans via shell, then call
+``allmight add --force --capabilities ... <name>`` per orphan. The
+existing ``add`` path is intentionally incremental on populated dirs
+(ROLE.md and memory data are write-once guarded), so re-running it
+on an orphan registers the personality without clobbering user
+content.
+
+These tests pin:
+
+1. The ``/sync`` skill body actually teaches this flow.
+2. ``allmight add --force`` is incremental-safe on a pre-populated
+   orphan dir — the contract the skill body relies on.
 """
 
 from __future__ import annotations
@@ -14,20 +26,13 @@ import os
 from pathlib import Path
 
 import pytest
-import yaml
 from click.testing import CliRunner
 
 from allmight.cli import main
-from allmight.core.personalities import (
-    OrphanPersonality,
-    detect_orphan_personalities,
-    read_registry,
-    register_orphans,
-)
+from allmight.core.personalities import read_registry
 
 
 def _invoke_in(root: Path, args: list[str]):
-    """Run the CLI as if cwd were ``root`` (mirrors test_personality_add_list)."""
     runner = CliRunner()
     cwd = os.getcwd()
     try:
@@ -52,200 +57,195 @@ def _make_orphan(
     project: Path,
     name: str,
     *,
-    with_role_md: bool = True,
+    role_md_body: str = "",
+    journal_entries: dict[str, str] | None = None,
+    understanding_entries: dict[str, str] | None = None,
     capabilities: tuple[str, ...] = ("database", "memory"),
 ) -> Path:
-    """Drop a personality directory directly on disk, bypassing ``allmight add``.
+    """Drop a populated personality directory directly on disk.
 
-    This is the situation reconcile is designed to handle: someone
-    placed a personality folder there without going through the CLI.
+    Bypasses ``allmight add``. Simulates the "copied in from another
+    project" / "restored from memory-history" scenario.
     """
     p = project / "personalities" / name
     p.mkdir(parents=True, exist_ok=True)
-    if with_role_md:
-        (p / "ROLE.md").write_text(
-            f"# {name}\n\nThe {name} role helps with miscellaneous tasks.\n"
-        )
+    (p / "ROLE.md").write_text(
+        role_md_body or f"# {name}\n\nThe {name} role handles its own thing.\n"
+    )
     for cap in capabilities:
         (p / cap).mkdir(exist_ok=True)
+    if journal_entries and "memory" in capabilities:
+        journal = p / "memory" / "journal"
+        journal.mkdir(parents=True, exist_ok=True)
+        for fname, body in journal_entries.items():
+            (journal / fname).write_text(body)
+    if understanding_entries and "memory" in capabilities:
+        understanding = p / "memory" / "understanding"
+        understanding.mkdir(parents=True, exist_ok=True)
+        for fname, body in understanding_entries.items():
+            (understanding / fname).write_text(body)
     return p
 
 
-class TestDetectOrphans:
-    def test_no_orphans_when_dir_empty(self, initted_project: Path) -> None:
-        assert detect_orphan_personalities(initted_project) == []
-
-    def test_detects_orphan_with_role_and_both_capabilities(
-        self, initted_project: Path
-    ) -> None:
-        _make_orphan(initted_project, "stdcell_owner")
-        orphans = detect_orphan_personalities(initted_project)
-        assert len(orphans) == 1
-        assert orphans[0].name == "stdcell_owner"
-        assert orphans[0].capabilities == ["database", "memory"]
-        assert orphans[0].has_role_md is True
-
-    def test_detects_partial_capabilities(self, initted_project: Path) -> None:
-        _make_orphan(
-            initted_project, "reviewer", capabilities=("memory",)
-        )
-        orphans = detect_orphan_personalities(initted_project)
-        assert orphans[0].capabilities == ["memory"]
-
-    def test_flags_orphan_missing_role_md(self, initted_project: Path) -> None:
-        _make_orphan(initted_project, "halfbaked", with_role_md=False)
-        orphans = detect_orphan_personalities(initted_project)
-        assert len(orphans) == 1
-        assert orphans[0].has_role_md is False
-
-    def test_flags_orphan_with_no_capability_subdirs(
-        self, initted_project: Path
-    ) -> None:
-        _make_orphan(initted_project, "shell", capabilities=())
-        orphans = detect_orphan_personalities(initted_project)
-        assert orphans[0].capabilities == []
-        assert orphans[0].has_role_md is True
-
-    def test_registered_personality_not_reported(
-        self, initted_project: Path
-    ) -> None:
-        # First add via CLI so it lands in the registry.
-        result = _invoke_in(
-            initted_project,
-            ["add", "primary", "--capabilities", "database,memory"],
-        )
-        assert result.exit_code == 0
-        # Then drop another directly on disk.
-        _make_orphan(initted_project, "secondary")
-        orphans = detect_orphan_personalities(initted_project)
-        names = [o.name for o in orphans]
-        assert "primary" not in names
-        assert "secondary" in names
-
-    def test_dotfiles_ignored(self, initted_project: Path) -> None:
-        (initted_project / "personalities" / ".scratch").mkdir(parents=True)
-        assert detect_orphan_personalities(initted_project) == []
-
-    def test_symlinked_dir_ignored(self, initted_project: Path) -> None:
-        target = initted_project / "elsewhere"
-        target.mkdir()
-        (initted_project / "personalities").mkdir(exist_ok=True)
-        (initted_project / "personalities" / "linked").symlink_to(target)
-        assert detect_orphan_personalities(initted_project) == []
+# ---------------------------------------------------------------------
+# 1. The /sync skill body teaches the reconciliation flow.
+# ---------------------------------------------------------------------
 
 
-class TestRegisterOrphans:
-    def test_writes_registry(self, initted_project: Path) -> None:
-        _make_orphan(initted_project, "stdcell_owner")
-        orphans = detect_orphan_personalities(initted_project)
-        register_orphans(initted_project, orphans)
+class TestSyncSkillTeachesReconciliation:
+    """The skill body is the only place that documents the orphan flow."""
 
-        registry = read_registry(initted_project)
-        assert any(
-            e.instance == "stdcell_owner" and set(e.capabilities) == {"database", "memory"}
-            for e in registry
-        )
-
-    def test_versions_populated_from_templates(self, initted_project: Path) -> None:
-        _make_orphan(initted_project, "reviewer", capabilities=("memory",))
-        orphans = detect_orphan_personalities(initted_project)
-        register_orphans(initted_project, orphans)
-
-        registry = read_registry(initted_project)
-        reviewer = next(e for e in registry if e.instance == "reviewer")
-        assert reviewer.versions.get("memory")  # non-empty version string
-
-    def test_preserves_existing_entries(self, initted_project: Path) -> None:
-        _invoke_in(initted_project, ["add", "alpha", "--capabilities", "memory"])
-        _make_orphan(initted_project, "beta")
-        orphans = detect_orphan_personalities(initted_project)
-        register_orphans(initted_project, orphans)
-
-        names = {e.instance for e in read_registry(initted_project)}
-        assert names == {"alpha", "beta"}
-
-
-class TestCliReconcile:
-    def test_no_orphans_message(self, initted_project: Path) -> None:
-        result = _invoke_in(initted_project, ["reconcile"])
-        assert result.exit_code == 0
-        assert "in sync with disk" in result.output
-
-    def test_dry_run_default_does_not_write(self, initted_project: Path) -> None:
-        _make_orphan(initted_project, "stdcell_owner")
-        result = _invoke_in(initted_project, ["reconcile"])
-        assert result.exit_code == 0
-        assert "stdcell_owner" in result.output
-        assert "Dry run" in result.output
-        # Registry must remain untouched.
-        assert read_registry(initted_project) == []
-
-    def test_yes_writes_registry(self, initted_project: Path) -> None:
-        _make_orphan(initted_project, "stdcell_owner")
-        result = _invoke_in(initted_project, ["reconcile", "--yes"])
-        assert result.exit_code == 0
-        assert "Registered" in result.output
-
-        names = {e.instance for e in read_registry(initted_project)}
-        assert "stdcell_owner" in names
-
-    def test_yes_recomposes_agents_md(self, initted_project: Path) -> None:
-        _make_orphan(initted_project, "stdcell_owner")
-        _invoke_in(initted_project, ["reconcile", "--yes"])
-
-        agents_md = (initted_project / "AGENTS.md").read_text()
-        assert "stdcell_owner" in agents_md
-
-    def test_yes_creates_opencode_agent_file(self, initted_project: Path) -> None:
-        _make_orphan(initted_project, "stdcell_owner")
-        _invoke_in(initted_project, ["reconcile", "--yes"])
-
-        agent_file = initted_project / ".opencode" / "agents" / "stdcell_owner.md"
-        assert agent_file.is_file()
-        content = agent_file.read_text()
-        assert "mode: subagent" in content
-        assert "ROLE.md" in content
-
-    def test_skips_orphan_missing_role_md(self, initted_project: Path) -> None:
-        _make_orphan(initted_project, "halfbaked", with_role_md=False)
-        result = _invoke_in(initted_project, ["reconcile", "--yes"])
-        assert result.exit_code == 0
-        assert "missing ROLE.md" in result.output
-        # Not registered.
-        assert read_registry(initted_project) == []
-
-    def test_skips_orphan_with_no_capabilities(self, initted_project: Path) -> None:
-        _make_orphan(initted_project, "shell", capabilities=())
-        result = _invoke_in(initted_project, ["reconcile", "--yes"])
-        assert result.exit_code == 0
-        assert "no capability subdirs" in result.output
-        assert read_registry(initted_project) == []
-
-    def test_mixed_actionable_and_skipped(self, initted_project: Path) -> None:
-        _make_orphan(initted_project, "good")
-        _make_orphan(initted_project, "bad", with_role_md=False)
-        result = _invoke_in(initted_project, ["reconcile", "--yes"])
-        assert result.exit_code == 0
-
-        names = {e.instance for e in read_registry(initted_project)}
-        assert "good" in names
-        assert "bad" not in names
-
-    def test_fails_outside_project(self, tmp_path: Path) -> None:
-        result = _invoke_in(tmp_path, ["reconcile"])
-        assert result.exit_code != 0
-        assert "not an All-Might project" in result.output
-
-
-class TestSyncSkillMentionsReconcile:
-    """The /sync skill must teach the agent about the reconcile flow,
-    otherwise users discover orphan personalities the hard way."""
-
-    def test_skill_mentions_reconcile_command(self, initted_project: Path) -> None:
+    def test_skill_mentions_orphan_section(self, initted_project: Path) -> None:
         # Re-init triggers /sync skill generation.
         runner = CliRunner()
         runner.invoke(main, ["init", "--yes", str(initted_project)])
         skill = initted_project / ".opencode" / "skills" / "sync" / "SKILL.md"
         content = skill.read_text()
-        assert "allmight reconcile" in content
-        assert "orphan" in content.lower()
+        assert "Orphan personality reconciliation" in content
+
+    def test_skill_uses_add_force_not_invented_command(
+        self, initted_project: Path
+    ) -> None:
+        runner = CliRunner()
+        runner.invoke(main, ["init", "--yes", str(initted_project)])
+        content = (
+            initted_project / ".opencode" / "skills" / "sync" / "SKILL.md"
+        ).read_text()
+        assert "allmight add --force" in content
+        # No invented sibling command — sync reuses the existing
+        # registration path.
+        assert "allmight reconcile" not in content
+
+    def test_skill_documents_role_md_write_once_guard(
+        self, initted_project: Path
+    ) -> None:
+        """The skill body must explain *why* re-running add is safe,
+        otherwise the agent will hesitate on populated orphan dirs."""
+        runner = CliRunner()
+        runner.invoke(main, ["init", "--yes", str(initted_project)])
+        content = (
+            initted_project / ".opencode" / "skills" / "sync" / "SKILL.md"
+        ).read_text()
+        assert "write-once" in content
+        assert "ROLE.md" in content
+
+    def test_skill_mentions_memory_snapshot_before_apply(
+        self, initted_project: Path
+    ) -> None:
+        """Agents should snapshot memory before mutating; if a
+        capability inference is wrong, the user can `memory restore`."""
+        runner = CliRunner()
+        runner.invoke(main, ["init", "--yes", str(initted_project)])
+        content = (
+            initted_project / ".opencode" / "skills" / "sync" / "SKILL.md"
+        ).read_text()
+        assert "allmight memory snapshot" in content
+
+
+# ---------------------------------------------------------------------
+# 2. `allmight add --force` is incremental-safe on a populated orphan.
+#    This is the contract the skill body relies on. If it ever breaks,
+#    the skill's instructions become dangerous, so we pin it here.
+# ---------------------------------------------------------------------
+
+
+class TestAddForceIncrementalOnOrphan:
+    def test_orphan_role_md_preserved(self, initted_project: Path) -> None:
+        sentinel = "USER WROTE THIS — DO NOT OVERWRITE"
+        _make_orphan(
+            initted_project,
+            "stdcell_owner",
+            role_md_body=f"# stdcell_owner\n\n{sentinel}\n",
+        )
+
+        result = _invoke_in(
+            initted_project,
+            ["add", "stdcell_owner", "--capabilities", "database,memory", "--force"],
+        )
+        assert result.exit_code == 0, result.output
+
+        role = (initted_project / "personalities" / "stdcell_owner" / "ROLE.md").read_text()
+        assert sentinel in role
+
+    def test_orphan_memory_journal_preserved(self, initted_project: Path) -> None:
+        _make_orphan(
+            initted_project,
+            "stdcell_owner",
+            journal_entries={
+                "2026-05-19.md": "# 2026-05-19\n\nLearned about cell library swaps.\n",
+            },
+        )
+
+        _invoke_in(
+            initted_project,
+            ["add", "stdcell_owner", "--capabilities", "database,memory", "--force"],
+        )
+
+        journal = (
+            initted_project / "personalities" / "stdcell_owner"
+            / "memory" / "journal" / "2026-05-19.md"
+        )
+        assert journal.is_file()
+        assert "cell library swaps" in journal.read_text()
+
+    def test_orphan_memory_understanding_preserved(
+        self, initted_project: Path
+    ) -> None:
+        _make_orphan(
+            initted_project,
+            "stdcell_owner",
+            understanding_entries={
+                "stdcell.md": "# stdcell\n\nNAND2X1 is the canonical 2-input NAND.\n",
+            },
+        )
+
+        _invoke_in(
+            initted_project,
+            ["add", "stdcell_owner", "--capabilities", "database,memory", "--force"],
+        )
+
+        understanding = (
+            initted_project / "personalities" / "stdcell_owner"
+            / "memory" / "understanding" / "stdcell.md"
+        )
+        assert understanding.is_file()
+        assert "NAND2X1" in understanding.read_text()
+
+    def test_orphan_gets_registered(self, initted_project: Path) -> None:
+        _make_orphan(initted_project, "stdcell_owner")
+
+        _invoke_in(
+            initted_project,
+            ["add", "stdcell_owner", "--capabilities", "database,memory", "--force"],
+        )
+
+        registry = read_registry(initted_project)
+        entry = next(e for e in registry if e.instance == "stdcell_owner")
+        assert set(entry.capabilities) == {"database", "memory"}
+
+    def test_orphan_gets_agent_file(self, initted_project: Path) -> None:
+        _make_orphan(initted_project, "stdcell_owner")
+
+        _invoke_in(
+            initted_project,
+            ["add", "stdcell_owner", "--capabilities", "database,memory", "--force"],
+        )
+
+        agent_file = (
+            initted_project / ".opencode" / "agents" / "stdcell_owner.md"
+        )
+        assert agent_file.is_file()
+        content = agent_file.read_text()
+        assert "mode: subagent" in content
+        assert "ROLE.md" in content
+
+    def test_orphan_appears_in_agents_md(self, initted_project: Path) -> None:
+        _make_orphan(initted_project, "stdcell_owner")
+
+        _invoke_in(
+            initted_project,
+            ["add", "stdcell_owner", "--capabilities", "database,memory", "--force"],
+        )
+
+        agents_md = (initted_project / "AGENTS.md").read_text()
+        assert "stdcell_owner" in agents_md

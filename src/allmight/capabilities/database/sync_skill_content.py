@@ -75,23 +75,71 @@ role-load plugin still injects its `ROLE.md` at every turn, but
 This happens when a personality was copied in from another project,
 restored from `.allmight/memory-history/`, or created out-of-band.
 
+The reconciliation path **reuses `allmight add --force`** — there is
+no separate "reconcile" command. `add --force` is intentionally
+incremental on populated personality dirs:
+
+- `ROLE.md` carries a write-once guard at the framework level
+  (database + memory both check `if target.exists(): return` before
+  writing it; `--force` is ignored on this path) — your customised
+  ROLE.md is **never overwritten**.
+- `memory/journal/`, `memory/understanding/`, `memory/usage.log`,
+  `memory/skills-log.md`, `memory/config.yaml`, `STATUS.md` all use
+  write-once guards or `mkdir(exist_ok=True)` — existing files are
+  preserved, only missing scaffolding is created.
+- `database/<workspace>/config.yaml` and the SMAK vector index
+  `database/<workspace>/store/` are managed by SMAK out-of-band;
+  `add` does not touch them.
+- The work that actually happens: registry append, root `AGENTS.md`
+  ALL-MIGHT section recompose, and `.opencode/agents/<name>.md`
+  subagent pointer write.
+
 To reconcile:
 
-1. Run `allmight reconcile` (dry run). The CLI prints every
-   unregistered `personalities/*/` it finds, with auto-detected
-   capabilities inferred from subdir presence
-   (`personalities/<name>/database/` → `database`,
-   `personalities/<name>/memory/` → `memory`). Orphans missing
-   `ROLE.md` or any capability subdir are flagged `[skip: ...]`.
-2. Show the list to the user and confirm the detected capabilities
-   are correct. If a capability is missing from the detection
-   (e.g. the user intended `memory` but the `memory/` subdir
-   doesn't exist yet), tell them to create the missing subdir or use
-   `allmight add --force <name> --capabilities ...` instead.
-3. If everything looks right, run `allmight reconcile --yes`. The
-   command writes `.allmight/personalities.yaml` and recomposes
-   `AGENTS.md` plus the per-personality `.opencode/agents/<name>.md`
-   files so the new entries show up in agent-visible surfaces.
+1. List the registered personalities and compare against disk:
+
+   ```bash
+   allmight list
+   ls personalities/ 2>/dev/null
+   ```
+
+   The orphans are the directories listed by the second command but
+   missing from the first.
+
+2. For each orphan, inspect the directory to confirm it is a real
+   personality (has `ROLE.md`) and infer its capabilities from
+   subdir presence:
+
+   - `personalities/<name>/database/` exists → include `database`
+   - `personalities/<name>/memory/` exists → include `memory`
+
+   Skip directories without `ROLE.md` or without any capability
+   subdir — they aren't well-formed personalities.
+
+3. Snapshot memory before applying changes, so any surprise is
+   recoverable via `allmight memory restore`:
+
+   ```bash
+   allmight memory snapshot --message "before reconcile <names>"
+   ```
+
+4. Show the user the orphan list with detected capabilities and ask
+   them to confirm. If they want a different capability set for a
+   given orphan, use their answer instead of the detection.
+
+5. For each confirmed orphan, register it:
+
+   ```bash
+   allmight add --force <name> --capabilities <detected,or,user-supplied>
+   ```
+
+   This appends the registry row, recomposes `AGENTS.md`, and writes
+   `.opencode/agents/<name>.md`. Existing user content in
+   `personalities/<name>/` is preserved (see write-once guards
+   above).
+
+6. After all orphans are processed, run `allmight list` to verify
+   they now appear, and tell the user which were registered.
 
 Reconciliation is **additive only** — it never removes registry
 entries whose personality directory has been deleted. To prune
