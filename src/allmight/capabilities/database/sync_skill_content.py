@@ -19,6 +19,10 @@ SYNC_SKILL_BODY = """\
 - After `allmight init` reports `.opencode/` **compose conflicts**
   (manifest at `.allmight/templates/conflicts.yaml`) — you authored a
   file All-Might also wanted to write
+- To register **orphan personalities** — directories under
+  `personalities/<name>/` that have a `ROLE.md` but aren't listed in
+  `.allmight/personalities.yaml` (e.g. copied in from another project
+  or created out-of-band)
 
 ## How it works
 
@@ -61,6 +65,85 @@ SYNC_SKILL_BODY = """\
    if they are still present. The knowledge graph is now read-only from
    the agent surface; SMAK CLI handles ingest/enrich out-of-band.
 3. Update the AGENTS.md ALL-MIGHT section to match the staged `claude-md-section.md`
+
+### Orphan personality reconciliation
+
+If `personalities/<name>/` exists on disk but isn't in
+`.allmight/personalities.yaml`, the personality is "orphaned" — the
+role-load plugin still injects its `ROLE.md` at every turn, but
+`allmight list` won't show it and `AGENTS.md` won't include it.
+This happens when a personality was copied in from another project,
+restored from `.allmight/memory-history/`, or created out-of-band.
+
+The reconciliation path **reuses `allmight add --force`** — there is
+no separate "reconcile" command. `add --force` is intentionally
+incremental on populated personality dirs:
+
+- `ROLE.md` carries a write-once guard at the framework level
+  (database + memory both check `if target.exists(): return` before
+  writing it; `--force` is ignored on this path) — your customised
+  ROLE.md is **never overwritten**.
+- `memory/journal/`, `memory/understanding/`, `memory/usage.log`,
+  `memory/skills-log.md`, `memory/config.yaml`, `STATUS.md` all use
+  write-once guards or `mkdir(exist_ok=True)` — existing files are
+  preserved, only missing scaffolding is created.
+- `database/<workspace>/config.yaml` and the SMAK vector index
+  `database/<workspace>/store/` are managed by SMAK out-of-band;
+  `add` does not touch them.
+- The work that actually happens: registry append, root `AGENTS.md`
+  ALL-MIGHT section recompose, and `.opencode/agents/<name>.md`
+  subagent pointer write.
+
+To reconcile:
+
+1. List the registered personalities and compare against disk:
+
+   ```bash
+   allmight list
+   ls personalities/ 2>/dev/null
+   ```
+
+   The orphans are the directories listed by the second command but
+   missing from the first.
+
+2. For each orphan, inspect the directory to confirm it is a real
+   personality (has `ROLE.md`) and infer its capabilities from
+   subdir presence:
+
+   - `personalities/<name>/database/` exists → include `database`
+   - `personalities/<name>/memory/` exists → include `memory`
+
+   Skip directories without `ROLE.md` or without any capability
+   subdir — they aren't well-formed personalities.
+
+3. Snapshot memory before applying changes, so any surprise is
+   recoverable via `allmight memory restore`:
+
+   ```bash
+   allmight memory snapshot --message "before reconcile <names>"
+   ```
+
+4. Show the user the orphan list with detected capabilities and ask
+   them to confirm. If they want a different capability set for a
+   given orphan, use their answer instead of the detection.
+
+5. For each confirmed orphan, register it:
+
+   ```bash
+   allmight add --force <name> --capabilities <detected,or,user-supplied>
+   ```
+
+   This appends the registry row, recomposes `AGENTS.md`, and writes
+   `.opencode/agents/<name>.md`. Existing user content in
+   `personalities/<name>/` is preserved (see write-once guards
+   above).
+
+6. After all orphans are processed, run `allmight list` to verify
+   they now appear, and tell the user which were registered.
+
+Reconciliation is **additive only** — it never removes registry
+entries whose personality directory has been deleted. To prune
+stale entries, edit `.allmight/personalities.yaml` directly.
 
 ### Compose conflicts (`.opencode/` entries you authored)
 
