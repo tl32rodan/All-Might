@@ -39,7 +39,7 @@ All-Might/                          ← This repo (the framework)
 ├── src/allmight/                    ← Framework source code
 │   ├── capabilities/                ← Built-in capability templates
 │   │   ├── database/                ← knowledge-graph workspaces + /search /sync /onboard /one-for-all /all-for-one
-│   │   └── memory/                  ← L1/L2/L3 agent memory + /remember (Record + Reflect) + /recall
+│   │   └── memory/                  ← L1/L2/L3 agent memory + /remember + /reflect + /recall
 │   ├── personalities/               ← Deprecation shim only — re-exports allmight.capabilities
 │   ├── bridge/                      ← SMAK CLI subprocess wrapper (internal)
 │   ├── config/                      ← config.yaml manager
@@ -146,10 +146,16 @@ rejected before and will be rejected again.
   free-form. Multi-personality stays first-class — `/onboard` can
   create one or many. The fallback when the user has no specific
   purpose is the `general` suggestion (database + memory).
-- **`/reflect` is folded into `/remember`.** The `/remember.md`
-  body has two top-level sections (`# Record` and `# Reflect`);
-  the agent picks based on trigger context. Do not re-introduce
-  a separate `/reflect` command.
+- **`/remember` and `/reflect` are separate commands.** Part-D
+  folded them into a single `/remember` body with `# Record` /
+  `# Reflect` sections; the Wave-2 design-review refactor split
+  them apart again so each body stays short enough for
+  less-capable agents in air-gap deployments to follow without
+  reading past their attention window. `/remember` records a
+  single observation; `/reflect` runs the periodic memory audit
+  (cap triage, scope drift, insights). Trigger-context picking
+  no longer lives inside a single body — the agent picks the
+  right command by name.
 - **Personality transfer is themed One For All / All For One.**
   Cross-project moves go through two agent-driven surfaces:
   - `/one-for-all` (skill, with PII review) — bundle a single
@@ -223,9 +229,10 @@ the indexed version. Embedding cost (5–30 s) never blocks a turn.
   mirror keeps memory human-readable, diff-able, and recoverable.
   SMAK provides the vector layer where it is justified (L3 only).
 - **No `/distill` slash command.** Incremental pattern detection is
-  folded into `/remember#Record`. Batch distillation, if ever
-  needed, becomes a CLI (`allmight memory distill`) that calls the
-  Claude API directly — out of the agent's context window entirely.
+  folded into `/remember`'s Pattern Check step. Batch distillation,
+  if ever needed, becomes a CLI (`allmight memory distill`) that
+  calls the Claude API directly — out of the agent's context window
+  entirely.
 
 ---
 
