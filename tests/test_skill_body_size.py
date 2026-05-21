@@ -42,9 +42,9 @@ def _recall_body() -> str:
 # ratchet only moves downward. After a trim, lower the cap in the
 # same PR so future regressions get caught.
 BODY_BUDGETS: list[tuple[str, callable, int]] = [
-    ("/remember (command)", _remember_body, 115),
-    ("/reflect (command)", _reflect_body, 110),
-    ("/recall (command)", _recall_body, 124),
+    ("/remember (command)", _remember_body, 109),
+    ("/reflect (command)", _reflect_body, 104),
+    ("/recall (command)", _recall_body, 118),
     ("/onboard (skill)", lambda: ONBOARD_SKILL_BODY, 70),
     ("/sync (skill)", lambda: SYNC_SKILL_BODY, 227),
     ("/one-for-all (skill)", lambda: ONE_FOR_ALL_SKILL_BODY, 174),
