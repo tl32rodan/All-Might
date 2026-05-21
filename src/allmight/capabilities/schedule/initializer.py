@@ -34,16 +34,31 @@ class ScheduleInitializer:
         force: bool = False,
         staging: bool = False,
     ) -> None:
-        """Write ``.opencode/skills/scheduling/SKILL.md``.
+        """Write ``.opencode/skills/scheduling/SKILL.md`` on fresh init only.
 
-        ``staging`` is accepted for parity with the other capability
-        initializers but currently ignored — the skill body is small
-        and never conflicts in practice, so it goes straight to the
-        live path. If/when the skill grows surface that can conflict
-        with user edits, route through ``.allmight/templates/`` here
-        the same way memory does.
+        Matches the established pattern (memory's ``recover``, database's
+        ``onboard`` / ``one-for-all`` / ``all-for-one`` / ``split``):
+        skill bodies are written on fresh init via ``install_skill``
+        (which carries ``ALLMIGHT_MARKER_MD`` and uses ``write_guarded``)
+        and **skipped** on re-init. The on-disk SKILL.md from the
+        previous install stays in place; ``allmight init --force`` is
+        the documented escape hatch when a refresh is desired.
+
+        Only the ``/sync`` skill itself is unconditionally re-written —
+        because it's the meta-skill that teaches the agent how to
+        reconcile staged templates with user-customised files.
+
+        T2 follow-up: if the scheduling docs start evolving frequently
+        enough that "stale on re-init" becomes a real problem, stage
+        the SKILL.md to ``.allmight/templates/skills/scheduling/SKILL.md``
+        and teach the ``/sync`` skill (in
+        ``src/allmight/capabilities/database/sync_skill_content.py``)
+        about ``.allmight/templates/skills/<name>/`` → ``.opencode/
+        skills/<name>/`` mapping. Currently no mapping exists, so
+        full proper staging needs both ends updated.
         """
-        del staging  # T1: skill body is small, no staging path yet
+        if staging:
+            return
         install_skill(
             project_root,
             name="scheduling",

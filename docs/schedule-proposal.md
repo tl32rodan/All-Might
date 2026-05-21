@@ -142,6 +142,66 @@ The last test is the negative assertion required by CLAUDE.md's
 
 These all land in T2.
 
+### 3.6 `/sync` interaction (added retroactively)
+
+Re-init (`allmight init` on an existing project, i.e.
+`staging=True`) follows the established pattern: **only the `/sync`
+skill itself is unconditionally re-written**; every other skill
+(`onboard`, `one-for-all`, `all-for-one`, `split`, `recover`) is
+written on fresh init only and skipped on re-init. The on-disk
+SKILL.md from the previous install stays in place;
+`allmight init --force` is the documented escape hatch when a
+user genuinely wants a refresh.
+
+T1's `initialize_globals` matches this: `if staging: return`.
+This guarantees:
+
+- A user who tweaked the SKILL.md body but kept our marker is not
+  silently clobbered on re-init. (The previous draft of T1 used
+  `del staging` and would have lost the edit — fixed.)
+- User files inside `personalities/<p>/scheduled/<task>.md` are
+  never touched by re-init (no marker means `mkdir(exist_ok=True)`
+  only).
+
+Test coverage in `tests/test_schedule_capability.py::TestSyncInteraction`:
+
+- `test_install_globals_no_op_on_staging_when_skill_absent`
+- `test_install_globals_preserves_user_edits_with_marker_on_reinit`
+- `test_install_globals_writes_fresh_on_non_staging`
+- `test_per_personality_scheduled_dir_idempotent_on_reinit`
+
+Known limitation: a project on a stale SKILL.md version after the
+upstream catalogue is updated has to opt in (`init --force`) to
+get the refresh. Same trade-off every other capability ships
+with. Live with it unless the scheduling docs start evolving
+fast enough that the staleness becomes a real complaint.
+
+### 3.7 Follow-up for T2 (also added retroactively)
+
+If point 3.6's "stale on re-init" becomes a real complaint for
+scheduling specifically (more likely than for `recover` because
+the runtime matrix evolves with OpenCode / CC / opencode-scheduler
+releases), the fix is **proper staging**:
+
+1. T2's `initialize_globals` stages the fresh SKILL.md to
+   `.allmight/templates/skills/scheduling/SKILL.md`.
+2. The `/sync` skill body in
+   `src/allmight/capabilities/database/sync_skill_content.py`
+   gains a new mapping line:
+
+   > `.allmight/templates/skills/<name>/SKILL.md` →
+   > `.opencode/skills/<name>/SKILL.md`
+
+3. Existing /sync semantics handle the rest: only merge if the
+   working file is marker'd; preserve user-authored copies; show
+   diff before overwriting if user has diverged from the staged
+   template.
+
+This is a strict superset of T1 behaviour — implementing it later
+is no rework, just adding the missing path. T2 should make the
+call once dogfood data shows whether the manual `init --force`
+path is enough.
+
 ---
 
 ## 4. T2 milestone — declarative state + apply + schema check + sync

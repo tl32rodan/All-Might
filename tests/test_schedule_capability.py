@@ -181,6 +181,126 @@ class TestInstallGlobalsWritesSkill:
 
 
 # ---------------------------------------------------------------------------
+# /sync interaction — re-init must NOT clobber user-edited (marker'd) SKILL.md
+# ---------------------------------------------------------------------------
+
+
+class TestSyncInteraction:
+    """Re-init (``staging=True``) must skip the skill write.
+
+    Matches the established pattern — memory's ``recover`` skill and
+    database's ``onboard`` / ``one-for-all`` / ``all-for-one`` /
+    ``split`` skills are all installed on fresh init only and skipped
+    on re-init. Only the ``/sync`` meta-skill itself is unconditionally
+    re-written.
+
+    The bug this guards against: if re-init unconditionally re-emits
+    the SKILL.md, a user who tweaked the body but kept our marker
+    silently loses their edits the next time they run ``allmight init``.
+    """
+
+    def test_install_globals_no_op_on_staging_when_skill_absent(
+        self, project_root: Path, manifest: ProjectManifest
+    ) -> None:
+        # Simulate re-init on a project where the skill was never
+        # installed: staging=True should NOT create it.
+        ctx_reinit = InstallContext(
+            project_root=project_root,
+            manifest=manifest,
+            staging=True,
+            force=False,
+        )
+        TEMPLATE.install_globals(ctx_reinit)
+        skill_md = project_root / ".opencode" / "skills" / "scheduling" / "SKILL.md"
+        assert not skill_md.exists(), (
+            "re-init must not install the skill — only fresh init does"
+        )
+
+    def test_install_globals_preserves_user_edits_with_marker_on_reinit(
+        self, project_root: Path, manifest: ProjectManifest
+    ) -> None:
+        # Set up: install once (fresh), then tamper with the body but
+        # keep the marker (the realistic "user tweaked it" case).
+        ctx_fresh = InstallContext(
+            project_root=project_root,
+            manifest=manifest,
+            staging=False,
+            force=False,
+        )
+        TEMPLATE.install_globals(ctx_fresh)
+        skill_md = project_root / ".opencode" / "skills" / "scheduling" / "SKILL.md"
+        # User edit — keeps the marker but rewrites the body.
+        skill_md.write_text(
+            "---\nname: scheduling\ndescription: edited\n---\n\n"
+            + ALLMIGHT_MARKER_MD
+            + "\n\nUSER EDIT — must survive re-init\n"
+        )
+        original_content = skill_md.read_text()
+
+        # Re-init.
+        ctx_reinit = InstallContext(
+            project_root=project_root,
+            manifest=manifest,
+            staging=True,
+            force=False,
+        )
+        TEMPLATE.install_globals(ctx_reinit)
+
+        assert skill_md.read_text() == original_content, (
+            "re-init silently clobbered a marker'd user-edited skill"
+        )
+
+    def test_install_globals_writes_fresh_on_non_staging(
+        self, project_root: Path, manifest: ProjectManifest
+    ) -> None:
+        # The other side of the symmetry: fresh init still writes.
+        ctx = InstallContext(
+            project_root=project_root,
+            manifest=manifest,
+            staging=False,
+            force=False,
+        )
+        TEMPLATE.install_globals(ctx)
+        skill_md = project_root / ".opencode" / "skills" / "scheduling" / "SKILL.md"
+        assert skill_md.exists()
+        # Fresh body, with our marker.
+        content = skill_md.read_text()
+        assert ALLMIGHT_MARKER_MD in content
+        assert "USER EDIT" not in content
+
+    def test_per_personality_scheduled_dir_idempotent_on_reinit(
+        self,
+        project_root: Path,
+        manifest: ProjectManifest,
+        personality: Personality,
+    ) -> None:
+        # On re-init, ``allmight init`` does NOT call ``template.install``
+        # for existing personalities (only ``install_globals``).
+        # Independently, the per-personality dir must be idempotent
+        # against staging=True for the case that a future call path
+        # exercises it. User files in scheduled/ must survive.
+        ctx_fresh = InstallContext(
+            project_root=project_root,
+            manifest=manifest,
+            staging=False,
+            force=False,
+        )
+        TEMPLATE.install(ctx_fresh, personality)
+        task_file = personality.root / "scheduled" / "my-task.md"
+        task_file.write_text("USER TASK FILE — no marker, must survive\n")
+
+        ctx_reinit = InstallContext(
+            project_root=project_root,
+            manifest=manifest,
+            staging=True,
+            force=False,
+        )
+        TEMPLATE.install(ctx_reinit, personality)
+        assert task_file.exists()
+        assert "USER TASK FILE" in task_file.read_text()
+
+
+# ---------------------------------------------------------------------------
 # install — per-personality dir scaffold
 # ---------------------------------------------------------------------------
 
