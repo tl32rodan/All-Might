@@ -107,7 +107,9 @@ class TestFirstInit:
         commands = sample_project / ".opencode" / "commands"
         assert (commands / "remember.md").exists()
         assert (commands / "recall.md").exists()
-        assert not (commands / "reflect.md").exists(), "/reflect folded into /remember"
+        # Wave 2 of the design-review refactor split ``/reflect`` back
+        # out of ``/remember``; both bodies now ship.
+        assert (commands / "reflect.md").exists()
 
     def test_first_init_no_sync_command(self, sample_project):
         """First init does NOT create /sync — it's only needed on re-init."""

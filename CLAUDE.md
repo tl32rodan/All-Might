@@ -651,6 +651,60 @@ is a regression even if tests pass.
 
 ---
 
+## Skill / Command Body Style Guide
+
+Every emitted `.md` body (skill / command) is loaded into the agent's
+context every time the user invokes it — often when context budget
+is tight. Air-gap deployments run on less-capable models that cannot
+follow long decision trees. The bar is **simple but functionally
+complete**: short prose that a Haiku-class model can act on, not
+SOP manuals for a junior employee.
+
+### Hard rules
+
+- **Size budget — pinned by `tests/test_skill_body_size.py`**
+  - Per-skill / per-command body ≤ the budget table in that test.
+  - Adding to a body counts as a regression; reduce or split first.
+
+- **Content lives in `.md`, Python is a loader.**
+  - Bodies live at `capabilities/<cap>/templates/{skills,commands}/<name>.md`.
+  - Python emits a 5-line wrapper that reads the file at install time.
+  - Schedule capability is the reference (`schedule/skill_content.py:17-19`).
+  - Inline f-strings are allowed only for ≤20-line dynamic bodies.
+
+- **Single Source of Truth.**
+  - Routing protocol lives **only** in `core/routing.py::ROUTING_PREAMBLE`.
+  - L2 `_index.md` schema lives **only** in `_l2_index_schema()`.
+  - Other bodies reference these by name; never restate.
+
+- **Defer to CLI for procedural details.**
+  - Enum values, file-format schemas, multi-step bookkeeping →
+    use `allmight <verb>` and point at `--help`.
+  - Skills declare *intent*; the CLI is the canonical reference.
+
+### Four design questions for any new / edited body
+
+1. **Trust the model** — can step-by-step prose collapse to
+   "do X; one example here"?
+2. **Defer to CLI** — is this prose describing a thing a CLI command
+   could do deterministically?
+3. **Single responsibility** — does the body branch on trigger
+   context? If yes, split into two bodies.
+4. **Lazy-load** — does this need to be always-loaded? Most skills
+   are invoked rarely; their bodies pay token rent every turn.
+
+### Anti-patterns (rejected on sight)
+
+- Meta-cognition instructions ("first reflect on what you noticed,
+  then list candidates, then filter...") — capable models already
+  do this; weak models will mechanise it into noise.
+- Restating routing / switching / scope-decision rules in a body
+  that is not the canonical source.
+- 11-field frontmatter schemas inlined in skill prose — write a
+  CLI subcommand that emits the entries with deterministic IDs.
+
+---
+
 ## Discipline When Generating Third-Party Integrations
 
 The initializer writes files that execute in foreign runtimes
