@@ -1232,6 +1232,29 @@ class TestTrajectoryWriterPlugin:
         # Emits the sentinel so downstream export can distinguish it.
         assert "allmight_journal: v1" in content
 
+    def test_trajectory_writer_flush_is_permission_safe(self, project_root):
+        """A different OS user (EACCES on the journal dir) must NOT break
+        the session. mkdirSync + writeFileSync inside flush() must run
+        inside a try/catch so the plugin silent-fails instead of
+        propagating to the OpenCode event loop."""
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "plugins" / "trajectory-writer.ts"
+        ).read_text()
+        # Both filesystem calls must live inside the same try block —
+        # find the mkdirSync call and walk backwards to the nearest brace.
+        mkdir_idx = content.index("mkdirSync(dir, { recursive: true })")
+        write_idx = content.index("writeFileSync(path, frontmatter + body)")
+        # The try opens before mkdirSync, and writeFileSync sits after it.
+        try_idx = content.rfind("try {", 0, mkdir_idx)
+        assert try_idx != -1, "mkdirSync must be guarded by a try block"
+        catch_idx = content.index("} catch", write_idx)
+        # No other try/catch may slip in between — assert ordering.
+        assert try_idx < mkdir_idx < write_idx < catch_idx
+        # Negative: bare unguarded calls are exactly what broke the
+        # different-account use case. They must not return.
+        assert "  mkdirSync(dir, { recursive: true });\n  const path" not in content
+
 
 class TestUsageLoggerPlugin:
     """usage-logger.ts — real-time appends to memory/usage.log so the
