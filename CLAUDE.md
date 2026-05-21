@@ -619,6 +619,27 @@ is a regression even if tests pass.
   user-authored on re-init and preserved. **Skipping the marker
   is a silent data-loss bug** — the file gets clobbered or, worse,
   silently divorced from re-init flow.
+- **Re-init (`staging=True`) skips every skill write except `/sync`.**
+  When a capability ships a skill via `install_skill`, its
+  `initialize_globals` must `if staging: return` before the install
+  call (or take the `else:` branch the way memory and database do for
+  their non-skill assets). `del staging` is a code smell —
+  `write_guarded` silently clobbers a user who tweaked the SKILL.md
+  body but kept our marker, because the marker check only proves
+  "All-Might wrote this once", not "the body is still ours". Only
+  `/sync` writes unconditionally because it's the meta-skill that
+  teaches reconciliation. T1 of the schedule capability shipped
+  buggy with `del staging` and was fixed in a follow-up — the same
+  hole would hit any new skill added to memory or database. Verify
+  with a test that lays down a marker'd SKILL.md with custom
+  content, calls `initialize_globals(staging=True)`, and asserts the
+  custom content survives. If a skill's body genuinely needs to
+  refresh on re-init, do it properly: stage to
+  `.allmight/templates/skills/<name>/SKILL.md` *and* extend
+  `database/sync_skill_content.py` with the new
+  `.allmight/templates/skills/<name>/SKILL.md` →
+  `.opencode/skills/<name>/SKILL.md` mapping — otherwise `/sync`
+  walks files it doesn't know what to do with.
 - **When in doubt: add a flag, not a capability.** A new capability
   is justified only when it has its own data dir, its own
   skills/commands, and a meaningful uninstall semantics.
