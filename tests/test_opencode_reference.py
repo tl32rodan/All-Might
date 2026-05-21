@@ -18,6 +18,10 @@ import pytest
 from allmight.core.markers import ALLMIGHT_MARKER_MD
 from allmight.core.opencode_reference import (
     OPENCODE_VERSION,
+    _CHEAT_SHEET_FILES,
+    _DATA_DIR,
+    _SKILL_BODY_FILE,
+    _VERSION_PLACEHOLDER,
     write_opencode_reference,
 )
 from allmight.core.personalities import write_init_scaffold
@@ -181,6 +185,68 @@ class TestScaffoldIntegration:
             / "SKILL.md"
         )
         assert skill.is_file()
+
+
+class TestMarkdownSources:
+    """Pin the markdown-as-data contract.
+
+    The thin-reader refactor moved cheat-sheet content out of Python
+    string constants and into ``core/data/opencode_reference/*.md``.
+    These tests guard the source side: substitution must happen, the
+    placeholder must be present in sources, and the data dir must ship
+    with the package.
+    """
+
+    def test_data_dir_exists_alongside_module(self):
+        """The data dir must live where ``_DATA_DIR`` points.
+
+        If it does not, an editable install will still pass other
+        tests (because the source tree is the install location) but a
+        wheel install will silently break — and the failure surfaces
+        only on a fresh ``pip install allmight``, far from this PR.
+        """
+        assert _DATA_DIR.is_dir()
+        for filename in _CHEAT_SHEET_FILES + (_SKILL_BODY_FILE,):
+            assert (_DATA_DIR / filename).is_file(), (
+                f"missing source: {_DATA_DIR}/{filename}"
+            )
+
+    def test_placeholder_present_in_at_least_one_source(self):
+        """Catch a refactor that removes the placeholder by accident.
+
+        If nobody uses the placeholder, the substitution code path
+        becomes dead — and a future contributor will reasonably
+        remove it. Pinning that at least one source needs it keeps
+        the wiring honest.
+        """
+        sources_with_placeholder = [
+            f for f in (_CHEAT_SHEET_FILES + (_SKILL_BODY_FILE,))
+            if _VERSION_PLACEHOLDER in (_DATA_DIR / f).read_text()
+        ]
+        assert sources_with_placeholder, (
+            f"No source uses {_VERSION_PLACEHOLDER!r}. If versioning "
+            "is no longer needed, also remove the substitution logic "
+            "in opencode_reference._read_md."
+        )
+
+    def test_placeholder_substituted_in_rendered_output(self, project_root):
+        """The literal placeholder must NEVER appear in written files."""
+        write_opencode_reference(project_root)
+        ref_dir = project_root / ".opencode" / "reference" / "opencode"
+        for path in ref_dir.iterdir():
+            assert _VERSION_PLACEHOLDER not in path.read_text(), (
+                f"{path.name} contains the literal placeholder — "
+                "substitution did not run"
+            )
+        skill = (
+            project_root
+            / ".opencode"
+            / "skills"
+            / "opencode-ref"
+            / "SKILL.md"
+        ).read_text()
+        assert _VERSION_PLACEHOLDER not in skill
+        assert OPENCODE_VERSION in skill
 
 
 class TestAgentsMdPrimerSection:
