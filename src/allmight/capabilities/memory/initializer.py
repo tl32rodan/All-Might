@@ -2845,7 +2845,6 @@ function flush(cwd: string, sid: string, t: Trajectory): void {
   const ts = iso.replace(/[:.]/g, "-");
   const id = `${iso.slice(0, 19)}-${sid.slice(0, 6)}`;
   const dir = join(memoryDirForWorkspace(cwd, workspace), "journal", workspace);
-  mkdirSync(dir, { recursive: true });
   const path = join(dir, `${ts}-trajectory.md`);
 
   const outcome = t.tool_calls.some((c) => c.verdict === "drift" || c.verdict === "blocked")
@@ -2882,7 +2881,14 @@ function flush(cwd: string, sid: string, t: Trajectory): void {
     "---\\n";
 
   const body = `# ${iso.slice(0, 10)} \\u2014 session trajectory (${workspace})\\n`;
-  writeFileSync(path, frontmatter + body);
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path, frontmatter + body);
+  } catch {
+    // Best-effort: another account may own the journal dir (EACCES),
+    // or the disk may be full / read-only. Silent fail keeps the
+    // session alive — the trajectory entry is lost, not the chat.
+  }
 }
 
 export const TrajectoryWriterPlugin: Plugin = async ({ directory }: any) => {
