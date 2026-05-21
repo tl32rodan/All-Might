@@ -528,15 +528,16 @@ _AGENTS_MD_FRAMEWORK_PRIMER = """## About All-Might
 
 You are running inside an All-Might project. All-Might organises this
 workspace around **personalities** — user-defined roles such as
-`stdcell_owner`, `pll_owner`, or `code_reviewer` — each of which opts
-into one or more **capabilities**:
+`stdcell_owner` or `code_reviewer` — each of which opts into one or
+more **capabilities**:
 
 - **`database`** — knowledge graph over the project's source code.
   Gives the personality `/search` and a per-personality SMAK workspace
   at `personalities/<name>/database/<workspace>/`.
 - **`memory`** — cross-session memory. Gives the personality
-  `/remember`, `/recall`, and a per-personality `understanding/` +
-  `journal/` tree at `personalities/<name>/memory/`.
+  `/remember`, `/reflect`, `/recall`, and a per-personality
+  `understanding/` + `journal/` tree at
+  `personalities/<name>/memory/`.
 
 There is exactly **one** flat slash-command surface for the whole
 project (`.opencode/commands/` and `.opencode/skills/`). The
@@ -547,153 +548,103 @@ personality a command acts for is resolved at call time — see
 
 | Command | What it does |
 |---------|--------------|
-| `/onboard` | Create personalities. Proposes from `.allmight/suggestions/personalities/`, then shells out to `allmight add <name> --capabilities ...` for each pick. **Run this first when no personalities exist.** |
+| `/onboard` | Create personalities. Proposes from `.allmight/suggestions/personalities/`, then shells out to `allmight add <name>` for each pick. **Run this first when no personalities exist.** |
 | `/search <query>` | Semantic search inside the active personality's database workspace. |
-| `/remember <fact>` | Two modes — **Record** (write a new memory) or **Reflect** (review/condense existing memory). The command body picks the mode from trigger context. |
+| `/remember <fact>` | Record a single observation in the right scope (L1 / L2 / L3 / per-kind). |
+| `/reflect` | End-of-session audit: cap triage, scope drift, insights. |
 | `/recall <query>` | Search past journal entries for the active personality. |
-| `/recover` | Walk the user through restoring a deleted or overwritten memory file from `.allmight/memory-history/` (per-turn snapshots). |
-| `/one-for-all` | Bundle one personality outward for sharing (1 → 1). Reviews each file for PII, writes a manifest with lineage. |
-| `/all-for-one` | Absorb N sources into one personality (N → 1). Owns per-file dialog and ROLE.md prose reconciliation. |
-| `/split` | Refactor responsibilities within a project — extract memory + scope from one personality into another (new or existing). Same-project 1 → 1. **Rare**, manual only; database workspaces are not moved. |
-| `/sync` | Merge templates staged at `.allmight/templates/` after an `allmight init` re-run, or resolve compose conflicts. |
+| `/recover` | Restore a deleted or overwritten memory file from `.allmight/memory-history/` snapshots. |
+| `/one-for-all` | Bundle one personality outward for sharing (1 → 1). |
+| `/all-for-one` | Absorb N sources into one personality (N → 1). |
+| `/split` | Refactor within a project: extract memory + scope from one personality into another (1 → 1, same project). |
+| `/sync` | Merge `.allmight/templates/` after a re-init, or resolve compose conflicts. |
 
-The agent surface against the knowledge graph is **search-only** —
-only the `database` capability is read-only here; `memory` is written
-via `/remember`. Database index builds and sidecar edits happen
-out-of-band via the `smak` CLI; the **memory journal is auto-indexed
-between sessions**, so entries written via `/remember` become
-searchable via `/recall` starting from the next session.
+Database is **search-only** to the agent; index builds happen
+out-of-band via `smak`. The memory journal is **auto-indexed between
+sessions** — entries written via `/remember` become searchable via
+`/recall` starting from the next session.
 
 ## Routing — which personality acts?
 
-Resolve the active personality in this order:
-
-1. **Explicit mention** — the user said "as `stdcell_owner`" or
-   `@stdcell_owner …`.
-2. **Conversation context** — the last few turns clearly target one
-   personality.
-3. **Default personality** — the line
-   `> **Default personality**: <name>` at the top of `MEMORY.md`.
-4. **Single personality** — if only one is installed, use it.
-
-If none of these resolve cleanly, ask the user before guessing. The
-same rule is repeated as a preamble inside every routed command body
-(see `core/routing.py::ROUTING_PREAMBLE`).
+Every routed command body is prefixed with ``ROUTING_PREAMBLE`` (see
+`core/routing.py`), which teaches the agent to resolve the active
+personality from: explicit mention → conversation context →
+`MEMORY.md`'s ``> **Default personality**: <name>`` callout. If none
+resolves, ask the user — never guess.
 
 ## Personality subagents (`@<name>`)
 
-Every installed personality is also exposed as an OpenCode subagent at
-`.opencode/agents/<name>.md`. The user can `@<name>`-mention any
-personality from the main conversation to invoke it for a single task
-— they do **not** Tab-switch sessions. The agent file is a thin
-pointer; the true behaviour spec is `personalities/<name>/ROLE.md`.
+Every installed personality is also exposed as an OpenCode subagent
+at `.opencode/agents/<name>.md` — `@<name>`-mention to invoke for one
+task without switching sessions. The agent file is a pointer; the
+behaviour spec is `personalities/<name>/ROLE.md`.
 
 ## When to suggest user actions
 
 | Situation | Suggest |
 |---|---|
-| `.allmight/personalities.yaml` is empty / no personalities exist | Run `/onboard` |
+| `.allmight/personalities.yaml` is empty | Run `/onboard` |
 | User reports a lost or overwritten memory file | Run `/recover` |
-| Files are sitting at `.allmight/templates/` after a re-init | Run `/sync` |
-| User wants to ship a personality to another project | Run `/one-for-all` (export) |
-| User wants to fold sources into a new or existing personality | Run `/all-for-one` (merge) |
+| Files staged at `.allmight/templates/` after re-init | Run `/sync` |
+| User wants to ship a personality to another project | Run `/one-for-all` |
+| User wants to fold sources into a personality | Run `/all-for-one` |
 | Re-init complains about path conflicts | Open `.allmight/templates/conflicts.yaml` |
 
 ## Memory model — scope-first
 
-Memory is **scope-first**. Before writing, decide:
-
-- **Project-wide** — every personality should see it → append to
-  `MEMORY.md`.
-- **Personality-wide** — only this role's work →
-  `personalities/<active>/memory/understanding/<topic>.md`.
-- **Episodic / dated** — a session decision or event →
-  `personalities/<active>/memory/journal/<date>.md`.
-
-Default to per-personality unless the user explicitly says
-project-wide. The `/remember` command body has the full
-scope-decision rules.
+Memory is **scope-first**: before writing, decide whether the
+observation is project-wide (`MEMORY.md`), personality-specific
+(`personalities/<active>/memory/understanding/<topic>.md`), or
+episodic (`personalities/<active>/memory/journal/...`). Default to
+the narrower scope. Full rules: see the `/remember` body.
 
 ## Recovery awareness
 
 Every memory write is auto-snapshotted into
-`.allmight/memory-history/.git` by a post-turn hook
-(`memory-history.ts` in OpenCode, `memory_history.py` in Claude Code).
-Accidental deletes or overwrites are recoverable via `/recover` or
+`.allmight/memory-history/.git` by a per-turn hook. Accidental
+deletes / overwrites are recoverable via `/recover` or
 `allmight memory restore <file> --rev <sha>`. SMAK vector indices
-(`store/`) are excluded from snapshots — rebuild them out-of-band via
-`smak ingest`.
+(`store/`) are excluded — rebuild them out-of-band via `smak ingest`.
 
 ## SMAK reference — find before invoking
 
-The `smak` CLI is a separate Python package; All-Might shells out to
-it rather than embedding it. When you need exact flags, JSON output
-shapes, config schema, or workflow conventions for SMAK, **read
-SMAK's own canonical docs** rather than inferring from this primer.
-
-SMAK ships its agent-facing skill files **inside** the installed
-Python package (under `smak/skills/`), so they travel with both
-editable and wheel installs. Discover the package directory with:
+The `smak` CLI is a separate Python package. When you need exact
+flags, JSON shapes, or workflow conventions, **read SMAK's own
+canonical docs** instead of inferring. Discovery:
 
 ```bash
 python -c "import smak, pathlib; print(pathlib.Path(smak.__path__[0]))"
 ```
 
-`pip show smak` also works as a sanity check (returns `Location:`
-for wheel installs, `Editable project location:` for dev installs);
-the python-`__path__` form is the robust path because it points
-directly at the package regardless of install mode.
-
-From the package directory, the files that matter:
-
-| Path (relative to the package dir) | What it covers |
-|---|---|
-| `skills/smak-skill/SKILL.md` | Canonical agent-facing guide: concepts, command reference, query formulation, anti-hallucination rules. **Pull this into context before any non-trivial SMAK use.** |
-| `skills/sos-smak-skill/SKILL.md` | CliosoftSOS / EDA three-layer path model (only relevant when `$DDI_ROOT_PATH` is set on this project) |
-| `cli.py` | Exact CLI flags + `--json` output shape per command |
-| `core_ops.py` | Operation implementations when the SKILL.md is silent on an edge case |
-
-Workflow:
-
-1. Run the `python -c "import smak ..."` one-liner above. If it
-   raises `ModuleNotFoundError`, SMAK is not installed on this
-   `PYTHONPATH` — surface that to the user and stop, rather than
-   guessing flags from memory.
-2. Read `skills/smak-skill/SKILL.md` end-to-end the first time; on
-   later sessions, skim it for the specific command you need.
-3. Cross-check `cli.py` only when SKILL.md is ambiguous — it is the
-   executable spec.
+From that directory: `skills/smak-skill/SKILL.md` is the canonical
+agent-facing guide (pull it into context before any non-trivial use);
+`skills/sos-smak-skill/SKILL.md` covers CliosoftSOS / EDA paths;
+`cli.py` is the executable spec. If `import smak` raises
+``ModuleNotFoundError``, surface that to the user — do not guess.
 
 ## OpenCode reference — read before touching `.opencode/`
 
-All-Might generates `.opencode/plugins/*.ts`, `.opencode/agents/<name>.md`,
-slash-command bodies and `opencode.json` shims. When you are about to
-author or modify any of those, read the bundled cheat-sheet at
-`.opencode/reference/opencode/` first — it covers the wrong-shape
-traps the Python test suite cannot catch (the `chat.message` hook
-signature, the `output.parts.unshift(...)` injection path, the
-`subagent` vs `primary` mode default).
-
-Start at `.opencode/reference/opencode/README.md`; it indexes
-`plugins.md`, `agents.md`, `skills-commands.md`, and `config.md` by
-"read me when you are about to ...". The bundle is a snapshot —
-runtime OpenCode wins on disagreement. The matching `/opencode-ref`
-skill exists so the agent has an auto-loadable pointer back here when
-the cheat-sheets are relevant.
+When authoring or modifying `.opencode/plugins/*.ts`,
+`.opencode/agents/<name>.md`, slash-command bodies or
+`opencode.json`, read the bundled cheat-sheet at
+`.opencode/reference/opencode/README.md` first — it covers the
+wrong-shape traps the test suite cannot catch (the `chat.message`
+hook signature, the `output.parts.unshift(...)` injection path, the
+`subagent` vs `primary` mode default). The matching `/opencode-ref`
+skill auto-loads this pointer when relevant.
 
 ## Layering — what lives where
 
-| File | Owner | Audience |
-|------|-------|----------|
-| `AGENTS.md` (this file) | All-Might + composed `ROLE.md` | Agent — high-level WHAT |
-| `MEMORY.md` | User / agent (auto via hook) | Project map + default-personality hint + user preferences |
-| `personalities/<name>/ROLE.md` | Per-personality, agent-extensible | Per-role behaviour spec |
-| `.opencode/skills/<name>/SKILL.md` | All-Might | Step-by-step HOW for one operation |
-| `.opencode/commands/<name>.md` | All-Might | Command body the agent runs |
-| `README.md` | Human | "Tell the agent to …" narrative |
+| File | Audience |
+|------|----------|
+| `AGENTS.md` (this file) | Agent — framework primer + composed `ROLE.md` (high-level WHAT) |
+| `MEMORY.md` | Project map + default-personality callout + user prefs |
+| `personalities/<name>/ROLE.md` | Per-role behaviour spec |
+| `.opencode/{commands,skills}/<name>` | The HOW (step-by-step bodies) |
+| `README.md` | Human-facing narrative |
 
-When you need the **how** behind a slash command, read the matching
-`.opencode/skills/<name>/SKILL.md`.
+When you need the HOW behind a slash command, read its
+`.opencode/skills/<name>/SKILL.md` or `commands/<name>.md`.
 """
 
 
