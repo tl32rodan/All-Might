@@ -493,6 +493,13 @@ def write_init_scaffold(project_root: Path) -> None:
     _write_role_load_plugin(project_root)
     _write_reflection_plugin(project_root)
 
+    # Bundled OpenCode reference + /opencode-ref skill. Framework-level
+    # (no personality owns it) so it lives next to the other scaffold
+    # writes here, not under capabilities/.
+    from .opencode_reference import write_opencode_reference
+
+    write_opencode_reference(project_root)
+
     # Claude Code compatibility bridge — markdown surface via dir
     # symlinks, agent context via @-import shim, runtime hooks for
     # role-load (memory-load lives in the memory capability).
@@ -656,6 +663,23 @@ Workflow:
    later sessions, skim it for the specific command you need.
 3. Cross-check `cli.py` only when SKILL.md is ambiguous — it is the
    executable spec.
+
+## OpenCode reference — read before touching `.opencode/`
+
+All-Might generates `.opencode/plugins/*.ts`, `.opencode/agents/<name>.md`,
+slash-command bodies and `opencode.json` shims. When you are about to
+author or modify any of those, read the bundled cheat-sheet at
+`.opencode/reference/opencode/` first — it covers the wrong-shape
+traps the Python test suite cannot catch (the `chat.message` hook
+signature, the `output.parts.unshift(...)` injection path, the
+`subagent` vs `primary` mode default).
+
+Start at `.opencode/reference/opencode/README.md`; it indexes
+`plugins.md`, `agents.md`, `skills-commands.md`, and `config.md` by
+"read me when you are about to ...". The bundle is a snapshot —
+runtime OpenCode wins on disagreement. The matching `/opencode-ref`
+skill exists so the agent has an auto-loadable pointer back here when
+the cheat-sheets are relevant.
 
 ## Layering — what lives where
 
