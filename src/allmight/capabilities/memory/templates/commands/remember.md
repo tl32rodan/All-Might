@@ -40,7 +40,10 @@ created_at: <ISO-8601>
 <What you learned, in your own words.>
 ```
 
-## After writing
+## After writing — all four steps, in order
+
+Do NOT stop early. Each step is independent; skipping one breaks
+a downstream contract.
 
 1. **Log to `memory/usage.log`**:
    ```
@@ -55,17 +58,21 @@ created_at: <ISO-8601>
      this session), add it to **Open threads**; if you closed one,
      remove it.
 
-3. **Pattern Check** (only if you wrote a journal entry):
+3. **Pattern Check** — runs if you wrote a journal entry:
    look at ≤5 most recent same-workspace entries. If a repeated
    theme emerges, promote a one-paragraph rule to
-   `memory/understanding/<workspace>.md`. Most calls land "no pattern" —
-   that is the correct default.
+   `memory/understanding/<workspace>.md`. Most calls land "no pattern"
+   — that is the correct default. If Pattern Check produces a new L2
+   write, step 4 below MUST still run.
 
-4. **L2 Index Refresh** (only if you updated `understanding/<workspace>.md`):
-   regenerate `memory/understanding/_index.md` by scanning every
-   `understanding/*.md` and listing its `^## ` headings. Match the
-   existing `_index.md` format; if missing, see `/recall` step 2
-   for the canonical schema.
+4. **L2 Index Refresh** — runs if ANY `understanding/<workspace>.md`
+   was written this turn (in the main write step OR by Pattern Check
+   above). Regenerate `memory/understanding/_index.md` by scanning
+   every `understanding/*.md` and listing its `^## ` headings. Match
+   the existing `_index.md` format; if it's missing, see `/recall`
+   step 2 for the canonical schema. The index is what makes
+   per-workspace L2 loading viable — leaving it stale silently
+   degrades `/recall`.
 
 The journal is auto-indexed between sessions — no manual
 `smak ingest` needed for `/recall` to find this entry next session.
