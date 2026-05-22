@@ -39,20 +39,4 @@ and substitute its name for ``<active>`` in every path.
 If none of these resolves, ask the user before proceeding — never
 guess. The same routing applies to every step below.
 
-## Project-root prefix — shared-agent mode
-
-Every shell command below that touches personality data prefixes the
-path with ``${ALLMIGHT_PROJECT_ROOT:-.}/`` rather than a bare
-``personalities/<active>/...``. In single-user mode the env var is
-unset, ``${ALLMIGHT_PROJECT_ROOT:-.}`` expands to ``.``, and the path
-resolves against the agent's cwd exactly as before. In shared-agent
-mode (the user has sourced ``setup.cshrc``), the env var holds the
-shared project's absolute path, so the same command works no matter
-what cwd the agent runs from.
-
-If ``ALLMIGHT_ROLE`` is set to ``user`` the project is read-only:
-``/remember`` becomes advisory and journal/understanding writes are
-skipped — explain the read-only status instead of attempting the
-write. Never hardcode absolute paths in your shell commands.
-
 """

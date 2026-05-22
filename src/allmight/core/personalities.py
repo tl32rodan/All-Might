@@ -493,15 +493,6 @@ def write_init_scaffold(project_root: Path) -> None:
     _write_role_load_plugin(project_root)
     _write_reflection_plugin(project_root)
 
-    # Shared-agent mode entry point. Sourcing setup.cshrc sets
-    # ALLMIGHT_PROJECT_ROOT and aliases opencode/allmight so the
-    # project is usable from any working directory. Idempotent via
-    # ALLMIGHT_MARKER_CSH; absent of any sourcing the env vars stay
-    # unset and behaviour matches the single-user case.
-    from .setup_script import write_setup_cshrc
-
-    write_setup_cshrc(project_root)
-
     # Bundled OpenCode reference + /opencode-ref skill. Framework-level
     # (no personality owns it) so it lives next to the other scaffold
     # writes here, not under capabilities/.
@@ -632,31 +623,6 @@ Accidental deletes or overwrites are recoverable via `/recover` or
 `allmight memory restore <file> --rev <sha>`. SMAK vector indices
 (`store/`) are excluded from snapshots — rebuild them out-of-band via
 `smak ingest`.
-
-## Shared-agent mode
-
-This project ships a `setup.cshrc` at the project root that lets many
-users open it from any working directory. Users source the file
-(`source /path/to/project/setup.cshrc`) and two env vars get exported:
-
-- **`ALLMIGHT_PROJECT_ROOT`** — absolute path to the shared project.
-  Plugins and hooks read it first when resolving personality / memory
-  paths, falling back to OpenCode's plugin-context `directory` and
-  finally `cwd`. Shell commands you emit must therefore prefix
-  personality paths with `${ALLMIGHT_PROJECT_ROOT:-.}/` rather than
-  bare `personalities/<active>/...`. Single-user mode keeps the env
-  var unset, so the prefix expands to `.` and behaviour is unchanged.
-- **`ALLMIGHT_ROLE`** — `user` (read-only, default for shared mode)
-  or `owner` (read-write). When `ALLMIGHT_ROLE=user`:
-  - `/remember` becomes advisory: do not write to journal or
-    understanding; explain that the project is read-only.
-  - The `memory-history` and `reflection` hooks short-circuit
-    without touching `.allmight/memory-history/`.
-  - Filesystem permissions on the shared dir back this up — the
-    in-app check just avoids EACCES noise in the transcript.
-
-The owner of a shared deployment sets `setenv ALLMIGHT_ROLE owner`
-in their shell init before sourcing `setup.cshrc`.
 
 ## SMAK reference — find before invoking
 
@@ -951,11 +917,8 @@ def _write_role_load_plugin(project_root: Path) -> None:
 
 def _role_load_plugin_content() -> str:
     from .plugin_telemetry import TS_HEARTBEAT_SNIPPET
-    from .project_root import TS_RESOLVE_CWD_EXPR
-    return (
-        _ROLE_LOAD_PLUGIN_TEMPLATE
-        .replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
-        .replace("__TS_RESOLVE_CWD_EXPR__", TS_RESOLVE_CWD_EXPR)
+    return _ROLE_LOAD_PLUGIN_TEMPLATE.replace(
+        "__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET,
     )
 
 
@@ -1017,10 +980,7 @@ function readAllRoles(cwd: string): string {
 }
 
 export const RoleLoadPlugin: Plugin = async ({ directory }: any) => {
-  // All-Might shared-agent mode: ALLMIGHT_PROJECT_ROOT pins paths to
-  // the shared project regardless of cwd. Falls back to OpenCode's
-  // plugin-context directory, then process.cwd() for single-user mode.
-  const cwd = __TS_RESOLVE_CWD_EXPR__;
+  const cwd = (directory as string | undefined) ?? process.cwd();
 
   return {
     event: async ({ event }: { event: any }) => {
@@ -1114,7 +1074,6 @@ def _write_reflection_plugin(project_root: Path) -> None:
 
 def _reflection_plugin_content() -> str:
     from .plugin_telemetry import TS_HEARTBEAT_SNIPPET
-    from .project_root import TS_IS_READ_ONLY_EXPR, TS_RESOLVE_CWD_EXPR
     # The prompt is interpolated into a TS backtick-string, so escape
     # backslashes, backticks, and ${ to keep the literal intact.
     escaped = (
@@ -1127,8 +1086,6 @@ def _reflection_plugin_content() -> str:
         _REFLECTION_PLUGIN_TEMPLATE
         .replace("__REFLECTION_PROMPT__", escaped)
         .replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
-        .replace("__TS_RESOLVE_CWD_EXPR__", TS_RESOLVE_CWD_EXPR)
-        .replace("__TS_IS_READ_ONLY_EXPR__", TS_IS_READ_ONLY_EXPR)
     )
 
 
@@ -1162,16 +1119,11 @@ __TS_HEARTBEAT_SNIPPET__
 const REFLECTION_PROMPT = `__REFLECTION_PROMPT__`;
 
 export const ReflectionPlugin: Plugin = async ({ directory }: any) => {
-  // All-Might shared-agent mode: see role-load.ts for the resolution
-  // contract. Read-only role (ALLMIGHT_ROLE=user) skips reflection
-  // injection — a read-only viewer has nothing to reflect on storing.
-  const cwd = __TS_RESOLVE_CWD_EXPR__;
-  const readOnly = __TS_IS_READ_ONLY_EXPR__;
+  const cwd = (directory as string | undefined) ?? process.cwd();
 
   return {
     "chat.message": async (input: any, output: any) => {
       emitHeartbeat("reflection", cwd);
-      if (readOnly) return;
       const sid = input?.sessionID;
       if (!sid) return;
       // Each Part requires id / sessionID / messageID (see OpenCode's
