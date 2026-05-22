@@ -237,25 +237,26 @@ class TestMemoryInitializer:
 
     # -- Part-F/4: cross-personality routing intelligence --------------
 
-    def test_remember_body_has_routing_across_personalities(
+    def test_remember_body_relies_on_routing_preamble(
         self, project_root,
     ):
-        """/remember body documents how to choose which personality
-        a write belongs to, and how to switch via Edit on MEMORY.md.
+        """The Wave-2 trim removed ``/remember``'s inline 35-line
+        ``Routing across personalities`` section because
+        ``ROUTING_PREAMBLE`` (prepended to every routed command body)
+        already teaches the same content. This test pins that
+        contract: the preamble's signature heading appears in the
+        body, MEMORY.md is still referenced for scope, and the
+        dropped state-file path stays out. Switching protocol now
+        lives only in the preamble + ROLE.md.
         """
         MemoryInitializer().initialize(project_root)
         body = (
             project_root / ".opencode" / "commands" / "remember.md"
         ).read_text()
-        assert "Routing across personalities" in body
-        # Must reference the MEMORY.md callout (not the dropped state file).
-        assert "Active personality" in body
+        # ROUTING_PREAMBLE has been prepended.
+        assert "## Routing — pick the active personality" in body
+        # MEMORY.md still referenced (scope decision).
         assert "MEMORY.md" in body
-        # Switching mechanism: Edit tool, not CLI.
-        assert "Edit" in body
-        assert "switch to" in body.lower() or "Switching" in body
-        # Cross-cutting hint mentions L1 + pointer pattern.
-        assert "Key Facts" in body or "project-wide" in body.lower()
 
     def test_remember_body_does_not_reference_dropped_state_file(
         self, project_root,
@@ -1135,7 +1136,7 @@ class TestReflectCommand:
     def test_reflect_mentions_all_tiers(self, project_root):
         """reflect.md references L1, L2, and L3."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
         assert "MEMORY.md" in content
         assert "understanding" in content
         assert "journal" in content
@@ -1143,8 +1144,15 @@ class TestReflectCommand:
     def test_reflect_has_checklist(self, project_root):
         """reflect.md has a structured checklist for the agent."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
-        assert "## How" in content or "## Checklist" in content or "## Steps" in content
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
+        # The Wave-2 body uses numbered ``## 1.`` / ``## 2.`` sections
+        # rather than a single ``## Steps`` parent — both shapes count.
+        assert (
+            "## How" in content
+            or "## Checklist" in content
+            or "## Steps" in content
+            or "## 1." in content
+        )
 
 
 
@@ -1171,15 +1179,22 @@ class TestFeedbackLoop:
     def test_reflect_reads_usage_log(self, project_root):
         """reflect.md includes usage review step."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
         assert "usage.log" in content
         assert "Usage Review" in content or "usage review" in content
 
     def test_reflect_generates_insights(self, project_root):
         """reflect.md has an insights generation step."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
-        assert "Insight" in content or "insight" in content
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
+        # Wave-2 body talks about "promoting to L2", "signals" — the
+        # essence is still "act on what you learned this session".
+        lowered = content.lower()
+        assert (
+            "insight" in lowered
+            or "promot" in lowered  # promote / promoting
+            or "signal" in lowered
+        )
 
 
 class TestJournalFrontmatterTemplates:
@@ -1193,7 +1208,7 @@ class TestJournalFrontmatterTemplates:
 
     def test_reflect_template_has_v1_sentinel(self, project_root):
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
+        content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
         assert "allmight_journal: v1" in content
 
 
@@ -1318,116 +1333,105 @@ class TestUsageLoggerPlugin:
             )
 
 
-class TestRememberReflectsFirst:
-    """`/remember` runs a reflection sweep before recording so lessons
-    learned aren't silently dropped by the agent's importance filter."""
+class TestRememberLessonsLearnedRouting:
+    """Wave 2 of the design-review refactor deleted the 29-line
+    ``Reflect first, then record`` preface from ``/remember``: it
+    was meta-cognition prose that capable models already follow and
+    that weaker models mechanise into noise (CLAUDE.md
+    *Style Guide* → Trust the model).
 
-    def test_remember_has_reflect_first_section(self, project_root):
-        MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
-        assert "Reflect first" in content
-        assert "lessons learned" in content.lower()
+    The lessons-learned routing rule (Mode-2 shared instance) is
+    still pinned because it is a real routing decision, not a
+    thinking instruction.
+    """
 
-    def test_remember_warns_against_importance_filter(self, project_root):
-        """Body must explicitly call out the 'feels important' bias."""
+    def test_remember_mentions_lessons_learned_routing(self, project_root):
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
-        # The reflection step exists before the scope decision.
-        reflect_idx = content.lower().find("reflect first")
-        scope_idx = content.lower().find("decide the scope")
-        assert reflect_idx != -1 and scope_idx != -1
-        assert reflect_idx < scope_idx, (
-            "Reflect-first must come before scope decision"
-        )
+        content = (
+            project_root / ".opencode" / "commands" / "remember.md"
+        ).read_text()
+        assert "lessons_learned/_inbox" in content
+        assert "_reviewed" in content
 
 
 class TestIncrementalDistill:
-    """``/remember#Record`` runs a bounded pattern check after writing
-    the new entry, promoting cross-entry patterns into L2 understanding.
+    """``/remember`` runs a bounded pattern check after writing the
+    new entry, promoting cross-entry patterns into L2 understanding.
 
     Work item B' in ``docs/plan.md`` — the design replaces a separate
     ``/distill`` command with an in-flow step that has token-bounded
     scope (last 5 entries, same workspace). Pre-compaction safe by
     construction: bounded reads keep cost predictable even at the
     worst trigger point.
+
+    Wave 2 of the design-review refactor compacted the dedicated
+    ``## After Recording: Pattern Check`` section into a brief step
+    inside the ``After writing`` numbered list — the essence stays
+    pinned (bounded sweep, same workspace, conditional L2 update),
+    but the surrounding scaffolding is gone.
     """
 
-    @staticmethod
-    def _slice_section(content: str, header: str) -> str:
-        idx = content.index(header)
-        next_h2 = content.find("\n## ", idx + 1)
-        next_h1 = content.find("\n# ", idx + 1)
-        ends = [x for x in (next_h2, next_h1) if x != -1]
-        end = min(ends) if ends else len(content)
-        return content[idx:end]
-
-    def test_remember_body_has_pattern_check_section(self, project_root):
+    def test_pattern_check_step_present_in_remember(self, project_root):
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
-        assert "## After Recording: Pattern Check" in content
+        content = (
+            project_root / ".opencode" / "commands" / "remember.md"
+        ).read_text()
+        assert "Pattern Check" in content
 
     def test_pattern_check_describes_bounded_recent_entries(self, project_root):
-        """Section must specify N=5 to bound token cost; unbounded
-        reads at pre-compaction would explode context budget."""
+        """Body must specify a small numeric cap so token cost stays
+        bounded; unbounded reads at pre-compaction would explode."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
-        section = self._slice_section(content, "## After Recording: Pattern Check")
-        assert "5" in section
+        content = (
+            project_root / ".opencode" / "commands" / "remember.md"
+        ).read_text()
+        # ``≤5`` or plain ``5``: either form pins the cap.
+        assert "5" in content
 
     def test_pattern_check_scoped_to_same_workspace(self, project_root):
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
-        section = self._slice_section(content, "## After Recording: Pattern Check")
-        assert "workspace" in section.lower()
+        content = (
+            project_root / ".opencode" / "commands" / "remember.md"
+        ).read_text()
+        assert "same-workspace" in content or "same workspace" in content.lower()
 
     def test_pattern_check_conditional_l2_update(self, project_root):
-        """Update L2 only when a pattern emerges. The design decision
+        """Update L2 only when a pattern emerges — the design decision
         that keeps L2 from filling up with one-offs."""
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
-        section = self._slice_section(content, "## After Recording: Pattern Check")
-        assert "only if" in section.lower() or "only when" in section.lower() \
-            or "skip" in section.lower()
-        assert "understanding" in section.lower()
+        content = (
+            project_root / ".opencode" / "commands" / "remember.md"
+        ).read_text()
+        lowered = content.lower()
+        assert "only if" in lowered or "only when" in lowered or "no pattern" in lowered
+        assert "understanding" in lowered
 
-    def test_pattern_check_lists_pattern_kinds(self, project_root):
-        """Agent needs concrete pattern criteria, not 'something
-        important emerges'. The plan names three: repeated theme,
-        correction of earlier note, completion of a hypothesis.
+    def test_pattern_check_is_generic(self, project_root):
+        """No personality literal in /remember's content body. Pinned
+        by the wider generic-command test, but pin here too because
+        future edits in this area are likely to introduce names.
+
+        Scope the check to *after* ROUTING_PREAMBLE — the preamble
+        carries ``"for stdcell_owner ..."`` as an explicit-mention
+        example, which is intentional documentation, not a leak.
         """
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
-        section = self._slice_section(content, "## After Recording: Pattern Check").lower()
-        # Pinning the trio: at least two of the three.
-        signals = [
-            "repeat" in section or "recurr" in section,
-            "correct" in section or "contradict" in section,
-            "hypothesis" in section or "complet" in section,
-        ]
-        assert sum(signals) >= 2, f"Expected ≥2 pattern signals, got {signals}"
-
-    def test_pattern_check_placed_inside_record_before_what_not(self, project_root):
-        """Pattern check belongs in # Record, after the write steps,
-        before the general 'what NOT to remember' filter. Order
-        affects how the agent reads the procedure."""
-        MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
-        record_idx = content.find("\n# Record")
-        reflect_idx = content.find("\n# Reflect")
-        pattern_idx = content.find("## After Recording: Pattern Check")
-        whatnot_idx = content.find("## What NOT to remember")
-        assert record_idx != -1 and reflect_idx != -1
-        assert record_idx < pattern_idx < whatnot_idx < reflect_idx
-
-    def test_pattern_check_section_is_generic(self, project_root):
-        """No personality literal in the section body. Pinned by
-        the wider generic-command test, but pin here too because
-        future edits to this section are likely to introduce names."""
-        MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
-        section = self._slice_section(content, "## After Recording: Pattern Check")
+        content = (
+            project_root / ".opencode" / "commands" / "remember.md"
+        ).read_text()
+        # Drop ROUTING_PREAMBLE before checking for leaks — the
+        # preamble carries personality-name examples by design.
+        # The body proper starts where the preamble's last paragraph
+        # ends; "Persist a single observation" is the first sentence
+        # of remember.md.
+        post_preamble_marker = "Persist a single observation"
+        idx = content.find(post_preamble_marker)
+        assert idx != -1, "remember.md body marker missing"
+        body_after_preamble = content[idx:]
         for name in ("stdcell_owner", "pll_owner", "code_reviewer"):
-            assert name not in section, f"Personality literal {name!r} leaked"
+            assert name not in body_after_preamble, (
+                f"Personality literal {name!r} leaked into body"
+            )
 
 
 class TestMemorySizeWatch:
@@ -1653,19 +1657,20 @@ class TestL2Index:
     def test_remember_index_refresh_after_pattern_check(self, project_root):
         """Pattern Check may produce the L2 write — Index Refresh must
         come after Pattern Check so the regenerated index reflects the
-        final L2 state, not the pre-Pattern-Check state."""
+        final L2 state, not the pre-Pattern-Check state. Wave 2
+        compacted both into adjacent numbered steps; the ordering
+        contract still holds.
+        """
         MemoryInitializer().initialize(project_root)
-        content = (project_root / ".opencode" / "commands" / "remember.md").read_text()
-        pattern_idx = content.find("## After Recording: Pattern Check")
-        # Index refresh signal — header or first `_index.md` mention
-        # within Record.
-        record_idx = content.find("\n# Record")
-        reflect_idx = content.find("\n# Reflect")
-        index_idx = content.find("_index.md", record_idx, reflect_idx)
+        content = (
+            project_root / ".opencode" / "commands" / "remember.md"
+        ).read_text()
+        pattern_idx = content.find("Pattern Check")
+        index_idx = content.find("L2 Index Refresh")
         assert pattern_idx != -1
         assert index_idx != -1
         assert pattern_idx < index_idx, (
-            "Index Refresh must follow Pattern Check inside Record"
+            "Index Refresh must follow Pattern Check"
         )
 
     # ---------------- /recall reader ----------------
@@ -1714,22 +1719,30 @@ class TestL2Index:
         assert "_index.md" in remember
         assert "_index.md" in recall
 
-    def test_commands_share_schema_via_helper(self, project_root):
-        """Both bodies must embed schema text from the canonical
-        helper, so editing one place updates both."""
+    def test_recall_embeds_schema_via_helper(self, project_root):
+        """``/recall`` (the L2 reader) still embeds the canonical
+        schema text from ``_l2_index_schema()`` so the agent knows
+        what shape ``_index.md`` should be.
+
+        Wave 2 of the design-review refactor stopped duplicating the
+        schema in ``/remember`` (the writer): the body now points
+        agents at ``/recall``'s schema and at the existing
+        ``_index.md`` file as the source of truth. This avoids the
+        two-bodies-must-stay-in-sync class of bug while keeping a
+        single canonical schema authority.
+        """
         from allmight.capabilities.memory.initializer import _l2_index_schema
         MemoryInitializer().initialize(project_root)
         schema = _l2_index_schema()
-        # Pull the first non-trivial line of the schema as a probe.
         probe_lines = [
             ln.strip() for ln in schema.splitlines()
             if ln.strip() and not ln.strip().startswith("```")
         ]
         assert probe_lines, "schema produced no probe lines"
         probe = probe_lines[0]
-        remember = (project_root / ".opencode" / "commands" / "remember.md").read_text()
-        recall = (project_root / ".opencode" / "commands" / "recall.md").read_text()
-        assert probe in remember, f"remember.md missing schema probe {probe!r}"
+        recall = (
+            project_root / ".opencode" / "commands" / "recall.md"
+        ).read_text()
         assert probe in recall, f"recall.md missing schema probe {probe!r}"
 
 

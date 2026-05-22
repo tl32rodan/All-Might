@@ -65,7 +65,10 @@ class TestDetect:
 
         assert plan.needs_migration
         assert plan.rename == {"demo-corpus": "knowledge", "demo-memory": "memory"}
-        assert ".opencode/commands/reflect.md" in plan.dropped_files
+        # reflect.md is no longer a migration signal — Wave 2 of the
+        # design-review refactor brought ``/reflect`` back as a
+        # first-class All-Might-emitted command. A legacy stub is
+        # transparently replaced on next init via marker check.
 
     def test_no_op_on_fresh_project(self, tmp_path: Path) -> None:
         runner = CliRunner()
@@ -93,14 +96,20 @@ class TestApply:
         assert (root / "personalities" / "knowledge").is_dir()
         assert (root / "personalities" / "memory").is_dir()
 
-    def test_drops_reflect(self, tmp_path: Path) -> None:
+    def test_preserves_reflect_stub_for_init_to_replace(self, tmp_path: Path) -> None:
+        """A legacy ``reflect.md`` stub is no longer hard-deleted by
+        the migrator. Wave 2 brought ``/reflect`` back; init's
+        ``write_guarded`` overwrites the marker'd stub with the
+        current body.
+        """
         root = tmp_path / "demo"
         root.mkdir()
         _write_legacy_layout(root)
 
         migrate(root)
 
-        assert not (root / ".opencode" / "commands" / "reflect.md").exists()
+        # File survives the migration; init handles the body update.
+        assert (root / ".opencode" / "commands" / "reflect.md").exists()
 
     def test_splits_agents_md_into_role_md(self, tmp_path: Path) -> None:
         root = tmp_path / "demo"

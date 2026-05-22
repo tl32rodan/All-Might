@@ -99,22 +99,36 @@ class TestMemoryCommandsRouted:
     contract; this test pins it so the regression cannot return.
     """
 
-    DATA_PATH_PATTERNS = (
+    # ``/remember`` (post-Wave-2 trim) no longer issues manual
+    # ``smak ingest`` instructions — the journal auto-indexes between
+    # sessions — so its body references three paths, not four.
+    # ``/recall`` and ``/reflect`` still reference smak_config.yaml.
+    REMEMBER_DATA_PATH_PATTERNS = (
         "personalities/<active>/memory/understanding/",
         "personalities/<active>/memory/journal/",
         "personalities/<active>/memory/usage.log",
-        "personalities/<active>/memory/smak_config.yaml",
     )
 
     def test_remember_uses_routed_paths(self, initted_project: Path) -> None:
         body = _command_body(initted_project, "remember.md")
-        for pat in self.DATA_PATH_PATTERNS:
+        for pat in self.REMEMBER_DATA_PATH_PATTERNS:
             assert pat in body, (
                 f"remember.md missing routed path '{pat}'. "
                 "Bare ``memory/...`` is the pre-Part-D regression — "
                 "every data reference must carry the "
                 "``personalities/<active>/`` prefix so the agent "
                 "resolves which personality's memory to operate on."
+            )
+
+    def test_reflect_uses_routed_paths(self, initted_project: Path) -> None:
+        body = _command_body(initted_project, "reflect.md")
+        for pat in (
+            "personalities/<active>/memory/understanding/",
+            "personalities/<active>/memory/journal/",
+            "personalities/<active>/memory/smak_config.yaml",
+        ):
+            assert pat in body, (
+                f"reflect.md missing routed path '{pat}'."
             )
 
     def test_recall_uses_routed_paths(self, initted_project: Path) -> None:

@@ -4,10 +4,16 @@ Detection is conservative — only legacy markers trigger migration:
 
 * Instance dirs ending in ``-corpus`` / ``-memory`` (the old
   project-prefixed name pattern).
-* ``.opencode/commands/reflect.md`` present (the dropped command).
 * Root ``AGENTS.md`` containing both ``<!-- ALL-MIGHT -->`` and
   ``<!-- ALL-MIGHT-MEMORY -->`` marker fences (the old single-file
   shape).
+
+(``.opencode/commands/reflect.md`` was a migration signal during
+the Part-D → Wave-1 window when ``/reflect`` was folded into
+``/remember``. Wave 2 of the design-review refactor split them
+apart again, so ``reflect.md`` is now a regular All-Might-emitted
+command. If a legacy stub exists, ``write_guarded`` will replace
+it on next init via the marker check.)
 
 If none of those match, the project is already on the new layout and
 ``migrate`` returns a no-op report. The migrator is idempotent on
@@ -66,9 +72,11 @@ def detect(project_root: Path) -> MigrationPlan:
             if new_name is not None and new_name != child.name:
                 plan.rename[child.name] = new_name
 
-    reflect_md = project_root / ".opencode" / "commands" / "reflect.md"
-    if reflect_md.exists() or reflect_md.is_symlink():
-        plan.dropped_files.append(".opencode/commands/reflect.md")
+    # ``reflect.md`` was previously a drop signal (Part-D folded
+    # ``/reflect`` into ``/remember``). Wave 2 unsplit them — the
+    # file is emitted by init again and is no longer a migration
+    # marker. A legacy stub will be transparently replaced on next
+    # init via the All-Might marker check.
 
     agents_md = project_root / "AGENTS.md"
     if agents_md.is_file():
@@ -104,13 +112,10 @@ def migrate(project_root: Path, *, dry_run: bool = False) -> MigrationPlan:
             continue
         shutil.move(str(src), str(dst))
 
-    # 2. Drop legacy /reflect command (file or symlink).
-    reflect_md = project_root / ".opencode" / "commands" / "reflect.md"
-    if reflect_md.is_symlink() or reflect_md.exists():
-        try:
-            reflect_md.unlink()
-        except OSError:
-            pass
+    # 2. ``reflect.md`` no longer needs explicit handling here. Init's
+    #    ``write_guarded`` will overwrite a marker'd stub with the
+    #    current Wave-2 body; an unmarked user-authored file is
+    #    preserved as it would be for any other command.
 
     # 3. Split legacy AGENTS.md into per-personality ROLE.md files.
     agents_md = project_root / "AGENTS.md"

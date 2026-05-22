@@ -39,7 +39,7 @@ All-Might/                          ← This repo (the framework)
 ├── src/allmight/                    ← Framework source code
 │   ├── capabilities/                ← Built-in capability templates
 │   │   ├── database/                ← knowledge-graph workspaces + /search /sync /onboard /one-for-all /all-for-one
-│   │   └── memory/                  ← L1/L2/L3 agent memory + /remember (Record + Reflect) + /recall
+│   │   └── memory/                  ← L1/L2/L3 agent memory + /remember + /reflect + /recall
 │   ├── personalities/               ← Deprecation shim only — re-exports allmight.capabilities
 │   ├── bridge/                      ← SMAK CLI subprocess wrapper (internal)
 │   ├── config/                      ← config.yaml manager
@@ -146,10 +146,16 @@ rejected before and will be rejected again.
   free-form. Multi-personality stays first-class — `/onboard` can
   create one or many. The fallback when the user has no specific
   purpose is the `general` suggestion (database + memory).
-- **`/reflect` is folded into `/remember`.** The `/remember.md`
-  body has two top-level sections (`# Record` and `# Reflect`);
-  the agent picks based on trigger context. Do not re-introduce
-  a separate `/reflect` command.
+- **`/remember` and `/reflect` are separate commands.** Part-D
+  folded them into a single `/remember` body with `# Record` /
+  `# Reflect` sections; the Wave-2 design-review refactor split
+  them apart again so each body stays short enough for
+  less-capable agents in air-gap deployments to follow without
+  reading past their attention window. `/remember` records a
+  single observation; `/reflect` runs the periodic memory audit
+  (cap triage, scope drift, insights). Trigger-context picking
+  no longer lives inside a single body — the agent picks the
+  right command by name.
 - **Personality transfer is themed One For All / All For One.**
   Cross-project moves go through two agent-driven surfaces:
   - `/one-for-all` (skill, with PII review) — bundle a single
@@ -223,9 +229,10 @@ the indexed version. Embedding cost (5–30 s) never blocks a turn.
   mirror keeps memory human-readable, diff-able, and recoverable.
   SMAK provides the vector layer where it is justified (L3 only).
 - **No `/distill` slash command.** Incremental pattern detection is
-  folded into `/remember#Record`. Batch distillation, if ever
-  needed, becomes a CLI (`allmight memory distill`) that calls the
-  Claude API directly — out of the agent's context window entirely.
+  folded into `/remember`'s Pattern Check step. Batch distillation,
+  if ever needed, becomes a CLI (`allmight memory distill`) that
+  calls the Claude API directly — out of the agent's context window
+  entirely.
 
 ---
 
@@ -648,6 +655,60 @@ is a regression even if tests pass.
   each one introduces new symlinks, new entries in
   `personalities.yaml`, and a new directory under each
   personality.
+
+---
+
+## Skill / Command Body Style Guide
+
+Every emitted `.md` body (skill / command) is loaded into the agent's
+context every time the user invokes it — often when context budget
+is tight. Air-gap deployments run on less-capable models that cannot
+follow long decision trees. The bar is **simple but functionally
+complete**: short prose that a Haiku-class model can act on, not
+SOP manuals for a junior employee.
+
+### Hard rules
+
+- **Size budget — pinned by `tests/test_skill_body_size.py`**
+  - Per-skill / per-command body ≤ the budget table in that test.
+  - Adding to a body counts as a regression; reduce or split first.
+
+- **Content lives in `.md`, Python is a loader.**
+  - Bodies live at `capabilities/<cap>/templates/{skills,commands}/<name>.md`.
+  - Python emits a 5-line wrapper that reads the file at install time.
+  - Schedule capability is the reference (`schedule/skill_content.py:17-19`).
+  - Inline f-strings are allowed only for ≤20-line dynamic bodies.
+
+- **Single Source of Truth.**
+  - Routing protocol lives **only** in `core/routing.py::ROUTING_PREAMBLE`.
+  - L2 `_index.md` schema lives **only** in `_l2_index_schema()`.
+  - Other bodies reference these by name; never restate.
+
+- **Defer to CLI for procedural details.**
+  - Enum values, file-format schemas, multi-step bookkeeping →
+    use `allmight <verb>` and point at `--help`.
+  - Skills declare *intent*; the CLI is the canonical reference.
+
+### Four design questions for any new / edited body
+
+1. **Trust the model** — can step-by-step prose collapse to
+   "do X; one example here"?
+2. **Defer to CLI** — is this prose describing a thing a CLI command
+   could do deterministically?
+3. **Single responsibility** — does the body branch on trigger
+   context? If yes, split into two bodies.
+4. **Lazy-load** — does this need to be always-loaded? Most skills
+   are invoked rarely; their bodies pay token rent every turn.
+
+### Anti-patterns (rejected on sight)
+
+- Meta-cognition instructions ("first reflect on what you noticed,
+  then list candidates, then filter...") — capable models already
+  do this; weak models will mechanise it into noise.
+- Restating routing / switching / scope-decision rules in a body
+  that is not the canonical source.
+- 11-field frontmatter schemas inlined in skill prose — write a
+  CLI subcommand that emits the entries with deterministic IDs.
 
 ---
 

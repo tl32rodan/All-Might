@@ -19,24 +19,18 @@ into every chat, so the callout is always in the agent's context.
 ROUTING_PREAMBLE = """\
 ## Routing — pick the active personality
 
-Before running anything below, identify which personality should act
-and substitute its name for ``<active>`` in every path.
+Substitute the active personality's name for ``<active>`` in every
+path below. Resolution order:
 
-1. **Explicit mention** — if the user named a personality (e.g.
-   "for stdcell_owner ..."), use it.
-2. **Conversation context** — if recent turns are clearly about
-   one personality's domain (workspace name, role keywords from
-   that personality's ``ROLE.md``), use it.
-3. **Default** — read the leading callout at the top of
-   ``MEMORY.md``::
+1. **Explicit mention** in the user's message
+   (e.g. "for stdcell_owner ...").
+2. **Conversation context** — recent turns clearly about one
+   personality's domain.
+3. **Default** — MEMORY.md's leading callout
+   ``> **Default personality**: <name>``. If the callout is absent
+   and only one personality is registered, that one is the implicit
+   default.
 
-       > **Default personality**: <name>
-
-   Use ``<name>``. If the callout is absent and only one personality
-   is registered (one row in ``MEMORY.md``'s project map), that one
-   is the implicit default.
-
-If none of these resolves, ask the user before proceeding — never
-guess. The same routing applies to every step below.
+If none resolves, ask the user — never guess.
 
 """

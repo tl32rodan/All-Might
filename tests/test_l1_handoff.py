@@ -202,7 +202,9 @@ class TestCommandBodies:
 
     def test_reflect_has_cap_triage_step(self, tmp_path):
         MemoryInitializer().initialize(tmp_path)
-        body = (tmp_path / ".opencode" / "commands" / "remember.md").read_text()
+        # /reflect was split out of /remember in Wave 2 of the
+        # design-review refactor; cap triage now lives there.
+        body = (tmp_path / ".opencode" / "commands" / "reflect.md").read_text()
         assert "cap triage" in body.lower() or "L1 cap" in body
         # References the sentinel file so the agent knows what clears the nudge.
         assert ".l1-over-cap" in body
