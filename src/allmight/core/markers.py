@@ -9,3 +9,4 @@ overwrite a path whose existing content lacks the marker.
 ALLMIGHT_MARKER_MD = "<!-- all-might generated -->"
 ALLMIGHT_MARKER_TS = "// all-might generated"
 ALLMIGHT_MARKER_YAML = "# all-might generated"
+ALLMIGHT_MARKER_CSH = "# all-might generated"

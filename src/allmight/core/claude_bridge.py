@@ -68,6 +68,7 @@ def _reflection_hook_content() -> str:
     # plugin template that consumes it.
     from .personalities import REFLECTION_PROMPT
     from .plugin_telemetry import PY_HEARTBEAT_SNIPPET
+    from .project_root import PY_IS_READ_ONLY_EXPR
 
     return (
         _REFLECTION_HOOK_TEMPLATE
@@ -78,6 +79,7 @@ def _reflection_hook_content() -> str:
             REFLECTION_PROMPT.replace("\\", "\\\\").replace('"""', '\\"""'),
         )
         .replace("__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET)
+        .replace("__PY_IS_READ_ONLY_EXPR__", PY_IS_READ_ONLY_EXPR)
     )
 
 
@@ -96,6 +98,7 @@ or neutral feedback skips the reflection. Same content the OpenCode
 reflection plugin injects via chat.message.
 """
 import json
+import os
 import sys
 
 
@@ -106,6 +109,10 @@ __PY_HEARTBEAT_SNIPPET__
 
 def main() -> int:
     _hb("reflection")
+    # Shared-agent read-only role skips reflection injection — a
+    # read-only viewer has nothing to persist the reflection into.
+    if __PY_IS_READ_ONLY_EXPR__:
+        return 0
     try:
         payload = json.load(sys.stdin) if not sys.stdin.isatty() else {}
     except (json.JSONDecodeError, ValueError):
@@ -128,8 +135,11 @@ if __name__ == "__main__":
 
 def _role_load_hook_content() -> str:
     from .plugin_telemetry import PY_HEARTBEAT_SNIPPET
-    return _ROLE_LOAD_HOOK_TEMPLATE.replace(
-        "__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET,
+    from .project_root import PY_RESOLVE_CWD_SNIPPET
+    return (
+        _ROLE_LOAD_HOOK_TEMPLATE
+        .replace("__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET)
+        .replace("__PY_RESOLVE_CWD_SNIPPET__", PY_RESOLVE_CWD_SNIPPET)
     )
 
 
@@ -156,7 +166,7 @@ __PY_HEARTBEAT_SNIPPET__
 
 def main() -> int:
     _hb("role_load")
-    cwd = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    cwd = __PY_RESOLVE_CWD_SNIPPET__
     parts: list[str] = []
     personalities_dir = cwd / "personalities"
     if personalities_dir.is_dir():

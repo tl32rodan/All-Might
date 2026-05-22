@@ -337,9 +337,18 @@ The `/search` command has a detailed operational guide in `.opencode/commands/`.
 """
 
     def _search_command_body(self) -> str:
-        """Return search.md command content (generic — agent resolves <active>)."""
+        """Return search.md command content (generic — agent resolves <active>).
+
+        The ``db_root`` path is prefixed with ``${ALLMIGHT_PROJECT_ROOT:-.}``
+        so the emitted ``smak search`` invocations resolve correctly in
+        both single-user mode (env unset → cwd-relative) and shared-agent
+        mode (env points at the shared project root).
+        """
+        from ...core.project_root import BASH_PROJECT_ROOT_PREFIX
         from ...core.routing import ROUTING_PREAMBLE
-        db_root = "personalities/<active>/database"
+        db_root = (
+            f"{BASH_PROJECT_ROOT_PREFIX}/personalities/<active>/database"
+        )
         return ROUTING_PREAMBLE + self._SEARCH_BODY.replace("{db_root}", db_root)
 
     _SEARCH_BODY = """\

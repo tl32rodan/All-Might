@@ -36,6 +36,7 @@ SYNC_SKILL_BODY = """\
    - `.allmight/templates/memory-md-section.md` → `AGENTS.md` (within `<!-- ALL-MIGHT-MEMORY -->` markers)
    - `.allmight/templates/opencode.json` → `.opencode/opencode.json`
    - `.allmight/templates/memory-load.ts` → `.opencode/plugins/memory-load.ts`
+   - `.allmight/templates/setup.cshrc` → `setup.cshrc` (project root, shared-agent mode entry point)
 3. **Verify the working file is All-Might-owned before merging.**
    Read the working file's first lines and check for one of:
    - `<!-- all-might generated -->` (markdown — commands, SKILL.md)
@@ -205,6 +206,7 @@ decide whether the directory is still wanted.
 | `.allmight/templates/memory-md-section.md` | `AGENTS.md` (ALL-MIGHT-MEMORY marker) |
 | `.allmight/templates/opencode.json` | `.opencode/opencode.json` |
 | `.allmight/templates/memory-load.ts` | `.opencode/plugins/memory-load.ts` |
+| `.allmight/templates/setup.cshrc` | `setup.cshrc` (project root, shared-agent mode entry point) |
 | `.allmight/templates/conflicts.yaml` | manifest of skipped compose targets |
 
 ### Personality agent files (`.opencode/agents/<name>.md`)
