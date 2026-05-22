@@ -11,7 +11,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from ...core.markers import ALLMIGHT_MARKER_MD, ALLMIGHT_MARKER_TS
-from ...core.project_root import BASH_PROJECT_ROOT_PREFIX
 from ...core.safe_write import write_guarded
 from ...core.skill_io import install_skill
 from .config import MemoryConfigManager
@@ -19,29 +18,20 @@ from .config import MemoryConfigManager
 
 def _routed_memory_paths(body: str) -> str:
     """Rewrite bare ``memory/`` paths in command bodies to the
-    Part-D personality-routed form
-    ``${ALLMIGHT_PROJECT_ROOT:-.}/personalities/<active>/memory/``.
+    Part-D personality-routed form ``personalities/<active>/memory/``.
 
     Command bodies (e.g. ``/remember``, ``/recall``) reference
     per-personality memory under ``memory/...`` for source-code
-    readability. At install time this helper:
-
-    1. Prepends the routing prefix so the agent — after resolving
-       ``<active>`` per ``ROUTING_PREAMBLE`` — knows which
-       personality's memory dir to operate on.
-    2. Prepends the bash project-root prefix
-       (``${ALLMIGHT_PROJECT_ROOT:-.}``) so the same command works
-       both in single-user mode (env unset → ``.``) and in shared
-       mode (env points at the shared project root).
+    readability. At install time this helper prepends the routing
+    prefix so the agent — operating from project root cwd — knows
+    which personality's memory to act on after resolving
+    ``<active>`` per ``ROUTING_PREAMBLE``.
 
     The substitution is anchored on the trailing slash, so
     ``MEMORY.md`` (uppercase, project root) and the word ``memory``
     alone are never touched.
     """
-    return body.replace(
-        "memory/",
-        f"{BASH_PROJECT_ROOT_PREFIX}/personalities/<active>/memory/",
-    )
+    return body.replace("memory/", "personalities/<active>/memory/")
 
 
 def _reminder_nudge_text() -> str:
@@ -587,7 +577,6 @@ See `/remember` and `/recall` commands for detailed guides.
     def _opencode_plugin_content(self) -> str:
         """Return the OpenCode memory-load.ts plugin content."""
         from ...core.plugin_telemetry import TS_HEARTBEAT_SNIPPET
-        from ...core.project_root import TS_RESOLVE_CWD_EXPR
         return ("""\
 /**
  * Memory L1 Loader — OpenCode plugin (All-Might)
@@ -753,7 +742,7 @@ function buildPrefix(cwd: string): string {
 }
 
 export const MemoryLoadPlugin: Plugin = async ({ directory }: any) => {
-  const cwd = __TS_RESOLVE_CWD_EXPR__;
+  const cwd = (directory as string | undefined) ?? process.cwd();
 
   return {
     event: async ({ event }: { event: any }) => {
@@ -804,7 +793,7 @@ export const MemoryLoadPlugin: Plugin = async ({ directory }: any) => {
 };
 
 export default MemoryLoadPlugin;
-""").replace("__TS_RESOLVE_CWD_EXPR__", TS_RESOLVE_CWD_EXPR)
+""")
 
     def _remember_trigger_plugin_content(self) -> str:
         """Return the OpenCode remember-trigger.ts plugin content."""
@@ -870,7 +859,7 @@ function ensure(sid: string): State {
 }
 
 export const RememberTriggerPlugin: Plugin = async ({ directory }: any) => {
-  const cwd = __TS_RESOLVE_CWD_EXPR__;
+  const cwd = (directory as string | undefined) ?? process.cwd();
 
   return {
     event: async ({ event }: { event: any }) => {
@@ -933,12 +922,10 @@ export const RememberTriggerPlugin: Plugin = async ({ directory }: any) => {
 
 export default RememberTriggerPlugin;
 """
-        from ...core.project_root import TS_RESOLVE_CWD_EXPR
         return (
             template
             .replace("__SHARED_NUDGE__", shared_nudge)
             .replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
-            .replace("__TS_RESOLVE_CWD_EXPR__", TS_RESOLVE_CWD_EXPR)
         )
 
     def _todo_curator_plugin_content(self) -> str:
@@ -1076,7 +1063,7 @@ function surfaceText(workspace: string, backlog: string): string {
 }
 
 export const TodoCuratorPlugin: Plugin = async ({ directory }: any) => {
-  const cwd = __TS_RESOLVE_CWD_EXPR__;
+  const cwd = (directory as string | undefined) ?? process.cwd();
 
   return {
     event: async ({ event }: { event: any }) => {
@@ -1175,12 +1162,7 @@ export const TodoCuratorPlugin: Plugin = async ({ directory }: any) => {
 
 export default TodoCuratorPlugin;
 """
-        from ...core.project_root import TS_RESOLVE_CWD_EXPR
-        return (
-            template
-            .replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
-            .replace("__TS_RESOLVE_CWD_EXPR__", TS_RESOLVE_CWD_EXPR)
-        )
+        return template.replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
 
     # ------------------------------------------------------------------
     # L1: MEMORY.md
@@ -1287,23 +1269,6 @@ matches the trigger context:
 
 If unsure which mode applies, run **Record**; if `memory/.l1-over-cap`
 exists or the trigger is a session-boundary event, run **Reflect**.
-
-## Shared-agent read-only check (first)
-
-Before doing anything else, check whether this session is read-only:
-
-```bash
-test "$ALLMIGHT_ROLE" = "user" && echo READ_ONLY
-```
-
-If `READ_ONLY` prints, do **not** write to journal, understanding, or
-MEMORY.md. Reply to the user with one short sentence — for example:
-"This shared agent is open in read-only mode (`ALLMIGHT_ROLE=user`),
-so I won't persist that observation. Ask the owner to record it, or
-set `ALLMIGHT_ROLE=owner` and re-source `setup.cshrc` if you have
-write access." Skip the rest of this command body.
-
-When `$ALLMIGHT_ROLE` is unset or `owner`, continue as normal.
 
 # Record
 
@@ -2348,7 +2313,7 @@ or memory/journal/general/. See /remember for the full guide.
 
 def main() -> int:
     _hb("memory_load")
-    cwd = __PY_RESOLVE_CWD_SNIPPET__
+    cwd = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     _maybe_drain_ingest(cwd)
     parts: list[str] = []
     size_watch = _compute_size_watch(cwd)
@@ -2389,12 +2354,7 @@ def main() -> int:
 if __name__ == "__main__":
     sys.exit(main())
 '''
-        from ...core.project_root import PY_RESOLVE_CWD_SNIPPET
-        return (
-            template
-            .replace("__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET)
-            .replace("__PY_RESOLVE_CWD_SNIPPET__", PY_RESOLVE_CWD_SNIPPET)
-        )
+        return template.replace("__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET)
 
     def _opencode_plugin_map(self) -> dict[str, str]:
         """Return mapping of plugin filename → content."""
@@ -2531,16 +2491,11 @@ function snapshot(cwd: string, trigger: string, sid?: string): void {
 }
 
 export const MemoryHistoryPlugin: Plugin = async ({ directory }: any) => {
-  const cwd = __TS_RESOLVE_CWD_EXPR__;
-  // Shared-agent mode: read-only role skips snapshots entirely. The
-  // shared .allmight/memory-history/.git is mode-locked for non-owners,
-  // so attempting a snapshot would only produce EACCES noise.
-  const readOnly = __TS_IS_READ_ONLY_EXPR__;
+  const cwd = (directory as string | undefined) ?? process.cwd();
 
   return {
     "chat.message": async (input: any, _output: any) => {
       emitHeartbeat("memory-history", cwd);
-      if (readOnly) { void _output; return; }
       const sid = input?.sessionID;
       snapshot(cwd, "chat-message", sid);
       maybeMarkIngestPending(cwd);
@@ -2549,7 +2504,6 @@ export const MemoryHistoryPlugin: Plugin = async ({ directory }: any) => {
 
     "experimental.session.compacting": async (input: any, _output: any) => {
       emitHeartbeat("memory-history", cwd);
-      if (readOnly) { void _output; return; }
       const sid = input?.sessionID;
       snapshot(cwd, "session-compacting", sid);
       void _output;
@@ -2557,7 +2511,6 @@ export const MemoryHistoryPlugin: Plugin = async ({ directory }: any) => {
 
     event: async ({ event }: any) => {
       emitHeartbeat("memory-history", cwd);
-      if (readOnly) return;
       const type = String(event?.type ?? "");
       if (type === "session.deleted") {
         const sid = event?.properties?.sessionID;
@@ -2569,16 +2522,7 @@ export const MemoryHistoryPlugin: Plugin = async ({ directory }: any) => {
 
 export default MemoryHistoryPlugin;
 """
-        from ...core.project_root import (
-            TS_IS_READ_ONLY_EXPR,
-            TS_RESOLVE_CWD_EXPR,
-        )
-        return (
-            template
-            .replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
-            .replace("__TS_RESOLVE_CWD_EXPR__", TS_RESOLVE_CWD_EXPR)
-            .replace("__TS_IS_READ_ONLY_EXPR__", TS_IS_READ_ONLY_EXPR)
-        )
+        return template.replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
 
     def _claude_memory_history_hook_content(self) -> str:
         """Claude Code hook: mirror of ``memory-history.ts``.
@@ -2644,21 +2588,7 @@ def main() -> None:
     except json.JSONDecodeError:
         payload = {}
 
-    # Shared-agent mode: read-only role skips the snapshot. Heartbeat
-    # above still fires so plugin status reflects activity; the
-    # write-bearing snapshot subprocess is the only thing we suppress.
-    if __PY_IS_READ_ONLY_EXPR__:
-        print("{}")
-        return
-
-    # Project-root precedence: shared-mode env var → Claude Code's
-    # CLAUDE_PROJECT_DIR → hook payload `cwd` → process cwd.
-    cwd = (
-        os.environ.get("ALLMIGHT_PROJECT_ROOT")
-        or os.environ.get("CLAUDE_PROJECT_DIR")
-        or payload.get("cwd")
-        or os.getcwd()
-    )
+    cwd = payload.get("cwd") or os.getcwd()
     sid = (payload.get("session_id") or "")[:32]
 
     args = ["allmight", "memory", "snapshot", "--trigger=stop-hook"]
@@ -2687,12 +2617,7 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 """
-        from ...core.project_root import PY_IS_READ_ONLY_EXPR
-        return (
-            template
-            .replace("__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET)
-            .replace("__PY_IS_READ_ONLY_EXPR__", PY_IS_READ_ONLY_EXPR)
-        )
+        return template.replace("__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET)
 
     def _usage_logger_plugin_content(self) -> str:
         """Return the OpenCode usage-logger.ts plugin content.
@@ -2775,7 +2700,7 @@ function extractUserText(parts: unknown): string {
 const MEMORY_PATH_RE = /(?:^|\\/)memory\\//;
 
 export const UsageLoggerPlugin: Plugin = async ({ directory }: any) => {
-  const cwd = __TS_RESOLVE_CWD_EXPR__;
+  const cwd = (directory as string | undefined) ?? process.cwd();
 
   return {
     "chat.message": async (input: any, _output: any) => {
@@ -2811,12 +2736,7 @@ export const UsageLoggerPlugin: Plugin = async ({ directory }: any) => {
 
 export default UsageLoggerPlugin;
 """
-        from ...core.project_root import TS_RESOLVE_CWD_EXPR
-        return (
-            template
-            .replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
-            .replace("__TS_RESOLVE_CWD_EXPR__", TS_RESOLVE_CWD_EXPR)
-        )
+        return template.replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
 
     def _trajectory_writer_plugin_content(self) -> str:
         """Return the OpenCode trajectory-writer.ts plugin content.
@@ -2972,7 +2892,7 @@ function flush(cwd: string, sid: string, t: Trajectory): void {
 }
 
 export const TrajectoryWriterPlugin: Plugin = async ({ directory }: any) => {
-  const cwd = __TS_RESOLVE_CWD_EXPR__;
+  const cwd = (directory as string | undefined) ?? process.cwd();
 
   return {
     event: async ({ event }: { event: any }) => {
@@ -3058,10 +2978,5 @@ export const TrajectoryWriterPlugin: Plugin = async ({ directory }: any) => {
 
 export default TrajectoryWriterPlugin;
 """
-        from ...core.project_root import TS_RESOLVE_CWD_EXPR
-        return (
-            template
-            .replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
-            .replace("__TS_RESOLVE_CWD_EXPR__", TS_RESOLVE_CWD_EXPR)
-        )
+        return template.replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
 
