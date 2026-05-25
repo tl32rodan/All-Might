@@ -231,14 +231,9 @@ format, bundle layout) and what to ask the user.
 
 ## Receiving end
 
-Two paths on the receiver side, depending on what the receiver wants
-to do:
-
-- **Single-bundle install into a fresh name** — run ``allmight
-  import <bundle>`` (CLI). Mechanical, no merge, fails if the target
-  name already exists.
-- **Merge into an existing personality, or combine multiple
-  bundles, or fold a bundle in with an existing personality** — run
-  ``/all-for-one`` (skill) in the agent. Handles per-file conflicts
-  and ROLE.md prose reconciliation.
+Absorb the bundle with ``/all-for-one`` (skill) — it installs into a
+new personality or merges into an existing one, handling per-file
+conflicts and ROLE.md prose reconciliation. If the bundle travels
+through a git remote, ``allmight share pull <git-url>`` installs it
+directly.
 """
