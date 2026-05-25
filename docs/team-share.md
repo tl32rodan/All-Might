@@ -60,7 +60,8 @@ allmight share pull file:///nfs/team/personalities/stdcell_owner.git \
     --as stdcell_v2     # rename on import
 ```
 
-Pull is `git clone` + `allmight import` + upstream bookkeeping. The
+Pull is `git clone` + a single-bundle install (the internal
+`_import_bundle` helper) + upstream bookkeeping. The
 imported personality's lineage lands in
 `.allmight/personalities.yaml` as a single-entry `derived_from`
 list (`kind: bundle`, with `bundle_id` and `bundle_version`).
@@ -70,8 +71,8 @@ preserved across teams.
 
 If the receiver wants to fold the bundle into an existing
 personality instead of installing it under a fresh name, `share
-pull` will fail (it inherits `allmight import`'s collision
-behaviour) and the receiver should run `/all-for-one` in the agent
+pull` will fail (single-bundle install refuses to overwrite an
+existing personality name) and the receiver should run `/all-for-one` in the agent
 to perform the merge — that skill takes the bundle path plus the
 existing personality's name and dialogs through the per-file
 conflicts.
