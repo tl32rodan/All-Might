@@ -61,9 +61,11 @@ def _reminder_nudge_text() -> str:
     """
     return (
         "[Memory Nudge]\n"
-        "Did anything worth remembering happen in the last few turns?\n"
-        "If yes, run /remember (it decides the scope and writes).\n"
-        "If nothing stands out, skip.\n"
+        "Persist what matters before it is lost. Look back at the last few\n"
+        "turns and run /remember now UNLESS you can state in one line why\n"
+        "nothing this session is worth keeping (/remember decides scope and\n"
+        "writes). Worth keeping: user preferences, corrections, decisions,\n"
+        "per-corpus discoveries, gotchas — anything a future session needs.\n"
         "\n"
         "Scope reminder (/remember resolves the exact path):\n"
         "project-wide (portable) -> MEMORY.md (L1);\n"
@@ -854,7 +856,7 @@ export default MemoryLoadPlugin;
 import type { Plugin } from "@opencode-ai/plugin";
 
 __TS_HEARTBEAT_SNIPPET__
-const NUDGE_EVERY = 5;
+const NUDGE_EVERY = 3;
 
 type State = { idleCount: number; pendingNudge: string | null };
 const sessions = new Map<string, State>();
@@ -868,10 +870,12 @@ function nudgeText(turn: number): string {
 function preCompactText(): string {
   return [
     "[Memory Nudge \\u2014 pre-compaction]",
-    "Conversation is about to be summarised. Last chance before history is",
-    "condensed: run /remember for anything worth persisting (user prefs,",
-    "corrections, per-corpus discoveries). Delegate scope and writing to",
-    "/remember.",
+    "Conversation is about to be summarised — this is a forced checkpoint.",
+    "Before history is condensed you MUST: (1) run /reflect to audit this",
+    "session, then (2) run /remember for anything worth persisting (user",
+    "prefs, corrections, per-corpus discoveries). Skipping is allowed only",
+    "if you state in one line why nothing is worth keeping. Delegate scope",
+    "and writing to /remember.",
     "",
     SHARED_NUDGE,
   ].join("\\n");

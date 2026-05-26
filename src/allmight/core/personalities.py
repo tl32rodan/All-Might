@@ -984,15 +984,17 @@ export default RoleLoadPlugin;
 
 REFLECTION_PROMPT = (
     "--- Reflection Check ---\n"
-    "Before this turn's work, glance at the user's latest message:\n"
-    "- If they pointed out a mistake or course-corrected a previous action,\n"
-    "  reflect first in 2-3 sentences before proceeding:\n"
-    "    * What went wrong?\n"
+    "Before this turn's work, glance back at the last few turns:\n"
+    "- Reflect in 2-3 sentences if ANY of these happened (not only explicit\n"
+    "  corrections): the user pointed out a mistake or redirected you; you\n"
+    "  retried something, hit a dead-end, or were surprised by a result; or\n"
+    "  an assumption you acted on turned out wrong. Cover:\n"
+    "    * What happened / went wrong?\n"
     "    * Why did it happen?\n"
-    "    * How will I avoid the same class of mistake next time?\n"
+    "    * How will I avoid the same class of issue next time?\n"
     "  Then proceed with the turn.\n"
-    "- If feedback is neutral, positive, or there is no prior action to reflect\n"
-    "  on (e.g. the first user turn), skip the reflection and proceed.\n"
+    "- Only skip if the last turns were genuinely clean and uneventful\n"
+    "  (e.g. the first user turn, or a simple request with no friction).\n"
     "--- End Reflection Check ---"
 )
 

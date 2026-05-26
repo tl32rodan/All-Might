@@ -98,7 +98,7 @@ class TestWriteClaudeBridge:
         assert "reflection.ts" in body
         # Prompt content is present.
         assert "Reflection Check" in body
-        assert "What went wrong?" in body
+        assert "Why did it happen?" in body
         # Hook contract: emits hookSpecificOutput with additionalContext.
         assert "hookSpecificOutput" in body
         assert "additionalContext" in body
@@ -284,7 +284,7 @@ class TestHooksRunCleanly:
         payload = json.loads(result.stdout)
         ctx = payload["hookSpecificOutput"]["additionalContext"]
         assert "Reflection Check" in ctx
-        assert "What went wrong?" in ctx
+        assert "Why did it happen?" in ctx
         assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
 
     def test_reflection_hook_defaults_event_name(self, project):
