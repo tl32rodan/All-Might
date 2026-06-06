@@ -57,6 +57,7 @@ class ProjectInitializer:
             self._install_one_for_all_skill(root, force=force)
             self._install_all_for_one_skill(root, force=force)
             self._install_split_skill(root, force=force)
+            self._install_docs_skill(root, force=force)
 
             allmight_dir.mkdir(exist_ok=True)
             templates_dir = allmight_dir / "templates"
@@ -248,6 +249,31 @@ class ProjectInitializer:
             ),
             skill_body=SPLIT_SKILL_BODY,
             command_body=SPLIT_COMMAND_BODY,
+            force=force,
+        )
+
+    def _install_docs_skill(self, root: Path, *, force: bool = False) -> None:
+        """Install /docs skill + command (offline documentation lookup).
+
+        Framework A of the offline-reference proposal: a skill-only,
+        discovery-friendly surface that searches a curated documentation
+        workspace (``personalities/<active>/database/docs/``) — the local
+        stand-in for web search / context7 in an air-gapped deployment.
+        Installed on fresh init only; re-init (``staging=True``) skips it
+        like the other database skills so a user-tweaked body survives.
+        """
+        from .docs_skill_content import (
+            DOCS_SKILL_DESCRIPTION,
+            build_docs_command_body,
+            build_docs_skill_md,
+        )
+
+        install_skill(
+            root,
+            name="docs",
+            description=DOCS_SKILL_DESCRIPTION,
+            skill_body=build_docs_skill_md(),
+            command_body=build_docs_command_body(),
             force=force,
         )
 

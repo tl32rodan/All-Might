@@ -62,6 +62,21 @@ PERSONALITY_SUGGESTIONS: tuple[PersonalitySuggestion, ...] = (
         ),
     ),
     PersonalitySuggestion(
+        name="librarian",
+        capabilities=("database", "memory"),
+        scope=(
+            "Offline documentation librarian: curates manuals, library/API "
+            "docs, PDK files, and internal wiki into a searchable index; "
+            "answers 'look up the docs for X' via /docs when web search / "
+            "context7 are unavailable."
+        ),
+        keywords=(
+            "docs", "documentation", "manual", "reference", "library",
+            "api", "pdk", "datasheet", "handbook", "wiki", "lookup",
+            "web search", "websearch", "context7", "offline", "air-gap",
+        ),
+    ),
+    PersonalitySuggestion(
         name="code_reviewer",
         capabilities=("memory",),
         scope="Reviews patches; uses memory for project conventions.",
