@@ -21,6 +21,9 @@ from allmight.capabilities.database.one_for_all_skill_content import (
 from allmight.capabilities.database.onboard_skill_content import (
     ONBOARD_SKILL_BODY,
 )
+from allmight.capabilities.database.link_skill_content import (
+    build_link_skill_md,
+)
 from allmight.capabilities.database.sync_skill_content import SYNC_SKILL_BODY
 from allmight.capabilities.memory.initializer import MemoryInitializer
 
@@ -46,6 +49,7 @@ BODY_BUDGETS: list[tuple[str, callable, int]] = [
     ("/reflect (command)", _reflect_body, 104),
     ("/recall (command)", _recall_body, 118),
     ("/onboard (skill)", lambda: ONBOARD_SKILL_BODY, 70),
+    ("/link (skill)", build_link_skill_md, 37),
     ("/sync (skill)", lambda: SYNC_SKILL_BODY, 227),
     ("/one-for-all (skill)", lambda: ONE_FOR_ALL_SKILL_BODY, 174),
     ("/all-for-one (skill)", lambda: ALL_FOR_ONE_SKILL_BODY, 226),

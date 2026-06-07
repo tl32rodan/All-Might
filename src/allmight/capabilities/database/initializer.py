@@ -57,6 +57,7 @@ class ProjectInitializer:
             self._install_one_for_all_skill(root, force=force)
             self._install_all_for_one_skill(root, force=force)
             self._install_split_skill(root, force=force)
+            self._install_link_skill(root, force=force)
 
             allmight_dir.mkdir(exist_ok=True)
             templates_dir = allmight_dir / "templates"
@@ -251,6 +252,30 @@ class ProjectInitializer:
             force=force,
         )
 
+    def _install_link_skill(self, root: Path, *, force: bool = False) -> None:
+        """Install /link skill + command (code<->doc knowledge-mesh builder).
+
+        Framework B enrichment surface: teaches the agent to connect a
+        code symbol to the doc that explains it via ``smak enrich-symbol
+        --relation --bidirectional``, so a later search of one surfaces
+        the other. Installed on fresh init only; re-init (staging) skips
+        it like the other database skills.
+        """
+        from .link_skill_content import (
+            LINK_SKILL_DESCRIPTION,
+            build_link_command_body,
+            build_link_skill_md,
+        )
+
+        install_skill(
+            root,
+            name="link",
+            description=LINK_SKILL_DESCRIPTION,
+            skill_body=build_link_skill_md(),
+            command_body=build_link_command_body(),
+            force=force,
+        )
+
     def _install_onboard_skill(self, root: Path, *, force: bool = False) -> None:
         """Install /onboard skill + command on every fresh init.
 
@@ -309,15 +334,18 @@ control) the corpus operates on.
 You manage a **knowledge graph** for this project — searching code by
 meaning and tracking what the agent has learned across sessions.
 
-**Access: read-only** — you may search the knowledge graph but must NOT
-modify corpora through agent slash commands. Index rebuilds and sidecar
-edits happen out-of-band via the SMAK CLI.
+**Access: read-only corpus, writable mesh** — you may search the
+knowledge graph and **enrich it with relations** (linking code to the
+docs that explain it, via `/link`). You must NOT edit indexed source
+*content* through the agent — only sidecar metadata (relations /
+intent). Index rebuilds happen via the SMAK CLI.
 
 ### Capabilities
 
 | Command | What it does |
 |---------|-------------|
 | `/search <query>` | Search code by meaning (not just keywords) |
+| `/link <code> <doc>` | Link a code symbol to the doc that explains it (builds the mesh) |
 
 ### Concepts
 
