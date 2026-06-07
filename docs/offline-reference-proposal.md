@@ -105,15 +105,27 @@ Registered in `PLUGIN_MANIFEST` + heartbeat + `KNOWN_*` lists.
 
 ## Build sequence (incremental, each commit green + tested)
 
-1. **Wrapper server** `allmight/mcp/knowledge_server.py` + tests
-   (discovery, default-personality resolution, delegation with smak
-   mocked). ← *slice 1, this is isolated and lowest-risk*
-2. **MCP wiring** — database `install_globals` writes `opencode.json#/mcp`
-   + `.mcp.json` (marker'd, re-init-safe) + CLAUDE.md exemption.
-3. **Harness hook** `offline-reference` (ts + py + manifest + heartbeat).
-4. **Enrichment surface** + read-only relaxation (relations only).
-5. **Docs-in-workspace** guidance (scanner/onboard: index doc dirs into
-   the same workspace as code).
+1. ✅ **Wrapper server** `allmight/mcp/knowledge_server.py` — two
+   intent-named tools delegating to `smak.core_ops`, lazy imports,
+   no-hallucination guards, discovery + default-personality resolution.
+2. ✅ **MCP wiring** — `write_init_scaffold` writes `opencode.json#/mcp`
+   and `claude_bridge` writes `.mcp.json` (setdefault, re-init-safe) +
+   CLAUDE.md Interface-Isolation exemption.
+3. ✅ **Harness hook** `offline-reference` — `.ts` + `.py` mirror,
+   single-source notice, PLUGIN_MANIFEST + heartbeat + README matrix;
+   generated TS type-checks clean under `tsc`.
+4. ✅ **Enrichment surface** `/link` + read-only relaxation (relations /
+   intent writable via `smak enrich-symbol --bidirectional`; source
+   content still never edited).
+5. ✅ **Co-location doctrine** — ROLE.md teaches indexing code + docs in
+   the *same* workspace (never a separate `docs` workspace) so the mesh
+   resolves; `project_knowledge_search` (`do_search_all`) then covers
+   both indices and `/link` connects them.
+
+All five slices shipped. Remaining is operational, not code: curate the
+real doc corpus into each workspace's `config.yaml`, then run the
+four-layer verification below (especially Layer 3 — does the model
+autonomously call `project_knowledge_search`).
 
 ## Failure modes (carried from v2)
 

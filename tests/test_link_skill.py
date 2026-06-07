@@ -107,3 +107,18 @@ class TestReadOnlyRelaxed:
 
     def test_role_still_forbids_source_content_edits(self) -> None:
         assert "NOT edit indexed source" in self._role_body()
+
+
+class TestCoLocationDoctrine:
+    """Slice 5: code + docs must share one workspace so the mesh links them."""
+
+    def _role_body(self) -> str:
+        return ProjectInitializer()._role_md_body(
+            ProjectManifest(name="x", root_path=Path("/tmp/x")),
+        )
+
+    def test_role_teaches_co_location(self) -> None:
+        body = self._role_body().lower()
+        assert "code and docs share a workspace" in body
+        assert "never a separate" in body  # not a separate docs workspace
+        assert "same" in body

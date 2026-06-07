@@ -354,6 +354,14 @@ intent). Index rebuilds happen via the SMAK CLI.
   vector store. A project may have multiple corpora (e.g. `stdcell`, `pll`).
   Source files are indexed **in-place** — only the index is stored locally.
   The corpus name and workspace name are the same string throughout All-Might.
+- **Code and docs share a workspace.** Index source code *and* its
+  documentation (manuals, READMEs, API notes) in the **same** workspace
+  — add both as `paths` (or as sibling indices) in that workspace's
+  `config.yaml`; never a separate `docs` workspace. SMAK's relation mesh
+  resolves only within one workspace config, so co-locating them is what
+  lets `/link` connect code to docs and a search of either surface the
+  other. This is how internal code with no formal API docs becomes
+  navigable.
 
 ### How to learn the details
 
