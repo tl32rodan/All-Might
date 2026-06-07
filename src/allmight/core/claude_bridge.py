@@ -375,6 +375,59 @@ def _write_settings_json(project_root: Path) -> None:
     settings_path.write_text(json.dumps(merged, indent=2) + "\n")
 
 
+# ---------------------------------------------------------------------------
+# Knowledge MCP server wiring (project-level, both surfaces)
+#
+# The offline substitute for web_search / context7: a single local
+# stdio server (``allmight.mcp.knowledge_server``) exposing
+# project_knowledge_search + memory_recall. It is project-level scaffold
+# infra (one server over every personality's database + memory), not a
+# capability template — hence wired here, next to the other scaffold
+# bridge writes, with no import from ``capabilities/``.
+#
+# Both ``opencode.json#/mcp`` and ``.mcp.json`` are NEW write targets;
+# the documented exception lives in CLAUDE.md "Interface Isolation".
+# Both use ``setdefault`` semantics (like opencode.json's $schema) so a
+# user-customised entry survives re-init.
+# ---------------------------------------------------------------------------
+
+MCP_SERVER_NAME = "allmight-knowledge"
+_MCP_SERVER_MODULE = "allmight.mcp.knowledge_server"
+
+
+def opencode_mcp_entry() -> dict:
+    """The OpenCode ``mcp.<name>`` local-server entry (single source)."""
+    return {
+        "type": "local",
+        "command": ["python", "-m", _MCP_SERVER_MODULE],
+        "enabled": True,
+    }
+
+
+def claude_mcp_entry() -> dict:
+    """The Claude Code ``mcpServers.<name>`` stdio entry (single source)."""
+    return {
+        "type": "stdio",
+        "command": "python",
+        "args": ["-m", _MCP_SERVER_MODULE],
+    }
+
+
+def _write_claude_mcp_json(project_root: Path) -> None:
+    """Merge our knowledge server into ``.mcp.json`` (setdefault)."""
+    path = project_root / ".mcp.json"
+    if path.exists():
+        try:
+            data = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            data = {}
+    else:
+        data = {}
+    servers = data.setdefault("mcpServers", {})
+    servers.setdefault(MCP_SERVER_NAME, claude_mcp_entry())
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
+
 def write_claude_bridge(project_root: Path) -> None:
     """Project-level Claude Code bridge — call once per ``allmight init``.
 
@@ -387,6 +440,7 @@ def write_claude_bridge(project_root: Path) -> None:
     * ``.claude/settings.json`` hook registrations for both
       ``role_load.py`` and the memory capability's ``memory_load.py``,
       plus ``reflection.py`` under ``UserPromptSubmit``
+    * ``.mcp.json`` registration of the knowledge MCP server
 
     The memory-load hook script itself is written by
     ``MemoryInitializer`` since its content is a Python rewrite of
@@ -397,3 +451,4 @@ def write_claude_bridge(project_root: Path) -> None:
     _write_role_load_hook(project_root)
     _write_reflection_hook(project_root)
     _write_settings_json(project_root)
+    _write_claude_mcp_json(project_root)

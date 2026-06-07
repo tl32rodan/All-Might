@@ -614,6 +614,16 @@ is a regression even if tests pass.
   are placed by `core.personalities.compose`, not by the template
   itself. Any new write target must be an explicit, documented
   exception in this section.
+  - **Documented exception — knowledge MCP wiring.** The init
+    scaffold (`write_init_scaffold` + `claude_bridge.write_claude_bridge`)
+    writes two project-level MCP registrations: `opencode.json#/mcp`
+    and `.mcp.json`, pointing OpenCode / Claude Code at the
+    project-wide knowledge server (`allmight.mcp.knowledge_server`,
+    the offline `web_search`/`context7` substitute). This is scaffold
+    infra, not a template write — no capability owns it; the
+    single-source entry builders live in `core/claude_bridge.py`
+    (`opencode_mcp_entry` / `claude_mcp_entry`). Both use `setdefault`
+    so a user-customised entry survives re-init.
 - **Conflict resolution lives in `core/personalities.compose`.**
   Templates do not detect or stage their own conflicts; they
   declare what they want to write inside their share.

@@ -476,6 +476,12 @@ def write_init_scaffold(project_root: Path) -> None:
     # otherwise a project that uses an internal mirror gets clobbered
     # on every re-init.
     cfg.setdefault("$schema", "https://opencode.ai/config.json")
+    # Knowledge MCP server — the offline web_search/context7 substitute.
+    # setdefault so a user-customised entry survives re-init (same policy
+    # as $schema). Single-source entry lives in claude_bridge.
+    from .claude_bridge import MCP_SERVER_NAME, opencode_mcp_entry
+
+    cfg.setdefault("mcp", {}).setdefault(MCP_SERVER_NAME, opencode_mcp_entry())
     opencode_json.write_text(json.dumps(cfg, indent=2) + "\n")
 
     pkg_json = opencode_dir / "package.json"
