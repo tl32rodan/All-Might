@@ -498,6 +498,7 @@ def write_init_scaffold(project_root: Path) -> None:
 
     _write_role_load_plugin(project_root)
     _write_reflection_plugin(project_root)
+    _write_offline_reference_plugin(project_root)
 
     # Bundled OpenCode reference + /opencode-ref skill. Framework-level
     # (no personality owns it) so it lives next to the other scaffold
@@ -1003,6 +1004,115 @@ REFLECTION_PROMPT = (
     "  (e.g. the first user turn, or a simple request with no friction).\n"
     "--- End Reflection Check ---"
 )
+
+
+# Single source for the offline-reference notice — consumed by both the
+# OpenCode plugin below and the Claude hook in claude_bridge.py. Tells
+# the air-gapped agent which offline tools replace web_search / context7.
+OFFLINE_REFERENCE_NOTICE = (
+    "--- Offline Environment ---\n"
+    "This workstation is air-gapped: `web_search` and `context7` are "
+    "unavailable. When you would look something up online, use the MCP "
+    "tools instead:\n"
+    "- `project_knowledge_search` — library/API signatures, tool flags, "
+    "manuals, or how internal code works (the offline code+docs "
+    "knowledge base, with the code<->doc mesh).\n"
+    "- `memory_recall` — your own past decisions, gotchas, and notes.\n"
+    "If a search returns nothing, say so and ask the user — do NOT "
+    "fabricate an answer or imply you reached the web.\n"
+    "--- End Offline Environment ---"
+)
+
+
+def _write_offline_reference_plugin(project_root: Path) -> None:
+    """Write ``.opencode/plugins/offline-reference.ts`` if absent or owned.
+
+    Project-level plugin modelled on ``reflection`` — stateless, fires
+    every ``chat.message`` (so it survives compaction) and prepends the
+    offline-environment notice telling the agent to reach for the
+    ``project_knowledge_search`` / ``memory_recall`` MCP tools instead of
+    the unavailable ``web_search`` / ``context7``.
+
+    Sibling Claude Code hook is ``.claude/hooks/offline_reference.py``
+    (see ``core.claude_bridge``); both inject the same notice.
+    """
+    from .markers import ALLMIGHT_MARKER_TS
+    from .safe_write import write_guarded
+
+    plugins_dir = project_root / ".opencode" / "plugins"
+    plugins_dir.mkdir(parents=True, exist_ok=True)
+    write_guarded(
+        plugins_dir / "offline-reference.ts",
+        _offline_reference_plugin_content(),
+        ALLMIGHT_MARKER_TS,
+    )
+
+
+def _offline_reference_plugin_content() -> str:
+    from .plugin_telemetry import TS_HEARTBEAT_SNIPPET
+
+    escaped = (
+        OFFLINE_REFERENCE_NOTICE
+        .replace("\\", "\\\\")
+        .replace("`", "\\`")
+        .replace("${", "\\${")
+    )
+    return (
+        _OFFLINE_REFERENCE_PLUGIN_TEMPLATE
+        .replace("__OFFLINE_REFERENCE_NOTICE__", escaped)
+        .replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
+    )
+
+
+_OFFLINE_REFERENCE_PLUGIN_TEMPLATE = """\
+// all-might generated
+/**
+ * Offline Reference — OpenCode plugin (All-Might)
+ *
+ * On every chat.message, prepends a short notice telling the agent the
+ * environment is air-gapped (no web_search / context7) and to use the
+ * project_knowledge_search / memory_recall MCP tools instead.
+ *
+ * Stateless and fires every turn (same rationale as reflection.ts):
+ * the cue must stay present after compaction. The notice is short.
+ *
+ * Sibling Claude Code hook is .claude/hooks/offline_reference.py — both
+ * surfaces inject the same notice; changes to one MUST land in the
+ * other (see All-Might CLAUDE.md -> Editor Compatibility).
+ *
+ * Hook:
+ *   chat.message -> inject the offline-environment notice every turn
+ */
+import type { Plugin } from "@opencode-ai/plugin";
+
+__TS_HEARTBEAT_SNIPPET__
+const OFFLINE_REFERENCE_NOTICE = `__OFFLINE_REFERENCE_NOTICE__`;
+
+export const OfflineReferencePlugin: Plugin = async ({ directory }: any) => {
+  const cwd = (directory as string | undefined) ?? process.cwd();
+
+  return {
+    "chat.message": async (input: any, output: any) => {
+      emitHeartbeat("offline-reference", cwd);
+      const sid = input?.sessionID;
+      if (!sid) return;
+      const mid = output?.message?.id;
+      if (!mid) return;
+      if (!Array.isArray(output?.parts)) return;
+      output.parts.unshift({
+        id: "prt_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10),
+        sessionID: sid,
+        messageID: mid,
+        type: "text",
+        text: OFFLINE_REFERENCE_NOTICE,
+        synthetic: true,
+      });
+    },
+  };
+};
+
+export default OfflineReferencePlugin;
+"""
 
 
 def _write_reflection_plugin(project_root: Path) -> None:

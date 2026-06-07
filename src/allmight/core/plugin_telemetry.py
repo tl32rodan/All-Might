@@ -82,6 +82,7 @@ def read_heartbeats(project_root: Path) -> dict[str, dict[str, float]]:
 KNOWN_OPENCODE_PLUGINS: tuple[str, ...] = (
     "role-load",
     "reflection",
+    "offline-reference",
     "memory-load",
     "memory-history",
     "remember-trigger",
@@ -144,6 +145,11 @@ PLUGIN_MANIFEST: dict[str, dict] = {
         "requires": ["user_prompt_inject"],
         "claude_code_mirror": "reflection.py",
         "purpose": "Per-turn reflection nudge that fires before the user prompt",
+    },
+    "offline-reference": {
+        "requires": ["user_prompt_inject"],
+        "claude_code_mirror": "offline_reference.py",
+        "purpose": "Tell the agent it is air-gapped: use project_knowledge_search / memory_recall instead of web_search / context7",
     },
     "remember-trigger": {
         "requires": ["session_idle_counter", "mid_turn_message_inject"],

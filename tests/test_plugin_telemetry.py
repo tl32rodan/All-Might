@@ -108,11 +108,14 @@ class TestSnippetContracts:
             "memory-load", "memory-history", "remember-trigger",
             "todo-curator", "trajectory-writer", "usage-logger",
         }
-        expected_project = {"role-load", "reflection"}
+        expected_project = {"role-load", "reflection", "offline-reference"}
         assert set(KNOWN_OPENCODE_PLUGINS) == expected_memory | expected_project
 
     def test_known_hook_list_matches_generators(self):
         """If we add a Claude hook we must register it here too."""
         # Sourced from claude_bridge._HOOK_SCRIPTS (basename minus .py).
-        expected = {"memory_load", "role_load", "memory_history", "reflection"}
+        expected = {
+            "memory_load", "role_load", "memory_history",
+            "reflection", "offline_reference",
+        }
         assert set(KNOWN_CLAUDE_HOOKS) == expected
