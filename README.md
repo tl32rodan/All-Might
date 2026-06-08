@@ -424,6 +424,7 @@ plugins are OpenCode-only **by platform design**, not as TODOs.
 |--------|----------|-------------|-------|
 | `memory-history` | ✓ | ✓ | Snapshot memory data after every turn; mark L3 ingest pending if journal changed |
 | `memory-load` | ✓ | ✓ | Inject MEMORY.md + scope-first principle at session start; drain L3 ingest if pending |
+| `offline-reference` | ✓ | ✓ | Tell the agent it is air-gapped: use project_knowledge_search / memory_recall instead of web_search / context7 |
 | `reflection` | ✓ | ✓ | Per-turn reflection nudge that fires before the user prompt |
 | `remember-trigger` | ✓ | — | OpenCode-only — requires `session_idle_counter, mid_turn_message_inject` |
 | `role-load` | ✓ | ✓ | Inject the active personality's ROLE.md at session start |

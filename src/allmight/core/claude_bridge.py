@@ -126,6 +126,71 @@ if __name__ == "__main__":
 '''
 
 
+def _offline_reference_hook_content() -> str:
+    """Return the offline-reference Claude Code hook body.
+
+    Built from the same ``OFFLINE_REFERENCE_NOTICE`` the OpenCode plugin
+    uses (single source in ``personalities``), so both surfaces inject
+    identical text.
+    """
+    from .personalities import OFFLINE_REFERENCE_NOTICE
+    from .plugin_telemetry import PY_HEARTBEAT_SNIPPET
+
+    return (
+        _OFFLINE_REFERENCE_HOOK_TEMPLATE
+        .replace(
+            "__OFFLINE_REFERENCE_NOTICE__",
+            OFFLINE_REFERENCE_NOTICE.replace("\\", "\\\\").replace('"""', '\\"""'),
+        )
+        .replace("__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET)
+    )
+
+
+_OFFLINE_REFERENCE_HOOK_TEMPLATE = '''\
+#!/usr/bin/env python3
+# all-might generated — DO NOT EDIT.
+#
+# Mirror of .opencode/plugins/offline-reference.ts. Changes here MUST
+# land in the .ts plugin too; see All-Might CLAUDE.md -> Editor
+# Compatibility.
+"""Offline-reference hook for Claude Code (UserPromptSubmit).
+
+Injects a short notice that the environment is air-gapped (no
+web_search / context7) and to use the project_knowledge_search /
+memory_recall MCP tools instead. Same content the OpenCode
+offline-reference plugin injects via chat.message.
+"""
+import json
+import sys
+
+
+OFFLINE_REFERENCE_NOTICE = """__OFFLINE_REFERENCE_NOTICE__"""
+
+
+__PY_HEARTBEAT_SNIPPET__
+
+def main() -> int:
+    _hb("offline_reference")
+    try:
+        payload = json.load(sys.stdin) if not sys.stdin.isatty() else {}
+    except (json.JSONDecodeError, ValueError):
+        payload = {}
+    event = payload.get("hook_event_name") or "UserPromptSubmit"
+
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": event,
+            "additionalContext": OFFLINE_REFERENCE_NOTICE,
+        }
+    }))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+
 def _role_load_hook_content() -> str:
     from .plugin_telemetry import PY_HEARTBEAT_SNIPPET
     return _ROLE_LOAD_HOOK_TEMPLATE.replace(
@@ -214,7 +279,7 @@ _TURN_END_SCRIPTS = ("memory_history.py",)
 # model sees it. Used to inject per-turn instructions (reflection
 # check on user feedback). Claude Code analogue of OpenCode's
 # chat.message hook.
-_USER_PROMPT_SCRIPTS = ("reflection.py",)
+_USER_PROMPT_SCRIPTS = ("reflection.py", "offline_reference.py")
 
 # Union — used by tests and by the merge logic to identify our owned
 # hook commands across all events.
@@ -354,6 +419,20 @@ def _write_reflection_hook(project_root: Path) -> None:
     target.chmod(0o755)
 
 
+def _write_offline_reference_hook(project_root: Path) -> None:
+    """Write the offline-reference Claude Code hook script.
+
+    Mirrors ``.opencode/plugins/offline-reference.ts``. The settings.json
+    registration is added by ``_write_settings_json`` under
+    ``UserPromptSubmit``.
+    """
+    hooks_dir = project_root / ".claude" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    target = hooks_dir / "offline_reference.py"
+    write_guarded(target, _offline_reference_hook_content(), CLAUDE_HOOK_MARKER)
+    target.chmod(0o755)
+
+
 def _write_settings_json(project_root: Path) -> None:
     """Merge our hook registrations into ``.claude/settings.json``.
 
@@ -375,6 +454,59 @@ def _write_settings_json(project_root: Path) -> None:
     settings_path.write_text(json.dumps(merged, indent=2) + "\n")
 
 
+# ---------------------------------------------------------------------------
+# Knowledge MCP server wiring (project-level, both surfaces)
+#
+# The offline substitute for web_search / context7: a single local
+# stdio server (``allmight.mcp.knowledge_server``) exposing
+# project_knowledge_search + memory_recall. It is project-level scaffold
+# infra (one server over every personality's database + memory), not a
+# capability template — hence wired here, next to the other scaffold
+# bridge writes, with no import from ``capabilities/``.
+#
+# Both ``opencode.json#/mcp`` and ``.mcp.json`` are NEW write targets;
+# the documented exception lives in CLAUDE.md "Interface Isolation".
+# Both use ``setdefault`` semantics (like opencode.json's $schema) so a
+# user-customised entry survives re-init.
+# ---------------------------------------------------------------------------
+
+MCP_SERVER_NAME = "allmight-knowledge"
+_MCP_SERVER_MODULE = "allmight.mcp.knowledge_server"
+
+
+def opencode_mcp_entry() -> dict:
+    """The OpenCode ``mcp.<name>`` local-server entry (single source)."""
+    return {
+        "type": "local",
+        "command": ["python", "-m", _MCP_SERVER_MODULE],
+        "enabled": True,
+    }
+
+
+def claude_mcp_entry() -> dict:
+    """The Claude Code ``mcpServers.<name>`` stdio entry (single source)."""
+    return {
+        "type": "stdio",
+        "command": "python",
+        "args": ["-m", _MCP_SERVER_MODULE],
+    }
+
+
+def _write_claude_mcp_json(project_root: Path) -> None:
+    """Merge our knowledge server into ``.mcp.json`` (setdefault)."""
+    path = project_root / ".mcp.json"
+    if path.exists():
+        try:
+            data = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            data = {}
+    else:
+        data = {}
+    servers = data.setdefault("mcpServers", {})
+    servers.setdefault(MCP_SERVER_NAME, claude_mcp_entry())
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
+
 def write_claude_bridge(project_root: Path) -> None:
     """Project-level Claude Code bridge — call once per ``allmight init``.
 
@@ -387,6 +519,7 @@ def write_claude_bridge(project_root: Path) -> None:
     * ``.claude/settings.json`` hook registrations for both
       ``role_load.py`` and the memory capability's ``memory_load.py``,
       plus ``reflection.py`` under ``UserPromptSubmit``
+    * ``.mcp.json`` registration of the knowledge MCP server
 
     The memory-load hook script itself is written by
     ``MemoryInitializer`` since its content is a Python rewrite of
@@ -396,4 +529,6 @@ def write_claude_bridge(project_root: Path) -> None:
     _write_claude_dir_symlinks(project_root)
     _write_role_load_hook(project_root)
     _write_reflection_hook(project_root)
+    _write_offline_reference_hook(project_root)
     _write_settings_json(project_root)
+    _write_claude_mcp_json(project_root)

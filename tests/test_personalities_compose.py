@@ -266,7 +266,11 @@ class TestReflectionPlugin:
         body = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
         # The user-facing prompt content.
         assert "Reflection Check" in body
-        assert "What went wrong?" in body
+        # Substance check (not just the header): the three reflection
+        # questions must survive into the generated plugin. Substrings are
+        # kept reword-tolerant so a prompt copy-edit doesn't break the test
+        # while still catching an accidental deletion of a question.
+        assert "went wrong?" in body
         assert "Why did it happen?" in body
         assert "How will I avoid" in body
 
