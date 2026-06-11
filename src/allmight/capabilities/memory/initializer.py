@@ -818,6 +818,7 @@ export const MemoryLoadPlugin: Plugin = async ({ directory }: any) => {
         synthetic: true,
       });
       primed.add(sid);
+      emitHeartbeat("memory-load.injected", cwd);
     },
   };
 };
@@ -935,6 +936,7 @@ export const RememberTriggerPlugin: Plugin = async ({ directory }: any) => {
         text: nudge,
         synthetic: true,
       });
+      emitHeartbeat("remember-trigger.injected", cwd);
     },
 
     // Pre-compaction hook: inject the scope reminder directly into the
@@ -947,6 +949,7 @@ export const RememberTriggerPlugin: Plugin = async ({ directory }: any) => {
       const context = output.context ?? (output.context = []);
       if (Array.isArray(context)) {
         context.push(preCompactText());
+        emitHeartbeat("remember-trigger.injected", cwd);
       }
     },
   };
@@ -1166,6 +1169,7 @@ export const TodoCuratorPlugin: Plugin = async ({ directory }: any) => {
         text: surface,
         synthetic: true,
       });
+      emitHeartbeat("todo-curator.injected", cwd);
     },
 
     // Pre-compaction: append session's TODOs to the per-corpus ledger
@@ -1187,6 +1191,7 @@ export const TodoCuratorPlugin: Plugin = async ({ directory }: any) => {
           `Curated TODO ledger updated at ${ledger} \\u2014 ` +
             "reference it instead of duplicating the list in the summary.",
         );
+        emitHeartbeat("todo-curator.injected", cwd);
       }
     },
   };
@@ -1692,12 +1697,11 @@ Log the recall to `memory/usage.log`:
         survive ``--force`` and the user has no clean way to recover
         the framework version short of ``rm`` followed by re-init.
 
-        Writes five plugin files:
+        Writes four plugin files:
         - memory-load.ts   — primes MEMORY.md + scope-first principle per session
+        - memory-history.ts — post-turn auto-snapshot of memory data
         - remember-trigger.ts — throttled per-session nudge (/remember + skills-log)
         - todo-curator.ts  — tracks TODOs across sessions per corpus
-        - trajectory-writer.ts — F5: captures structured session trajectory
-        - usage-logger.ts  — real-time appends to memory/usage.log
         """
         _, plugins_dir = self._agent_surface_dirs(root)
         plugins_dir.mkdir(parents=True, exist_ok=True)
@@ -1918,6 +1922,7 @@ def main() -> int:
         payload = {}
     event = payload.get("hook_event_name") or "SessionStart"
 
+    _hb("memory_load.injected")
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": event,
@@ -1939,8 +1944,6 @@ if __name__ == "__main__":
             "memory-history.ts": self._memory_history_plugin_content(),
             "remember-trigger.ts": self._remember_trigger_plugin_content(),
             "todo-curator.ts": self._todo_curator_plugin_content(),
-            "trajectory-writer.ts": self._trajectory_writer_plugin_content(),
-            "usage-logger.ts": self._usage_logger_plugin_content(),
         }
 
     def _memory_history_plugin_content(self) -> str:
@@ -2194,365 +2197,4 @@ if __name__ == "__main__":
     main()
 """
         return template.replace("__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET)
-
-    def _usage_logger_plugin_content(self) -> str:
-        """Return the OpenCode usage-logger.ts plugin content.
-
-        Real-time append to memory/usage.log so the Reflect-mode drift
-        audit (inside /remember) never depends on the agent remembering
-        to log. The agent's manual post-action log entries (in
-        /remember and /recall) still add richer scope/kind annotations
-        on top — this plugin only guarantees that the file is populated
-        as events happen.
-
-        Writes use appendFileSync (sync I/O) so each entry lands on disk
-        before the hook returns; nothing is buffered.
-        """
-        from ...core.plugin_telemetry import TS_HEARTBEAT_SNIPPET
-        template = """\
-/**
- * Usage Logger — OpenCode plugin (All-Might)
- *
- * Real-time appends to memory/usage.log. Independent of the agent
- * remembering to log inside /remember and /recall — the file is
- * updated as events happen, not at end-of-action.
- *
- * Captured:
- *   - chat.message       — detects /remember and /recall in user text
- *   - tool.execute.after — detects writes under memory/ via Write/Edit
- *
- * appendFileSync flushes synchronously, so every entry hits disk
- * before the hook returns.
- */
-import type { Plugin } from "@opencode-ai/plugin";
-import { appendFileSync, existsSync, mkdirSync, readdirSync } from "fs";
-import { join, dirname } from "path";
-
-__TS_HEARTBEAT_SNIPPET__
-
-const COMMAND_RE = /(?:^|\\s)\\/(remember|recall)\\b/;
-
-function findMemoryDirs(cwd: string): string[] {
-  const out: string[] = [];
-  const personalitiesDir = join(cwd, "personalities");
-  if (existsSync(personalitiesDir)) {
-    let entries: string[] = [];
-    try { entries = readdirSync(personalitiesDir); } catch { entries = []; }
-    for (const name of entries.sort()) {
-      const memDir = join(personalitiesDir, name, "memory");
-      if (existsSync(memDir)) out.push(memDir);
-    }
-  }
-  if (out.length === 0) out.push(join(cwd, "memory"));
-  return out;
-}
-
-function append(cwd: string, line: string): void {
-  const suffix = line.endsWith("\\n") ? line : line + "\\n";
-  for (const memDir of findMemoryDirs(cwd)) {
-    const p = join(memDir, "usage.log");
-    try {
-      mkdirSync(dirname(p), { recursive: true });
-      appendFileSync(p, suffix);
-    } catch {
-      // Best-effort: a plugin hook must never throw.
-    }
-  }
-}
-
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
-function extractUserText(parts: unknown): string {
-  if (!Array.isArray(parts)) return "";
-  const texts: string[] = [];
-  for (const p of parts as any[]) {
-    if (p?.type === "text" && typeof p.text === "string") texts.push(p.text);
-  }
-  return texts.join("\\n");
-}
-
-const MEMORY_PATH_RE = /(?:^|\\/)memory\\//;
-
-export const UsageLoggerPlugin: Plugin = async ({ directory }: any) => {
-  const cwd = (directory as string | undefined) ?? process.cwd();
-
-  return {
-    "chat.message": async (input: any, _output: any) => {
-      emitHeartbeat("usage-logger", cwd);
-      const sid = input?.sessionID;
-      if (!sid) return;
-      const text = extractUserText(input?.parts);
-      if (!text) return;
-      const m = text.match(COMMAND_RE);
-      if (!m) return;
-      const cmd = m[1];
-      append(cwd, `${nowIso()} ${cmd} invoked session=${String(sid).slice(0, 8)}`);
-      void _output;
-    },
-
-    "tool.execute.after": async (input: any) => {
-      emitHeartbeat("usage-logger", cwd);
-      const sid = input?.sessionID;
-      if (!sid) return;
-      const tool = String(input?.tool ?? "");
-      if (tool !== "Write" && tool !== "Edit") return;
-      const args = input?.args ?? {};
-      const filePath: string =
-        (typeof args?.file_path === "string" && args.file_path) ||
-        (typeof args?.filePath === "string" && args.filePath) ||
-        "";
-      if (!filePath) return;
-      if (!MEMORY_PATH_RE.test(filePath) && !filePath.endsWith("MEMORY.md")) return;
-      append(cwd, `${nowIso()} memory-write tool=${tool} file=${filePath}`);
-    },
-  };
-};
-
-export default UsageLoggerPlugin;
-"""
-        return template.replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
-
-    def _trajectory_writer_plugin_content(self) -> str:
-        """Return the OpenCode trajectory-writer.ts plugin content.
-
-        F5 — captures structured session data (input, tool_calls, output,
-        verdicts) and flushes a v1-frontmatter entry to
-        memory/journal/<workspace>/<ts>-trajectory.md on session compaction
-        or deletion. Transparent to the daily user: no nudges, no context
-        injection — just a disk write.
-        """
-        from ...core.plugin_telemetry import TS_HEARTBEAT_SNIPPET
-        template = """\
-/**
- * Trajectory Writer — OpenCode plugin (All-Might, F5)
- *
- * Captures structured session data so future offline analysis
- * (allmight memory export --format jsonl) has something to query.
- * Transparent to the daily user: never injects into the chat; only
- * writes a frontmatter-wrapped markdown file on flush events.
- *
- * Captured per session:
- *   - input     (last user message)
- *   - tool_calls (each {tool, args} from tool.execute.before,
- *                 annotated with verdict from tool.execute.after)
- *   - output    (accumulated agent response summary)
- *   - workspace (inferred from any database/<name>/ path)
- *
- * Flush triggers:
- *   - experimental.session.compacting — last chance before history is summarised
- *   - session.deleted                 — session closed without compaction
- *
- * Hook:
- *   - chat.message — record the latest user input (does NOT mutate output)
- */
-import type { Plugin } from "@opencode-ai/plugin";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "fs";
-import { join } from "path";
-
-__TS_HEARTBEAT_SNIPPET__
-
-type ToolCallRec = { tool: string; args: any; verdict: "ok" | "drift" | "blocked" };
-
-type Trajectory = {
-  workspace: string | null;
-  input: string;
-  tool_calls: ToolCallRec[];
-  output: string;
-  pendingToolIndex: number | null;
-};
-
-const sessions = new Map<string, Trajectory>();
-
-const WORKSPACE_RE = /database\\/([^/\\s"']+)/;
-
-function memoryDirForWorkspace(cwd: string, workspace: string): string {
-  const personalitiesDir = join(cwd, "personalities");
-  if (existsSync(personalitiesDir)) {
-    let entries: string[] = [];
-    try { entries = readdirSync(personalitiesDir); } catch { entries = []; }
-    for (const name of entries) {
-      if (existsSync(join(personalitiesDir, name, "database", workspace))) {
-        return join(personalitiesDir, name, "memory");
-      }
-    }
-    for (const name of entries.sort()) {
-      const memDir = join(personalitiesDir, name, "memory");
-      if (existsSync(memDir)) return memDir;
-    }
-  }
-  return join(cwd, "memory");
-}
-
-function ensure(sid: string): Trajectory {
-  let t = sessions.get(sid);
-  if (!t) {
-    t = {
-      workspace: null,
-      input: "",
-      tool_calls: [],
-      output: "",
-      pendingToolIndex: null,
-    };
-    sessions.set(sid, t);
-  }
-  return t;
-}
-
-function inferWorkspace(args: any): string | null {
-  if (!args) return null;
-  const haystack = typeof args === "string" ? args : JSON.stringify(args);
-  const m = haystack.match(WORKSPACE_RE);
-  return m?.[1] ?? null;
-}
-
-function yamlEscape(s: string): string {
-  // Block literal (|) keeps newlines verbatim; indent by 2 spaces.
-  const indented = s.replace(/\\n/g, "\\n  ");
-  return "|\\n  " + indented;
-}
-
-function flush(cwd: string, sid: string, t: Trajectory): void {
-  if (!t.input && t.tool_calls.length === 0) return;
-  const workspace = t.workspace ?? "general";
-  const now = new Date();
-  const iso = now.toISOString();
-  const ts = iso.replace(/[:.]/g, "-");
-  const id = `${iso.slice(0, 19)}-${sid.slice(0, 6)}`;
-  const dir = join(memoryDirForWorkspace(cwd, workspace), "journal", workspace);
-  const path = join(dir, `${ts}-trajectory.md`);
-
-  const outcome = t.tool_calls.some((c) => c.verdict === "drift" || c.verdict === "blocked")
-    ? "partial"
-    : "success";
-
-  const toolCallsYaml =
-    t.tool_calls.length === 0
-      ? "[]"
-      : "\\n" +
-        t.tool_calls
-          .map(
-            (c) =>
-              `  - tool: ${c.tool}\\n` +
-              `    args: ${JSON.stringify(c.args)}\\n` +
-              `    verdict: ${c.verdict}`,
-          )
-          .join("\\n");
-
-  const frontmatter =
-    "---\\n" +
-    "allmight_journal: v1\\n" +
-    `id: ${id}\\n` +
-    "type: trajectory\\n" +
-    `workspace: ${workspace}\\n` +
-    "trigger: auto\\n" +
-    `input: ${yamlEscape(t.input)}\\n` +
-    `tool_calls: ${toolCallsYaml}\\n` +
-    `output: ${yamlEscape(t.output)}\\n` +
-    `outcome_label: ${outcome}\\n` +
-    "tags: []\\n" +
-    "supersedes: null\\n" +
-    `created_at: ${iso}\\n` +
-    "---\\n";
-
-  const body = `# ${iso.slice(0, 10)} \\u2014 session trajectory (${workspace})\\n`;
-  try {
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(path, frontmatter + body);
-  } catch {
-    // Best-effort: another account may own the journal dir (EACCES),
-    // or the disk may be full / read-only. Silent fail keeps the
-    // session alive — the trajectory entry is lost, not the chat.
-  }
-}
-
-export const TrajectoryWriterPlugin: Plugin = async ({ directory }: any) => {
-  const cwd = (directory as string | undefined) ?? process.cwd();
-
-  return {
-    event: async ({ event }: { event: any }) => {
-      emitHeartbeat("trajectory-writer", cwd);
-      const sid = event?.properties?.sessionID ?? "";
-      if (!sid) return;
-      const type = event?.type;
-
-      if (type === "session.created") {
-        ensure(sid);
-      } else if (type === "session.deleted") {
-        const t = sessions.get(sid);
-        if (t) flush(cwd, sid, t);
-        sessions.delete(sid);
-      }
-    },
-
-    "chat.message": async (input: any, output: any) => {
-      emitHeartbeat("trajectory-writer", cwd);
-      const sid = input?.sessionID;
-      if (!sid) return;
-      const t = ensure(sid);
-      // Capture the last user message verbatim. Never mutate output.parts
-      // here — trajectory writing stays transparent to the chat.
-      const parts = input?.parts;
-      if (Array.isArray(parts)) {
-        const texts = parts
-          .filter((p: any) => p?.type === "text" && typeof p.text === "string")
-          .map((p: any) => p.text);
-        if (texts.length > 0) t.input = texts.join("\\n");
-      }
-      void output;
-    },
-
-    "tool.execute.before": async (input: any) => {
-      emitHeartbeat("trajectory-writer", cwd);
-      const sid = input?.sessionID;
-      if (!sid) return;
-      const t = ensure(sid);
-      if (!t.workspace) {
-        const ws = inferWorkspace(input?.args);
-        if (ws) t.workspace = ws;
-      }
-      t.tool_calls.push({
-        tool: String(input?.tool ?? "unknown"),
-        args: input?.args ?? {},
-        verdict: "ok",
-      });
-      t.pendingToolIndex = t.tool_calls.length - 1;
-    },
-
-    "tool.execute.after": async (input: any) => {
-      emitHeartbeat("trajectory-writer", cwd);
-      const sid = input?.sessionID;
-      if (!sid) return;
-      const t = ensure(sid);
-      const idx = t.pendingToolIndex;
-      if (idx !== null && t.tool_calls[idx]) {
-        const verdict = input?.verdict;
-        if (verdict === "drift" || verdict === "blocked" || verdict === "ok") {
-          t.tool_calls[idx].verdict = verdict;
-        }
-      }
-      t.pendingToolIndex = null;
-    },
-
-    "experimental.session.compacting": async (input: any, output: any) => {
-      emitHeartbeat("trajectory-writer", cwd);
-      const sid = input?.sessionID;
-      if (!sid) return;
-      const t = sessions.get(sid);
-      if (t) {
-        flush(cwd, sid, t);
-        // Reset captured state so post-compaction continues fresh.
-        t.input = "";
-        t.tool_calls = [];
-        t.output = "";
-      }
-      void output;
-    },
-  };
-};
-
-export default TrajectoryWriterPlugin;
-"""
-        return template.replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
 

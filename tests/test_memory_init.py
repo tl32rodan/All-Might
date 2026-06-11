@@ -727,7 +727,7 @@ class TestOpenCodeHooks:
         which caused OpenCode to throw
         `SyncEvent.run: "sessionID" required but not found` when
         compaction fired without an active session. Align with
-        trajectory-writer / todo-curator.
+        todo-curator.
         """
         MemoryInitializer().initialize(project_root)
         content = (project_root / ".opencode" / "plugins" / "remember-trigger.ts").read_text()
@@ -762,7 +762,6 @@ class TestOpenCodeHooks:
             ("remember-trigger.ts", "experimental.session.compacting"),
             ("todo-curator.ts", "chat.message"),
             ("todo-curator.ts", "experimental.session.compacting"),
-            ("trajectory-writer.ts", "experimental.session.compacting"),
         ]
         for plugin, hook in cases:
             content = (project_root / ".opencode" / "plugins" / plugin).read_text()
@@ -1176,12 +1175,19 @@ class TestFeedbackLoop:
         content = (project_root / ".opencode" / "commands" / "recall.md").read_text()
         assert "usage.log" in content
 
-    def test_reflect_reads_usage_log(self, project_root):
-        """reflect.md includes usage review step."""
+    def test_reflect_has_skill_check(self, project_root):
+        """reflect.md closes the self-evolution loop: repeated
+        procedures become a personality skill, published via
+        ``allmight compose`` (deterministic Python — the agent never
+        wires symlinks free-form)."""
         MemoryInitializer().initialize(project_root)
         content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
-        assert "usage.log" in content
-        assert "Usage Review" in content or "usage review" in content
+        assert "allmight compose" in content
+        assert "skills-log.md" in content
+        assert "personalities/<active>/skills/" in content
+        # The old step 6 read usage.log (written by the deleted
+        # usage-logger plugin) — it must not linger.
+        assert "usage.log" not in content
 
     def test_reflect_generates_insights(self, project_root):
         """reflect.md has an insights generation step."""
@@ -1210,127 +1216,6 @@ class TestJournalFrontmatterTemplates:
         MemoryInitializer().initialize(project_root)
         content = (project_root / ".opencode" / "commands" / "reflect.md").read_text()
         assert "allmight_journal: v1" in content
-
-
-class TestTrajectoryWriterPlugin:
-    """F5 — trajectory-writer.ts captures structured session data
-    transparently to the daily user."""
-
-    def test_trajectory_writer_plugin_exists(self, project_root):
-        MemoryInitializer().initialize(project_root)
-        assert (project_root / ".opencode" / "plugins" / "trajectory-writer.ts").exists()
-
-    def test_trajectory_writer_subscribes_to_tool_lifecycle(self, project_root):
-        MemoryInitializer().initialize(project_root)
-        content = (
-            project_root / ".opencode" / "plugins" / "trajectory-writer.ts"
-        ).read_text()
-        assert "tool.execute.before" in content
-        assert "tool.execute.after" in content
-        assert '"chat.message":' in content
-
-    def test_trajectory_writer_writes_under_journal(self, project_root):
-        MemoryInitializer().initialize(project_root)
-        content = (
-            project_root / ".opencode" / "plugins" / "trajectory-writer.ts"
-        ).read_text()
-        # The plugin must target the journal subdir of a memory dir.
-        assert '"journal"' in content
-        # Negative: must NOT use the deprecated msg.content mutation.
-        assert "msg.content =" not in content
-
-    def test_trajectory_writer_emits_v1_frontmatter(self, project_root):
-        MemoryInitializer().initialize(project_root)
-        content = (
-            project_root / ".opencode" / "plugins" / "trajectory-writer.ts"
-        ).read_text()
-        # Emits the sentinel so downstream export can distinguish it.
-        assert "allmight_journal: v1" in content
-
-    def test_trajectory_writer_flush_is_permission_safe(self, project_root):
-        """A different OS user (EACCES on the journal dir) must NOT break
-        the session. mkdirSync + writeFileSync inside flush() must run
-        inside a try/catch so the plugin silent-fails instead of
-        propagating to the OpenCode event loop."""
-        MemoryInitializer().initialize(project_root)
-        content = (
-            project_root / ".opencode" / "plugins" / "trajectory-writer.ts"
-        ).read_text()
-        # Both filesystem calls must live inside the same try block —
-        # find the mkdirSync call and walk backwards to the nearest brace.
-        mkdir_idx = content.index("mkdirSync(dir, { recursive: true })")
-        write_idx = content.index("writeFileSync(path, frontmatter + body)")
-        # The try opens before mkdirSync, and writeFileSync sits after it.
-        try_idx = content.rfind("try {", 0, mkdir_idx)
-        assert try_idx != -1, "mkdirSync must be guarded by a try block"
-        catch_idx = content.index("} catch", write_idx)
-        # No other try/catch may slip in between — assert ordering.
-        assert try_idx < mkdir_idx < write_idx < catch_idx
-        # Negative: bare unguarded calls are exactly what broke the
-        # different-account use case. They must not return.
-        assert "  mkdirSync(dir, { recursive: true });\n  const path" not in content
-
-
-class TestUsageLoggerPlugin:
-    """usage-logger.ts — real-time appends to memory/usage.log so the
-    drift audit doesn't depend on the agent remembering to log."""
-
-    def test_usage_logger_plugin_exists(self, project_root):
-        MemoryInitializer().initialize(project_root)
-        assert (project_root / ".opencode" / "plugins" / "usage-logger.ts").exists()
-
-    def test_usage_logger_uses_sync_append(self, project_root):
-        """appendFileSync ensures every entry hits disk before the hook returns."""
-        MemoryInitializer().initialize(project_root)
-        content = (
-            project_root / ".opencode" / "plugins" / "usage-logger.ts"
-        ).read_text()
-        assert "appendFileSync" in content
-        # Negative: async writes would buffer and break "real-time".
-        assert "appendFile(" not in content
-        assert "writeFile(" not in content
-
-    def test_usage_logger_targets_usage_log(self, project_root):
-        MemoryInitializer().initialize(project_root)
-        content = (
-            project_root / ".opencode" / "plugins" / "usage-logger.ts"
-        ).read_text()
-        assert '"usage.log"' in content
-        assert '"memory"' in content
-
-    def test_usage_logger_detects_slash_commands(self, project_root):
-        """Plugin must catch /remember and /recall in user text."""
-        MemoryInitializer().initialize(project_root)
-        content = (
-            project_root / ".opencode" / "plugins" / "usage-logger.ts"
-        ).read_text()
-        assert "remember|recall" in content
-        assert '"chat.message":' in content
-
-    def test_usage_logger_tracks_memory_writes(self, project_root):
-        """Tool writes under memory/ are logged via tool.execute.after."""
-        MemoryInitializer().initialize(project_root)
-        content = (
-            project_root / ".opencode" / "plugins" / "usage-logger.ts"
-        ).read_text()
-        assert '"tool.execute.after":' in content
-        assert '"Write"' in content
-        assert '"Edit"' in content
-
-    def test_usage_logger_guards_on_sessionid(self, project_root):
-        """Hooks must short-circuit when sessionID is absent."""
-        MemoryInitializer().initialize(project_root)
-        content = (
-            project_root / ".opencode" / "plugins" / "usage-logger.ts"
-        ).read_text()
-        for hook in ("chat.message", "tool.execute.after"):
-            block = _slice_hook(content, hook)
-            assert "input?.sessionID" in block, (
-                f"usage-logger:{hook} must read input?.sessionID"
-            )
-            assert "if (!sid) return;" in block, (
-                f"usage-logger:{hook} must early-return without sessionID"
-            )
 
 
 class TestRememberLessonsLearnedRouting:
@@ -1798,10 +1683,9 @@ class TestMemoryOverwriteGuard:
         plugins = project_root / ".opencode" / "plugins"
         for name in (
             "memory-load.ts",
+            "memory-history.ts",
             "remember-trigger.ts",
             "todo-curator.ts",
-            "trajectory-writer.ts",
-            "usage-logger.ts",
         ):
             text = (plugins / name).read_text()
             assert text.startswith("// all-might generated\n"), name
@@ -1817,3 +1701,50 @@ class TestMemoryOverwriteGuard:
         warn = capsys.readouterr().err
         assert "memory-load.ts" in warn and "All-Might marker" in warn
 
+
+
+class TestInjectedHeartbeats:
+    """T2 markers in the generated OpenCode plugins: every actual
+    content-delivery path emits ``<name>.injected`` so heartbeats can
+    distinguish "handler ran" from "nudge actually injected"."""
+
+    def test_memory_load_emits_injected_after_priming(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "plugins" / "memory-load.ts"
+        ).read_text()
+        assert 'emitHeartbeat("memory-load.injected", cwd);' in content
+
+    def test_remember_trigger_emits_injected_on_delivery(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "plugins" / "remember-trigger.ts"
+        ).read_text()
+        assert content.count(
+            'emitHeartbeat("remember-trigger.injected", cwd);'
+        ) == 2  # chat.message delivery + pre-compaction context push
+
+    def test_todo_curator_emits_injected_on_delivery(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "plugins" / "todo-curator.ts"
+        ).read_text()
+        assert content.count(
+            'emitHeartbeat("todo-curator.injected", cwd);'
+        ) == 2
+
+    def test_memory_history_has_no_injected_marker(self, project_root):
+        """memory-history's T2 is the snapshot commit itself, emitted
+        by ``allmight memory snapshot`` — the plugin must not fake it."""
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".opencode" / "plugins" / "memory-history.ts"
+        ).read_text()
+        assert ".injected" not in content
+
+    def test_claude_memory_load_hook_emits_injected(self, project_root):
+        MemoryInitializer().initialize(project_root)
+        content = (
+            project_root / ".claude" / "hooks" / "memory_load.py"
+        ).read_text()
+        assert '_hb("memory_load.injected")' in content

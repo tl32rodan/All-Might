@@ -253,7 +253,7 @@ truth. The mirror has three layers, each with a different sync model:
 
 The bridge is wired by `src/allmight/core/claude_bridge.py`
 (project-level pieces: root `CLAUDE.md`, dir symlinks, settings.json,
-`role_load.py`, `reflection.py`) plus per-capability hook scripts (e.g.
+`role_load.py`, `feedback_check.py`) plus per-capability hook scripts (e.g.
 `MemoryInitializer._claude_memory_load_hook_content` mirroring
 `memory-load.ts`). The personality-subagent projection lives in
 `core/personalities.py::compose_role_agents`.
@@ -376,7 +376,13 @@ plugin or hook:
 
 1. Inline the matching snippet near the top of the generated file.
 2. Call `emitHeartbeat("<name>", cwd)` (TS) or `_hb("<name>")` (Python)
-   inside every top-level event handler / hook entry point.
+   inside every top-level event handler / hook entry point. That is
+   T1 ("handler ran"). Additionally call
+   `emitHeartbeat("<name>.injected", cwd)` / `_hb("<name>.injected")`
+   at every point that actually delivers content (context injection,
+   snapshot commit) — T2. `allmight plugin status` renders fired and
+   injected as separate columns plus a T3 `Outcomes:` footer; a fresh
+   `fired` with `—` injected means the handler's condition never held.
 3. Register the name in `KNOWN_OPENCODE_PLUGINS` or
    `KNOWN_CLAUDE_HOOKS` in `core/plugin_telemetry.py` so `plugin
    status` lists it explicitly (even before its first fire).
@@ -395,7 +401,7 @@ OMO 4.x ships a built-in hook called `claude-code-hooks` that scans
 All-Might project this is doubly broken:
 
 1. **Duplicate fire.** We already emit OpenCode-native plugins
-   (`memory-history.ts`, `memory-load.ts`, `reflection.ts`,
+   (`memory-history.ts`, `memory-load.ts`, `feedback-check.ts`,
    `role-load.ts`) for every Claude hook we mirror, so the bridge
    makes each one fire twice.
 2. **Failure cascade.** If anything in `.claude/settings.json` points
@@ -461,7 +467,7 @@ my-chip-project/                          ← One All-Might project
 │   │   ├── all-for-one.md
 │   │   ├── sync.md
 │   │   └── stdcell-special.md            ← downward symlink → personalities/stdcell_owner/commands/...
-│   └── plugins/{role-load,reflection,memory-load,memory-history,remember-trigger,todo-curator,trajectory-writer,usage-logger}.ts
+│   └── plugins/{role-load,feedback-check,offline-reference,memory-load,memory-history,remember-trigger,todo-curator}.ts
 │
 ├── personalities/
 │   ├── stdcell_owner/
@@ -557,6 +563,7 @@ installed.)
 ```
 allmight init [--yes] [path]                       Scaffold-only: writes globals + suggestion catalog. NO personality created at install time — /onboard handles that.
 allmight add <name> [--capabilities a,b,c]         Add a personality with the requested capability subset. Called by /onboard for each chosen suggestion.
+allmight compose                                   Re-project personalities/*/{skills,commands} into .opencode/ + recompose AGENTS.md. Agent-callable — /reflect's Skill-check step runs it after writing a runtime skill.
 allmight list                                      Print a table of installed personalities.
 allmight clone <source>                            Read-only clone with symlinked database/.
 allmight migrate                                   One-shot upgrade for pre-Part-C projects.

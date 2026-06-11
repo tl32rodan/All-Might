@@ -57,41 +57,69 @@ Deliberately simple:
 The point is to *enable evidence-gathering*, not to build an
 observability platform.
 
-## Plugin reduction plan (data-driven, future work)
+## T1 / T2 / T3 — three different questions (2026-06)
 
-Audit of the existing 8 plugins. The verdict column says what we
-*intend* to do once heartbeat data justifies it. None of the actions
-in this column are taken in this PR — we ship observability first,
-then gather a week of data, then act.
+Heartbeat freshness alone misled a real deployment: super-learner's
+markers refreshed on every tick while `/remember`, `/reflect`, and
+skill creation never fired once in 16 cycles (see
+`docs/concentration-review-2026-06.md`). The fix is to measure three
+strictly-ordered observables, all still touch-file simple:
 
-| Plugin              | Current fire rate          | Verdict (post-data) |
+- **T1 `fired`** — handler entry. `emitHeartbeat("<name>")` /
+  `_hb("<name>")` as the first line of every handler. Proves only
+  that events arrive.
+- **T2 `injected`** — content delivered. `<name>.injected` touched
+  only on the actual injection / snapshot path. `fired` fresh +
+  `injected` `—` means the handler's condition never held (e.g. a
+  nudge threshold unreachable in one-shot sessions).
+  `memory-history`'s T2 is emitted by `allmight memory snapshot`
+  when a commit lands, not by the plugin.
+- **T3 outcomes** — durable artifacts. The `Outcomes:` footer of
+  `allmight plugin status` (memory-history commit count, journal
+  entry count, MEMORY.md placeholder check) answers whether the
+  *agent* acted on what was injected. This is the only metric that
+  would have caught the super-learner gap.
+
+## Plugin reduction plan (2026-06: phase 1 executed)
+
+Audit of the plugin set. The first two verdicts have been **executed**
+— the super-learner deployment supplied the evidence the original
+plan was waiting for (16 cycles, zero readers of either output).
+
+| Plugin              | Current fire rate          | Verdict |
 |---------------------|----------------------------|----------------------|
-| `memory-load`       | every `chat.message`       | **Reduce fire rate.** Probably SessionStart + post-compaction only. Re-injecting MEMORY.md on every turn is wasteful. |
-| `role-load`         | every `chat.message`       | **Probably delete.** Redundant with `AGENTS.md`, which is already composed from every `ROLE.md`. |
-| `reflection`        | every user prompt          | **Wait for data.** Just shipped. If status shows it fires constantly with no visible behaviour change, drop it or upgrade to adaptive (`§5.1` of the design plan). |
-| `remember-trigger`  | every Nth idle, compaction | **Keep.** Only plugin with prior evidence of working. |
-| `usage-logger`      | every tool call            | **Probably delete.** Nobody reads `usage.log`. OpenCode / Claude transcripts already log tool calls. |
+| `memory-load`       | every `chat.message`       | **Reduce fire rate.** Probably SessionStart + post-compaction only. Re-injecting MEMORY.md on every turn is wasteful. Deferred — next round. |
+| `role-load`         | every `chat.message`       | **Probably delete.** Redundant with `AGENTS.md`, which is already composed from every `ROLE.md`. Deferred — next round. |
+| `feedback-check`    | every user prompt          | **Renamed from `reflection` (2026-06).** The old name collided with `/reflect` (the periodic memory audit) and misled users into reading it as a self-reflection engine. Behaviour unchanged; watch T2/T3 before further calls. |
+| `remember-trigger`  | every Nth idle, compaction | **Keep.** Only plugin with prior evidence of working. Note: structurally dead in one-shot scheduled sessions — episodic duties belong in loop-skill steps there. |
+| `usage-logger`      | —                          | **Deleted (2026-06).** Nobody read `usage.log` (super-learner: 0 bytes after 16 cycles). Re-init prunes the stale `.ts`. Manual log instructions in `/remember`/`/recall` remain (other writers exist). |
 | `todo-curator`      | TodoWrite calls + session  | **Keep, verify.** Cross-session TODO persistence has real value; confirm via status that it fires at all. |
-| `trajectory-writer` | every tool before/after    | **Probably delete.** §4 of the design plan confirms no consumer reads it. Re-derivable from editor transcripts. Bring back when (if) a `Tier-6` adaptive plugin actually needs it. |
-| `memory-history`    | every `chat.message`       | **Change fire condition.** Should be event-driven (after `/remember`, after memory writes) instead of every turn. Most turns don't touch memory. |
+| `trajectory-writer` | —                          | **Deleted (2026-06).** No consumer ever read it. Re-init prunes the stale `.ts`. Bring back when (if) a `Tier-6` adaptive plugin actually needs it. |
+| `memory-history`    | every `chat.message`       | **Change fire condition.** Should be event-driven (after `/remember`, after memory writes) instead of every turn. Deferred — next round. |
 
-Net effect, if the data confirms: 8 plugins → 5 (drop 3, change fire
-rate for 2, keep 3).
+Current set: 7 plugins. Remaining intended cuts (role-load,
+fire-rate reductions) wait on T2/T3 data from the new columns.
+
+### Stale-plugin pruning
+
+Deleting (or renaming) a plugin in the framework must not leave the
+old generated `.ts` running forever in deployed projects.
+`prune_stale_plugins` (`core/plugin_telemetry.py`) runs on every
+`allmight init`: it deletes `.opencode/plugins/*.ts` and staged
+`.allmight/templates/*.ts` whose basename is no longer in
+`KNOWN_OPENCODE_PLUGINS` **and** whose head carries the All-Might TS
+marker. User-authored plugins (no marker) are never touched. The
+Claude side handles renames via `_LEGACY_HOOK_SCRIPTS` in
+`core/claude_bridge.py` (settings.json entry stripped, marker'd
+script deleted).
 
 ## Why "delete a plugin" needs evidence
 
-Several of these plugins look obviously useless on inspection. They
-are not deleted in this PR for two reasons:
-
-1. **`reflection.ts` just shipped.** Killing it before observing
-   whether it has any effect would discard a deliberate experiment.
-2. **`usage-logger.ts` *looks* unused but might have private uses.**
-   Maybe the user greps it occasionally. Heartbeat data will tell us
-   the fire rate; field reports will tell us whether anyone reads it.
-
 The general principle: **observability is the cheaper move than
 reduction**, because adding it back later is harder than deleting code
-later. Add the eyes first, then trim what they show is dead.
+later. Add the eyes first, then trim what they show is dead. The
+2026-06 deletions followed exactly this path — the deployment data
+arrived, then the cut.
 
 ## Non-goals (deliberately deferred)
 

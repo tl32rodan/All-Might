@@ -4,8 +4,8 @@ Generates the L1/L2/L3 agent memory system: ``MEMORY.md`` at the
 project root, ``memory/`` inside the instance dir (config + journal +
 understanding + store), the ``/remember`` ``/recall``
 commands, the AGENTS.md memory section, and the OpenCode plugins
-(``memory-load``, ``remember-trigger``, ``todo-curator``,
-``trajectory-writer``, ``usage-logger``).
+(``memory-load``, ``memory-history``, ``remember-trigger``,
+``todo-curator``).
 
 The memory capability exposes no CLI flags; ``allmight init`` always installs it.
 

@@ -184,7 +184,13 @@ def migrate(project_root: Path, *, dry_run: bool = False) -> MigrationPlan:
     for instance in instances:
         compose(project_root, instance, force=False)
     if instances:
-        compose_agents_md(project_root, instances, project_name=project_root.name)
+        # force=True: the pre-migration AGENTS.md is legacy All-Might output
+        # (fence markers, no file-level marker) — overwriting it is the
+        # migration.
+        compose_agents_md(
+            project_root, instances,
+            project_name=project_root.name, force=True,
+        )
         from ..core.personalities import compose_role_agents
         compose_role_agents(project_root, instances)
 

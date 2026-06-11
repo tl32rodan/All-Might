@@ -9,16 +9,15 @@ Rationale: pre-Part-D the plugins hardcoded ``cwd/memory/...``,
 which only worked for single-instance projects. Part-D supports N
 personalities each with their own memory dir; plugins must adapt.
 
-The 5 generated plugins split across two responsibilities:
+The generated plugins split across two responsibilities:
 
 * **No memory-data writes** — ``memory-load.ts`` reads project-root
   ``MEMORY.md`` only; ``role-load.ts`` already iterates
   ``personalities/*/ROLE.md``; ``remember-trigger.ts`` keeps
   in-memory state only. These need no change.
-* **Per-personality memory writes** — ``usage-logger.ts``,
-  ``todo-curator.ts``, ``trajectory-writer.ts`` all need to
-  resolve which personality's ``memory/`` dir to write into. They
-  iterate ``personalities/*/`` at runtime.
+* **Per-personality memory writes** — ``todo-curator.ts`` needs to
+  resolve which personality's ``memory/`` dir to write into. It
+  iterates ``personalities/*/`` at runtime.
 """
 
 from __future__ import annotations
@@ -33,9 +32,7 @@ from allmight.capabilities.memory.initializer import MemoryInitializer
 
 # Plugins that produce per-personality memory writes.
 DATA_WRITER_PLUGINS = (
-    "usage-logger.ts",
     "todo-curator.ts",
-    "trajectory-writer.ts",
 )
 
 

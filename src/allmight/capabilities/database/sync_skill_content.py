@@ -32,8 +32,8 @@ SYNC_SKILL_BODY = """\
 2. For each staged file, find the corresponding working file:
    - `.allmight/templates/commands/search.md` → `.opencode/commands/search.md`
    - `.allmight/templates/agents/<name>.md` → `.opencode/agents/<name>.md`
-   - `.allmight/templates/claude-md-section.md` → `AGENTS.md` (within `<!-- ALL-MIGHT -->` markers)
-   - `.allmight/templates/memory-md-section.md` → `AGENTS.md` (within `<!-- ALL-MIGHT-MEMORY -->` markers)
+   - `.allmight/templates/{claude,memory}-md-section.md` → `AGENTS.md` (within the matching `<!-- ALL-MIGHT* -->` markers)
+   - `.allmight/templates/AGENTS.md` → `AGENTS.md` (whole-file: user-authored root — keep theirs, offer a diff)
    - `.allmight/templates/opencode.json` → `.opencode/opencode.json`
    - `.allmight/templates/memory-load.ts` → `.opencode/plugins/memory-load.ts`
 3. **Verify the working file is All-Might-owned before merging.**
@@ -201,8 +201,8 @@ decide whether the directory is still wanted.
 | `.allmight/templates/skills/**` | `.opencode/skills/**` |
 | `.allmight/templates/commands/**` | `.opencode/commands/**` |
 | `.allmight/templates/agents/<name>.md` | `.opencode/agents/<name>.md` |
-| `.allmight/templates/claude-md-section.md` | `AGENTS.md` (ALL-MIGHT marker) |
-| `.allmight/templates/memory-md-section.md` | `AGENTS.md` (ALL-MIGHT-MEMORY marker) |
+| `.allmight/templates/{claude,memory}-md-section.md` | `AGENTS.md` (matching marker block) |
+| `.allmight/templates/AGENTS.md` | `AGENTS.md` (whole-file conflict: keep user's) |
 | `.allmight/templates/opencode.json` | `.opencode/opencode.json` |
 | `.allmight/templates/memory-load.ts` | `.opencode/plugins/memory-load.ts` |
 | `.allmight/templates/conflicts.yaml` | manifest of skipped compose targets |

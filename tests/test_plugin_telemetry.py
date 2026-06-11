@@ -106,9 +106,9 @@ class TestSnippetContracts:
         # project-level plugins in core.personalities.
         expected_memory = {
             "memory-load", "memory-history", "remember-trigger",
-            "todo-curator", "trajectory-writer", "usage-logger",
+            "todo-curator",
         }
-        expected_project = {"role-load", "reflection", "offline-reference"}
+        expected_project = {"role-load", "feedback-check", "offline-reference"}
         assert set(KNOWN_OPENCODE_PLUGINS) == expected_memory | expected_project
 
     def test_known_hook_list_matches_generators(self):
@@ -116,6 +116,6 @@ class TestSnippetContracts:
         # Sourced from claude_bridge._HOOK_SCRIPTS (basename minus .py).
         expected = {
             "memory_load", "role_load", "memory_history",
-            "reflection", "offline_reference",
+            "feedback_check", "offline_reference",
         }
         assert set(KNOWN_CLAUDE_HOOKS) == expected
