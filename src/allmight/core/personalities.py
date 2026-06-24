@@ -379,8 +379,6 @@ def compose(
 
     return conflicts
 
-    return conflicts
-
 
 def stage_compose_conflicts(
     project_root: Path,
@@ -497,7 +495,7 @@ def write_init_scaffold(project_root: Path) -> None:
         pkg_json.write_text(_OPENCODE_PACKAGE_JSON)
 
     _write_role_load_plugin(project_root)
-    _write_reflection_plugin(project_root)
+    _write_feedback_check_plugin(project_root)
     _write_offline_reference_plugin(project_root)
 
     # Bundled OpenCode reference + /opencode-ref skill. Framework-level
@@ -801,6 +799,7 @@ def compose_agents_md(
     instances: list["Personality"],
     *,
     project_name: str | None = None,
+    force: bool = False,
 ) -> Path:
     """Stitch the framework primer and each instance's ROLE.md into AGENTS.md.
 
@@ -818,10 +817,19 @@ def compose_agents_md(
        ``/onboard``.
 
     The composed file carries the All-Might marker so re-init can tell
-    its own composed output from a user-edited AGENTS.md and stage a
-    conflict for ``/sync`` if the user has hand-edited the root.
+    its own composed output from a user-edited AGENTS.md. A root
+    AGENTS.md *without* the marker is user-authored (super-learner
+    style hand-written entry points exist in the wild): it is left
+    untouched and the fresh composition is staged at
+    ``.allmight/templates/AGENTS.md`` for ``/sync`` to reconcile. The
+    returned path is whichever file was actually written.
+
+    ``force=True`` bypasses the guard — used by the one-shot migrator,
+    which rewrites a *legacy-format* AGENTS.md (fence markers, no
+    file-level marker) that is known to be All-Might-authored.
     """
     from .markers import ALLMIGHT_MARKER_MD
+    from .safe_write import write_guarded
 
     name = project_name or project_root.name
     sections: list[str] = [
@@ -844,9 +852,16 @@ def compose_agents_md(
         sections.append(
             "*(no personalities yet — run `/onboard` to set up the first one.)*"
         )
+    content = "\n\n".join(sections) + "\n"
     agents_md = project_root / "AGENTS.md"
-    agents_md.write_text("\n\n".join(sections) + "\n")
-    return agents_md
+    if write_guarded(agents_md, content, ALLMIGHT_MARKER_MD, force=force):
+        return agents_md
+    # User-authored AGENTS.md (no marker): never clobber. Stage the
+    # fresh composition for /sync instead.
+    staged = project_root / ".allmight" / "templates" / "AGENTS.md"
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged.write_text(content)
+    return staged
 
 
 def _write_role_load_plugin(project_root: Path) -> None:
@@ -976,6 +991,7 @@ export const RoleLoadPlugin: Plugin = async ({ directory }: any) => {
         synthetic: true,
       });
       primed.add(sid);
+      emitHeartbeat("role-load.injected", cwd);
     },
   };
 };
@@ -985,12 +1001,17 @@ export default RoleLoadPlugin;
 
 
 # ---------------------------------------------------------------------------
-# Reflection-check plugin (project-level, every chat.message)
+# Feedback-check plugin (project-level, every chat.message)
+#
+# Renamed from ``reflection`` (2026-06): the old name collided with the
+# /reflect command (periodic memory audit) and misled users into
+# thinking this plugin performed self-reflection. It only cues a short
+# in-turn retrospective on user feedback / friction.
 # ---------------------------------------------------------------------------
 
 
-REFLECTION_PROMPT = (
-    "--- Reflection Check ---\n"
+FEEDBACK_CHECK_PROMPT = (
+    "--- Feedback Check ---\n"
     "Before this turn's work, glance back at the last few turns:\n"
     "- Reflect in 2-3 sentences if ANY of these happened (not only explicit\n"
     "  corrections): the user pointed out a mistake or redirected you; you\n"
@@ -1002,7 +1023,7 @@ REFLECTION_PROMPT = (
     "  Then proceed with the turn.\n"
     "- Only skip if the last turns were genuinely clean and uneventful\n"
     "  (e.g. the first user turn, or a simple request with no friction).\n"
-    "--- End Reflection Check ---"
+    "--- End Feedback Check ---"
 )
 
 
@@ -1027,7 +1048,7 @@ OFFLINE_REFERENCE_NOTICE = (
 def _write_offline_reference_plugin(project_root: Path) -> None:
     """Write ``.opencode/plugins/offline-reference.ts`` if absent or owned.
 
-    Project-level plugin modelled on ``reflection`` — stateless, fires
+    Project-level plugin modelled on ``feedback-check`` — stateless, fires
     every ``chat.message`` (so it survives compaction) and prepends the
     offline-environment notice telling the agent to reach for the
     ``project_knowledge_search`` / ``memory_recall`` MCP tools instead of
@@ -1073,7 +1094,7 @@ _OFFLINE_REFERENCE_PLUGIN_TEMPLATE = """\
  * environment is air-gapped (no web_search / context7) and to use the
  * project_knowledge_search / memory_recall MCP tools instead.
  *
- * Stateless and fires every turn (same rationale as reflection.ts):
+ * Stateless and fires every turn (same rationale as feedback-check.ts):
  * the cue must stay present after compaction. The notice is short.
  *
  * Sibling Claude Code hook is .claude/hooks/offline_reference.py — both
@@ -1107,6 +1128,7 @@ export const OfflineReferencePlugin: Plugin = async ({ directory }: any) => {
         text: OFFLINE_REFERENCE_NOTICE,
         synthetic: true,
       });
+      emitHeartbeat("offline-reference.injected", cwd);
     },
   };
 };
@@ -1115,19 +1137,24 @@ export default OfflineReferencePlugin;
 """
 
 
-def _write_reflection_plugin(project_root: Path) -> None:
-    """Write ``.opencode/plugins/reflection.ts`` if absent or owned.
+def _write_feedback_check_plugin(project_root: Path) -> None:
+    """Write ``.opencode/plugins/feedback-check.ts`` if absent or owned.
 
     Project-level plugin (same status as role-load). At every
     ``chat.message`` it prepends a short instruction asking the agent
     to glance at the user's latest message and, if it points out a
-    mistake, do a 2-3 sentence reflection (what / why / how to avoid)
-    before proceeding. Positive or neutral feedback skips the
-    reflection — the gating happens inside the agent's head, so the
-    plugin itself is stateless and fires every turn.
+    mistake, do a 2-3 sentence retrospective (what / why / how to
+    avoid) before proceeding. Positive or neutral feedback skips the
+    retrospective — the gating happens inside the agent's head, so
+    the plugin itself is stateless and fires every turn.
 
-    Sibling Claude Code hook is ``.claude/hooks/reflection.py`` (see
-    ``core.claude_bridge``); both surfaces inject the same prompt.
+    This is NOT the periodic self-reflection surface — that is the
+    ``/reflect`` command (memory capability). The plugin was renamed
+    from ``reflection`` to dissolve exactly that confusion; the stale
+    ``reflection.ts`` is removed on re-init by ``prune_stale_plugins``.
+
+    Sibling Claude Code hook is ``.claude/hooks/feedback_check.py``
+    (see ``core.claude_bridge``); both surfaces inject the same prompt.
     """
     from .markers import ALLMIGHT_MARKER_TS
     from .safe_write import write_guarded
@@ -1135,39 +1162,42 @@ def _write_reflection_plugin(project_root: Path) -> None:
     plugins_dir = project_root / ".opencode" / "plugins"
     plugins_dir.mkdir(parents=True, exist_ok=True)
     write_guarded(
-        plugins_dir / "reflection.ts",
-        _reflection_plugin_content(),
+        plugins_dir / "feedback-check.ts",
+        _feedback_check_plugin_content(),
         ALLMIGHT_MARKER_TS,
     )
 
 
-def _reflection_plugin_content() -> str:
+def _feedback_check_plugin_content() -> str:
     from .plugin_telemetry import TS_HEARTBEAT_SNIPPET
     # The prompt is interpolated into a TS backtick-string, so escape
     # backslashes, backticks, and ${ to keep the literal intact.
     escaped = (
-        REFLECTION_PROMPT
+        FEEDBACK_CHECK_PROMPT
         .replace("\\", "\\\\")
         .replace("`", "\\`")
         .replace("${", "\\${")
     )
     return (
-        _REFLECTION_PLUGIN_TEMPLATE
-        .replace("__REFLECTION_PROMPT__", escaped)
+        _FEEDBACK_CHECK_PLUGIN_TEMPLATE
+        .replace("__FEEDBACK_CHECK_PROMPT__", escaped)
         .replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
     )
 
 
-_REFLECTION_PLUGIN_TEMPLATE = """\
+_FEEDBACK_CHECK_PLUGIN_TEMPLATE = """\
 // all-might generated
 /**
- * Reflection Check — OpenCode plugin (All-Might)
+ * Feedback Check — OpenCode plugin (All-Might)
  *
  * On every chat.message, prepends a brief instruction asking the
  * agent to glance at the user's latest message and, if it points
- * out a mistake, do a 2-3 sentence reflection (what went wrong /
+ * out a mistake, do a 2-3 sentence retrospective (what went wrong /
  * why / how to avoid) before proceeding with the turn. Positive or
- * neutral feedback skips the reflection.
+ * neutral feedback skips it.
+ *
+ * NOT the periodic self-reflection surface — that is the /reflect
+ * command. This plugin only cues an in-turn check on user feedback.
  *
  * The plugin is stateless — the agent itself decides whether the
  * latest user message constitutes negative feedback. Firing every
@@ -1175,24 +1205,24 @@ _REFLECTION_PLUGIN_TEMPLATE = """\
  * after compaction, and the prompt is small enough that the
  * repeated injection cost is negligible.
  *
- * Sibling Claude Code hook is .claude/hooks/reflection.py — both
+ * Sibling Claude Code hook is .claude/hooks/feedback_check.py — both
  * surfaces inject the same prompt; changes to one MUST land in the
  * other (see All-Might CLAUDE.md -> Editor Compatibility).
  *
  * Hook:
- *   chat.message -> inject the reflection-check prefix every turn
+ *   chat.message -> inject the feedback-check prefix every turn
  */
 import type { Plugin } from "@opencode-ai/plugin";
 
 __TS_HEARTBEAT_SNIPPET__
-const REFLECTION_PROMPT = `__REFLECTION_PROMPT__`;
+const FEEDBACK_CHECK_PROMPT = `__FEEDBACK_CHECK_PROMPT__`;
 
-export const ReflectionPlugin: Plugin = async ({ directory }: any) => {
+export const FeedbackCheckPlugin: Plugin = async ({ directory }: any) => {
   const cwd = (directory as string | undefined) ?? process.cwd();
 
   return {
     "chat.message": async (input: any, output: any) => {
-      emitHeartbeat("reflection", cwd);
+      emitHeartbeat("feedback-check", cwd);
       const sid = input?.sessionID;
       if (!sid) return;
       // Each Part requires id / sessionID / messageID (see OpenCode's
@@ -1206,14 +1236,15 @@ export const ReflectionPlugin: Plugin = async ({ directory }: any) => {
         sessionID: sid,
         messageID: mid,
         type: "text",
-        text: REFLECTION_PROMPT,
+        text: FEEDBACK_CHECK_PROMPT,
         synthetic: true,
       });
+      emitHeartbeat("feedback-check.injected", cwd);
     },
   };
 };
 
-export default ReflectionPlugin;
+export default FeedbackCheckPlugin;
 """
 
 

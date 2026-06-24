@@ -53,6 +53,46 @@ def emit_heartbeat(
         pass
 
 
+def prune_stale_plugins(project_root: Path) -> list[Path]:
+    """Delete All-Might-generated plugins that are no longer shipped.
+
+    Sweeps ``.opencode/plugins/*.ts`` and the re-init staging dir
+    ``.allmight/templates/*.ts``. A file is pruned only when BOTH hold:
+
+    * its basename is not ``<name>.ts`` for any name in
+      ``KNOWN_OPENCODE_PLUGINS`` (i.e. the framework stopped shipping
+      it — deleted or renamed), and
+    * its head carries ``ALLMIGHT_MARKER_TS`` (we wrote it; a
+      user-authored plugin without the marker is never touched).
+
+    Returns the deleted paths so ``allmight init`` can report them.
+    Errors are swallowed per-file — a prune failure must never break
+    init.
+    """
+    from .markers import ALLMIGHT_MARKER_TS
+
+    current = {f"{name}.ts" for name in KNOWN_OPENCODE_PLUGINS}
+    pruned: list[Path] = []
+    sweep_dirs = (
+        project_root / ".opencode" / "plugins",
+        project_root / ".allmight" / "templates",
+    )
+    for d in sweep_dirs:
+        if not d.is_dir():
+            continue
+        for entry in sorted(d.glob("*.ts")):
+            if entry.name in current:
+                continue
+            try:
+                head = entry.read_text(encoding="utf-8", errors="replace")[:4096]
+                if ALLMIGHT_MARKER_TS in head:
+                    entry.unlink()
+                    pruned.append(entry)
+            except OSError:
+                continue
+    return pruned
+
+
 def read_heartbeats(project_root: Path) -> dict[str, dict[str, float]]:
     """Return ``{surface: {name: mtime}}`` for the project.
 
@@ -81,14 +121,12 @@ def read_heartbeats(project_root: Path) -> dict[str, dict[str, float]]:
 
 KNOWN_OPENCODE_PLUGINS: tuple[str, ...] = (
     "role-load",
-    "reflection",
+    "feedback-check",
     "offline-reference",
     "memory-load",
     "memory-history",
     "remember-trigger",
     "todo-curator",
-    "trajectory-writer",
-    "usage-logger",
 )
 
 
@@ -141,10 +179,10 @@ PLUGIN_MANIFEST: dict[str, dict] = {
         "claude_code_mirror": "role_load.py",
         "purpose": "Inject the active personality's ROLE.md at session start",
     },
-    "reflection": {
+    "feedback-check": {
         "requires": ["user_prompt_inject"],
-        "claude_code_mirror": "reflection.py",
-        "purpose": "Per-turn reflection nudge that fires before the user prompt",
+        "claude_code_mirror": "feedback_check.py",
+        "purpose": "Per-turn feedback-check cue (renamed from 'reflection'; the periodic audit is /reflect)",
     },
     "offline-reference": {
         "requires": ["user_prompt_inject"],
@@ -160,16 +198,6 @@ PLUGIN_MANIFEST: dict[str, dict] = {
         "requires": ["cross_turn_plugin_state", "mid_turn_message_inject"],
         "claude_code_mirror": None,
         "purpose": "Cross-turn TODO ledger curation",
-    },
-    "trajectory-writer": {
-        "requires": ["cross_turn_plugin_state", "session_stop_inject"],
-        "claude_code_mirror": None,
-        "purpose": "Per-session trajectory.md write on compacting / end",
-    },
-    "usage-logger": {
-        "requires": ["tool_execute_after_inject", "mid_turn_message_inject"],
-        "claude_code_mirror": None,
-        "purpose": "Real-time memory/usage.log append on /remember and /recall",
     },
 }
 

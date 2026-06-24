@@ -68,15 +68,15 @@ created_at: <ISO-8601>
 Write it under `memory/journal/<workspace>/` or
 `memory/journal/general/`.
 
-## 6. Usage Review (optional but high-signal)
+## 6. Skill check — turn repetition into a skill
 
-Read `memory/usage.log` for the current session:
+If the same multi-step procedure appears twice or more across this
+session and the journal entries you just reviewed:
 
-- Topic recalled often → consider promoting it to L2.
-- Recalls returning 0 results → knowledge gap; write the missing
-  fact to journal or `understanding/`.
-- `remember` entries scattered widely → check whether the L1
-  project map needs a new workspace row.
+1. Write it to `personalities/<active>/skills/<name>/SKILL.md`
+   (frontmatter `name:` + `description:`; body = the steps).
+2. Run `allmight compose` to publish it into `.opencode/skills/`.
+3. Add a dated bullet to `memory/skills-log.md`. Nothing repeated → skip.
 
 ## 7. Re-index if you added journal entries
 

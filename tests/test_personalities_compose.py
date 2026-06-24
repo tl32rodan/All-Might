@@ -224,34 +224,34 @@ class TestWriteInitScaffold:
         assert (tmp_path / ".opencode" / "opencode.json").is_file()
 
 
-class TestReflectionPlugin:
-    """Project-level reflection-check OpenCode plugin (mirrors reflection.py)."""
+class TestFeedbackCheckPlugin:
+    """Project-level feedback-check OpenCode plugin (mirrors feedback_check.py)."""
 
-    def test_writes_reflection_plugin(self, tmp_path: Path) -> None:
+    def test_writes_feedback_check_plugin(self, tmp_path: Path) -> None:
         write_init_scaffold(tmp_path)
-        plugin = tmp_path / ".opencode" / "plugins" / "reflection.ts"
+        plugin = tmp_path / ".opencode" / "plugins" / "feedback-check.ts"
         assert plugin.is_file()
 
-    def test_reflection_plugin_carries_marker(self, tmp_path: Path) -> None:
+    def test_feedback_check_plugin_carries_marker(self, tmp_path: Path) -> None:
         write_init_scaffold(tmp_path)
-        body = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
+        body = (tmp_path / ".opencode" / "plugins" / "feedback-check.ts").read_text()
         assert body.startswith(ALLMIGHT_MARKER_TS)
 
-    def test_reflection_plugin_uses_chat_message_hook(self, tmp_path: Path) -> None:
+    def test_feedback_check_plugin_uses_chat_message_hook(self, tmp_path: Path) -> None:
         """Pin the exact OpenCode hook signature.
 
         OpenCode distinguishes the global ``event`` handler from
         top-level keys like ``chat.message`` which are hooks with
-        input/output contracts. The reflection plugin uses the hook
+        input/output contracts. The feedback-check plugin uses the hook
         form so it can mutate ``output.parts``; the negative
         assertion below catches the regression where someone places
         the hook inside the event handler's if-chain.
         """
         write_init_scaffold(tmp_path)
-        body = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
+        body = (tmp_path / ".opencode" / "plugins" / "feedback-check.ts").read_text()
         assert '"chat.message": async (input: any, output: any)' in body
         assert "output.parts.unshift" in body
-        # The reflection check is stateless — no per-session gate
+        # The feedback check is stateless — no per-session gate
         # (would defeat the point: each turn needs the same prompt).
         assert "new Set" not in body
         assert "primed.add" not in body
@@ -259,14 +259,14 @@ class TestReflectionPlugin:
         # Negative assertion: not the broken "msg.content = ..." shape.
         assert "msg.content =" not in body
 
-    def test_reflection_plugin_contains_reflection_prompt(
+    def test_feedback_check_plugin_contains_prompt(
         self, tmp_path: Path
     ) -> None:
         write_init_scaffold(tmp_path)
-        body = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
+        body = (tmp_path / ".opencode" / "plugins" / "feedback-check.ts").read_text()
         # The user-facing prompt content.
-        assert "Reflection Check" in body
-        # Substance check (not just the header): the three reflection
+        assert "Feedback Check" in body
+        # Substance check (not just the header): the three retrospective
         # questions must survive into the generated plugin. Substrings are
         # kept reword-tolerant so a prompt copy-edit doesn't break the test
         # while still catching an accidental deletion of a question.
@@ -274,22 +274,22 @@ class TestReflectionPlugin:
         assert "Why did it happen?" in body
         assert "How will I avoid" in body
 
-    def test_reflection_plugin_preserves_user_authored(
+    def test_feedback_check_plugin_preserves_user_authored(
         self, tmp_path: Path
     ) -> None:
         """write_guarded contract — never overwrite a user-authored file."""
         plugins_dir = tmp_path / ".opencode" / "plugins"
         plugins_dir.mkdir(parents=True)
         custom = "// my own plugin\n"
-        (plugins_dir / "reflection.ts").write_text(custom)
+        (plugins_dir / "feedback-check.ts").write_text(custom)
         write_init_scaffold(tmp_path)
-        assert (plugins_dir / "reflection.ts").read_text() == custom
+        assert (plugins_dir / "feedback-check.ts").read_text() == custom
 
-    def test_reflection_plugin_idempotent(self, tmp_path: Path) -> None:
+    def test_feedback_check_plugin_idempotent(self, tmp_path: Path) -> None:
         write_init_scaffold(tmp_path)
-        first = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
+        first = (tmp_path / ".opencode" / "plugins" / "feedback-check.ts").read_text()
         write_init_scaffold(tmp_path)
-        second = (tmp_path / ".opencode" / "plugins" / "reflection.ts").read_text()
+        second = (tmp_path / ".opencode" / "plugins" / "feedback-check.ts").read_text()
         assert first == second
 
 

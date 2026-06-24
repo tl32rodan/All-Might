@@ -23,11 +23,12 @@ Code consumes the same project without forking the source of truth:
   Compatibility).
 
 The role-load hook lives here because role-load.ts is also project-
-level (one entry, lists every personality's ROLE.md). Reflection
-(``reflection.ts`` / ``reflection.py``) lives here for the same
-reason — one prompt, fires on every user turn regardless of which
-personalities are installed. Memory-load is written by the memory
-capability initializer, alongside its OpenCode plugin sibling.
+level (one entry, lists every personality's ROLE.md). Feedback-check
+(``feedback-check.ts`` / ``feedback_check.py``, renamed from the
+misleading ``reflection``) lives here for the same reason — one
+prompt, fires on every user turn regardless of which personalities
+are installed. Memory-load is written by the memory capability
+initializer, alongside its OpenCode plugin sibling.
 """
 
 from __future__ import annotations
@@ -55,67 +56,71 @@ _CLAUDE_MD_CONTENT = (
 )
 
 
-def _reflection_hook_content() -> str:
-    """Return the reflection-check Claude Code hook script body.
+def _feedback_check_hook_content() -> str:
+    """Return the feedback-check Claude Code hook script body.
 
-    Built from the same ``REFLECTION_PROMPT`` text the OpenCode
-    reflection plugin uses, so behaviour stays identical across
+    Built from the same ``FEEDBACK_CHECK_PROMPT`` text the OpenCode
+    feedback-check plugin uses, so behaviour stays identical across
     editors.
     """
     # Imported lazily to avoid an import cycle: personalities imports
     # claude_bridge at the bottom of write_init_scaffold, and the
     # prompt constant lives in personalities so it can stay near the
     # plugin template that consumes it.
-    from .personalities import REFLECTION_PROMPT
+    from .personalities import FEEDBACK_CHECK_PROMPT
     from .plugin_telemetry import PY_HEARTBEAT_SNIPPET
 
     return (
-        _REFLECTION_HOOK_TEMPLATE
+        _FEEDBACK_CHECK_HOOK_TEMPLATE
         .replace(
-            "__REFLECTION_PROMPT__",
+            "__FEEDBACK_CHECK_PROMPT__",
             # Triple-quoted Python literal — escape backslashes and the
             # closing-triple-quote sequence so we don't break the string.
-            REFLECTION_PROMPT.replace("\\", "\\\\").replace('"""', '\\"""'),
+            FEEDBACK_CHECK_PROMPT.replace("\\", "\\\\").replace('"""', '\\"""'),
         )
         .replace("__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET)
     )
 
 
-_REFLECTION_HOOK_TEMPLATE = '''\
+_FEEDBACK_CHECK_HOOK_TEMPLATE = '''\
 #!/usr/bin/env python3
 # all-might generated — DO NOT EDIT.
 #
-# Mirror of .opencode/plugins/reflection.ts. Changes here MUST land in
-# the .ts plugin too; see All-Might CLAUDE.md -> Editor Compatibility.
-"""Reflection-check hook for Claude Code (UserPromptSubmit).
+# Mirror of .opencode/plugins/feedback-check.ts. Changes here MUST land
+# in the .ts plugin too; see All-Might CLAUDE.md -> Editor Compatibility.
+"""Feedback-check hook for Claude Code (UserPromptSubmit).
 
 Injects a brief instruction asking the agent to glance at the user's
 latest message and, if it points out a mistake, do a 2-3 sentence
-reflection (what / why / how to avoid) before proceeding. Positive
-or neutral feedback skips the reflection. Same content the OpenCode
-reflection plugin injects via chat.message.
+retrospective (what / why / how to avoid) before proceeding. Positive
+or neutral feedback skips it. Same content the OpenCode
+feedback-check plugin injects via chat.message.
+
+NOT the periodic self-reflection surface — that is the /reflect
+command.
 """
 import json
 import sys
 
 
-REFLECTION_PROMPT = """__REFLECTION_PROMPT__"""
+FEEDBACK_CHECK_PROMPT = """__FEEDBACK_CHECK_PROMPT__"""
 
 
 __PY_HEARTBEAT_SNIPPET__
 
 def main() -> int:
-    _hb("reflection")
+    _hb("feedback_check")
     try:
         payload = json.load(sys.stdin) if not sys.stdin.isatty() else {}
     except (json.JSONDecodeError, ValueError):
         payload = {}
     event = payload.get("hook_event_name") or "UserPromptSubmit"
 
+    _hb("feedback_check.injected")
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": event,
-            "additionalContext": REFLECTION_PROMPT,
+            "additionalContext": FEEDBACK_CHECK_PROMPT,
         }
     }))
     return 0
@@ -177,6 +182,7 @@ def main() -> int:
         payload = {}
     event = payload.get("hook_event_name") or "UserPromptSubmit"
 
+    _hb("offline_reference.injected")
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": event,
@@ -247,6 +253,7 @@ def main() -> int:
         payload = {}
     event = payload.get("hook_event_name") or "SessionStart"
 
+    _hb("role_load.injected")
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": event,
@@ -276,14 +283,23 @@ _RELOAD_SCRIPTS = ("memory_load.py", "role_load.py")
 _TURN_END_SCRIPTS = ("memory_history.py",)
 
 # Turn-start scripts: fire when the user submits a prompt, before the
-# model sees it. Used to inject per-turn instructions (reflection
-# check on user feedback). Claude Code analogue of OpenCode's
+# model sees it. Used to inject per-turn instructions (feedback
+# check on user friction). Claude Code analogue of OpenCode's
 # chat.message hook.
-_USER_PROMPT_SCRIPTS = ("reflection.py", "offline_reference.py")
+_USER_PROMPT_SCRIPTS = ("feedback_check.py", "offline_reference.py")
 
 # Union — used by tests and by the merge logic to identify our owned
 # hook commands across all events.
 _HOOK_SCRIPTS = _RELOAD_SCRIPTS + _TURN_END_SCRIPTS + _USER_PROMPT_SCRIPTS
+
+# Hook scripts the bridge USED to ship under a different name. Their
+# settings.json registrations are stripped on every bridge write
+# (removal-only — never re-added) and a marker'd script file is
+# deleted, so a rename never leaves a dangling registration behind.
+# A dangling Stop/UserPromptSubmit hook is the OMO failure cascade
+# CLAUDE.md warns about: missing script -> stderr fed back as the
+# next user prompt.
+_LEGACY_HOOK_SCRIPTS = ("reflection.py",)
 
 
 def _settings_payload() -> dict:
@@ -293,7 +309,7 @@ def _settings_payload() -> dict:
     the top-level ``"hooks"`` key. ``SessionStart`` and ``PreCompact``
     re-prime memory + role context; ``Stop`` triggers the per-turn
     memory-history snapshot; ``UserPromptSubmit`` injects the
-    reflection-check prompt before each user turn.
+    feedback-check prompt before each user turn.
     """
     def _block(scripts: tuple[str, ...]) -> list:
         return [{"hooks": [
@@ -328,35 +344,58 @@ def _merge_hook_config(existing: dict, owned: dict) -> dict:
         for block in owned.values()
         for h in block[0]["hooks"]
     }
+    # Legacy commands are removal-only: stripped from every event the
+    # same way owned commands are, but never re-added.
+    legacy_commands = {_hook_command(name) for name in _LEGACY_HOOK_SCRIPTS}
+    drop_commands = owned_commands | legacy_commands
+    for event in list(hooks_section.keys()):
+        if event in owned:
+            continue
+        existing_blocks = hooks_section.get(event)
+        if not isinstance(existing_blocks, list):
+            continue
+        cleaned = _strip_commands(existing_blocks, legacy_commands)
+        hooks_section[event] = cleaned
     for event, blocks in owned.items():
         existing_blocks = hooks_section.get(event)
         if not isinstance(existing_blocks, list):
             hooks_section[event] = list(blocks)
             continue
-        # Remove any prior all-might entries (so re-init refreshes them)
-        cleaned: list = []
-        for block in existing_blocks:
-            if not isinstance(block, dict):
-                cleaned.append(block)
-                continue
-            inner = block.get("hooks")
-            if not isinstance(inner, list):
-                cleaned.append(block)
-                continue
-            kept = [
-                h for h in inner
-                if not (
-                    isinstance(h, dict)
-                    and h.get("command") in owned_commands
-                )
-            ]
-            if kept:
-                new_block = dict(block)
-                new_block["hooks"] = kept
-                cleaned.append(new_block)
+        # Remove any prior all-might entries (so re-init refreshes
+        # them) plus legacy-named ones (so renames don't dangle).
+        cleaned = _strip_commands(existing_blocks, drop_commands)
         cleaned.extend(blocks)
         hooks_section[event] = cleaned
     return merged
+
+
+def _strip_commands(blocks: list, commands: set[str]) -> list:
+    """Return ``blocks`` minus any hook whose command is in ``commands``.
+
+    Blocks that end up empty are dropped; non-dict noise is preserved
+    untouched (user-authored settings shapes we don't understand).
+    """
+    cleaned: list = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            cleaned.append(block)
+            continue
+        inner = block.get("hooks")
+        if not isinstance(inner, list):
+            cleaned.append(block)
+            continue
+        kept = [
+            h for h in inner
+            if not (
+                isinstance(h, dict)
+                and h.get("command") in commands
+            )
+        ]
+        if kept:
+            new_block = dict(block)
+            new_block["hooks"] = kept
+            cleaned.append(new_block)
+    return cleaned
 
 
 def _write_root_claude_md(project_root: Path) -> None:
@@ -405,18 +444,39 @@ def _write_role_load_hook(project_root: Path) -> None:
     target.chmod(0o755)
 
 
-def _write_reflection_hook(project_root: Path) -> None:
-    """Write the reflection-check Claude Code hook script.
+def _write_feedback_check_hook(project_root: Path) -> None:
+    """Write the feedback-check Claude Code hook script.
 
-    Mirrors ``.opencode/plugins/reflection.ts``. The settings.json
+    Mirrors ``.opencode/plugins/feedback-check.ts``. The settings.json
     registration is added by ``_write_settings_json`` under
     ``UserPromptSubmit``.
     """
     hooks_dir = project_root / ".claude" / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
-    target = hooks_dir / "reflection.py"
-    write_guarded(target, _reflection_hook_content(), CLAUDE_HOOK_MARKER)
+    target = hooks_dir / "feedback_check.py"
+    write_guarded(target, _feedback_check_hook_content(), CLAUDE_HOOK_MARKER)
     target.chmod(0o755)
+
+
+def _prune_legacy_hooks(project_root: Path) -> None:
+    """Delete marker'd hook scripts the bridge no longer ships.
+
+    Only files listed in ``_LEGACY_HOOK_SCRIPTS`` AND carrying
+    ``CLAUDE_HOOK_MARKER`` are removed — a user-authored script with
+    the same name is preserved. Pairs with the removal-only strip in
+    ``_merge_hook_config`` so neither the file nor its settings.json
+    registration survives a rename.
+    """
+    hooks_dir = project_root / ".claude" / "hooks"
+    for name in _LEGACY_HOOK_SCRIPTS:
+        target = hooks_dir / name
+        try:
+            if target.is_file() and CLAUDE_HOOK_MARKER in target.read_text(
+                encoding="utf-8", errors="replace"
+            )[:4096]:
+                target.unlink()
+        except OSError:
+            continue
 
 
 def _write_offline_reference_hook(project_root: Path) -> None:
@@ -515,11 +575,15 @@ def write_claude_bridge(project_root: Path) -> None:
     * ``CLAUDE.md`` (root) ``@``-import shim
     * ``.claude/commands`` and ``.claude/skills`` directory symlinks
     * ``.claude/hooks/role_load.py`` (mirrors role-load.ts)
-    * ``.claude/hooks/reflection.py`` (mirrors reflection.ts)
+    * ``.claude/hooks/feedback_check.py`` (mirrors feedback-check.ts)
     * ``.claude/settings.json`` hook registrations for both
       ``role_load.py`` and the memory capability's ``memory_load.py``,
-      plus ``reflection.py`` under ``UserPromptSubmit``
+      plus ``feedback_check.py`` under ``UserPromptSubmit``
     * ``.mcp.json`` registration of the knowledge MCP server
+
+    Legacy-named hooks (``_LEGACY_HOOK_SCRIPTS``) are pruned: the
+    marker'd script file is deleted and its settings.json entry is
+    stripped, so renames never leave a dangling registration.
 
     The memory-load hook script itself is written by
     ``MemoryInitializer`` since its content is a Python rewrite of
@@ -528,7 +592,8 @@ def write_claude_bridge(project_root: Path) -> None:
     _write_root_claude_md(project_root)
     _write_claude_dir_symlinks(project_root)
     _write_role_load_hook(project_root)
-    _write_reflection_hook(project_root)
+    _write_feedback_check_hook(project_root)
     _write_offline_reference_hook(project_root)
+    _prune_legacy_hooks(project_root)
     _write_settings_json(project_root)
     _write_claude_mcp_json(project_root)

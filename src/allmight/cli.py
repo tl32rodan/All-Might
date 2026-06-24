@@ -147,6 +147,12 @@ def _init_callback(
         if template.install_globals is not None:
             template.install_globals(ctx)
 
+    # Sweep generated plugins the framework no longer ships (deleted
+    # or renamed since the last init). Marker-gated: user-authored
+    # plugins are never touched.
+    from .core.plugin_telemetry import prune_stale_plugins
+    pruned = prune_stale_plugins(root)
+
     # Re-init on a populated project must NOT lose the existing
     # personality registry — preserve it and recompose AGENTS.md +
     # the .opencode/agents/<name>.md subagent files from the existing
@@ -195,6 +201,11 @@ def _init_callback(
         file_count = sum(1 for _ in tpl_dir.rglob("*") if _.is_file()) if tpl_dir.exists() else 0
         click.echo(f"All-Might! Project '{manifest.name}' — new templates staged.")
         click.echo(f"  Templates:  .allmight/templates/ ({file_count} files)")
+        if pruned:
+            click.echo(
+                "  Pruned:     "
+                + ", ".join(str(p.relative_to(root)) for p in pruned)
+            )
         if existing:
             click.echo(
                 f"  Preserved:  {len(existing)} personality "
@@ -207,6 +218,11 @@ def _init_callback(
     else:
         click.echo(f"All-Might! Project '{manifest.name}' initialized.")
         click.echo(f"  Languages:  {', '.join(manifest.languages) or 'none detected'}")
+        if pruned:
+            click.echo(
+                "  Pruned:     "
+                + ", ".join(str(p.relative_to(root)) for p in pruned)
+            )
         click.echo("")
         click.echo("What's next:")
         click.echo("  Run /onboard in your agent to set up your first personality,")
@@ -391,6 +407,81 @@ def list_personalities() -> None:
             else e.version
         )
         click.echo(f"{e.instance:<{name_w}}  {caps:<{cap_w}}  {version}")
+
+
+@main.command("compose")
+@click.option("--force", is_flag=True,
+              help="Overwrite conflicting non-symlink entries in .opencode/.")
+def compose_cmd(force: bool) -> None:
+    """Re-project every personality's runtime entries into .opencode/.
+
+    The self-evolution closure: when the agent writes a new
+    ``personalities/<name>/skills/<skill>/`` (or ``commands/*.md``) at
+    runtime, OpenCode cannot see it until it is symlinked into the
+    project-wide ``.opencode/``. ``allmight add`` only composes at
+    install time; this command re-runs the same projection on demand —
+    deterministic Python, callable by the agent (taught by /reflect's
+    Skill-check step).
+
+    Also recomposes ``AGENTS.md`` and ``.opencode/agents/<name>.md``
+    from the current ROLE.md set, so a skill-creating session leaves
+    every derived surface consistent. Idempotent; conflicts are
+    staged for ``/sync`` and reported, never fatal.
+    """
+    from pathlib import Path as P
+
+    from .core.personalities import (
+        Personality,
+        compose,
+        compose_agents_md,
+        compose_role_agents,
+        discover,
+        read_registry,
+        stage_compose_conflicts,
+    )
+    from .capabilities.database.scanner import ProjectScanner
+
+    root = P(".").resolve()
+    if not (root / ".allmight").is_dir():
+        click.echo(
+            f"error: {root} is not an All-Might project (no .allmight/ found). "
+            "Run 'allmight init' first.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    entries = read_registry(root)
+    if not entries:
+        click.echo("No personalities registered; nothing to compose.")
+        return
+
+    template_by_name = {t.name: t for t in discover()}
+    instances: list[Personality] = []
+    for entry in entries:
+        primary = template_by_name.get(
+            entry.capabilities[0] if entry.capabilities else entry.template
+        )
+        if primary is None:
+            continue
+        instances.append(Personality(
+            template=primary,
+            project_root=root,
+            name=entry.instance,
+            capabilities=list(entry.capabilities),
+        ))
+
+    conflicts = []
+    for instance in instances:
+        conflicts += compose(root, instance, force=force)
+    stage_compose_conflicts(root, conflicts)
+
+    manifest = ProjectScanner().scan(root)
+    compose_agents_md(root, instances, project_name=manifest.name)
+    compose_role_agents(root, instances)
+
+    click.echo(f"Composed {len(instances)} personalities into .opencode/.")
+    for c in conflicts:
+        click.echo(f"  conflict: {c.dst} ({c.existing}) — run /sync to resolve")
 
 
 # ------------------------------------------------------------------
@@ -1052,6 +1143,24 @@ def memory_snapshot(
     if sha is None:
         click.echo("No changes to snapshot.")
     else:
+        # T2 heartbeat for memory-history: a snapshot commit actually
+        # landed. The surface comes from --trigger (the Stop hook is
+        # the Claude Code caller; the chat.message family is OpenCode).
+        from .core.plugin_telemetry import (
+            SURFACE_CLAUDE,
+            SURFACE_OPENCODE,
+            emit_heartbeat,
+        )
+        if trigger == "stop-hook":
+            emit_heartbeat(
+                "memory_history.injected", SURFACE_CLAUDE, root=project_root,
+            )
+        elif trigger in (
+            "chat-message", "session-compacting", "session-deleted",
+        ):
+            emit_heartbeat(
+                "memory-history.injected", SURFACE_OPENCODE, root=project_root,
+            )
         click.echo(f"Snapshot: {sha[:12]}")
 
 
@@ -1154,11 +1263,21 @@ def plugin() -> None:
 @plugin.command("status")
 @click.argument("path", default=".", type=click.Path(exists=True))
 def plugin_status(path: str) -> None:
-    """Print last-fire time for every known plugin / hook.
+    """Print fire + injection state for every known plugin / hook.
 
-    Reads ``.allmight/plugins/heartbeats/{oc,cc}/`` and lists each
-    plugin's last-fired mtime. Plugins that have never fired show
-    ``never fired`` — that is the signal to investigate.
+    Reads ``.allmight/plugins/heartbeats/{oc,cc}/``. Two columns per
+    row answer two different questions:
+
+    * ``fired`` (T1) — did the handler run at all? Touched at every
+      handler entry, before any conditional, so a fresh value proves
+      only that events arrive.
+    * ``injected`` (T2) — did the plugin actually deliver content
+      (context injection / snapshot commit)? Touched as
+      ``<stem>.injected`` only on the delivery path. ``—`` means the
+      handler ran but its condition never held.
+
+    The ``Outcomes:`` footer is T3 — durable artifacts that prove the
+    *agent* acted on what was injected.
     """
     import time
     from pathlib import Path as P
@@ -1176,25 +1295,34 @@ def plugin_status(path: str) -> None:
     data = read_heartbeats(root)
     now = time.time()
 
-    def _fmt_age(mtime: float | None) -> str:
-        if mtime is None:
-            return "never fired"
+    def _age(mtime: float) -> str:
         delta = max(0, int(now - mtime))
         if delta < 60:
-            return f"fired {delta}s ago"
+            return f"{delta}s ago"
         if delta < 3600:
-            return f"fired {delta // 60}m ago"
+            return f"{delta // 60}m ago"
         if delta < 86400:
-            return f"fired {delta // 3600}h ago"
-        return f"fired {delta // 86400}d ago"
+            return f"{delta // 3600}h ago"
+        return f"{delta // 86400}d ago"
 
-    # ---- OpenCode plugins (all known plugins, fire-time only) ----
+    def _fmt_age(mtime: float | None) -> str:
+        return "never fired" if mtime is None else f"fired {_age(mtime)}"
+
+    def _fmt_injected(mtime: float | None) -> str:
+        return "—" if mtime is None else f"injected {_age(mtime)}"
+
+    # ---- OpenCode plugins (fired + injected columns) ----
     click.echo("OpenCode plugins:")
     oc_entries = data.get(SURFACE_OPENCODE, {})
     oc_width = max((len(n) for n in KNOWN_OPENCODE_PLUGINS), default=12)
     for name in KNOWN_OPENCODE_PLUGINS:
-        click.echo(f"  {name:<{oc_width}}  {_fmt_age(oc_entries.get(name))}")
-    extras = sorted(n for n in oc_entries if n not in set(KNOWN_OPENCODE_PLUGINS))
+        fired = _fmt_age(oc_entries.get(name))
+        injected = _fmt_injected(oc_entries.get(name + ".injected"))
+        click.echo(f"  {name:<{oc_width}}  {fired:<16}  {injected}")
+    extras = sorted(
+        n for n in oc_entries
+        if n not in set(KNOWN_OPENCODE_PLUGINS) and not n.endswith(".injected")
+    )
     for name in extras:
         click.echo(f"  {name:<{oc_width}}  {_fmt_age(oc_entries.get(name))} (unregistered)")
 
@@ -1210,12 +1338,61 @@ def plugin_status(path: str) -> None:
         mirror = entry.get("claude_code_mirror")
         if mirror:
             hook_stem = mirror.removesuffix(".py")
-            status = _fmt_age(cc_entries.get(hook_stem))
-            click.echo(f"  {plugin_name:<{cc_width}}  {status}")
+            fired = _fmt_age(cc_entries.get(hook_stem))
+            injected = _fmt_injected(cc_entries.get(hook_stem + ".injected"))
+            click.echo(f"  {plugin_name:<{cc_width}}  {fired:<16}  {injected}")
         else:
             blockers = cc_unavailable_reasons(plugin_name)
             reason = ", ".join(blockers) if blockers else "OpenCode-only"
             click.echo(f"  {plugin_name:<{cc_width}}  unavailable (requires: {reason})")
+
+    # ---- Outcomes (T3): did injected nudges become durable artifacts? ----
+    click.echo()
+    click.echo("Outcomes:")
+    for line in _plugin_outcomes(root):
+        click.echo(f"  {line}")
+
+
+def _plugin_outcomes(root) -> list[str]:
+    """Durable-artifact metrics for the ``plugin status`` footer.
+
+    Heartbeats prove handlers ran (T1) and content was delivered (T2);
+    these three answer T3 — whether the agent actually wrote memory.
+    """
+    from .utils.git import run_git
+
+    lines: list[str] = []
+
+    mirror = root / ".allmight" / "memory-history"
+    if (mirror / ".git").is_dir():
+        try:
+            count = run_git(["rev-list", "--count", "HEAD"], cwd=mirror).strip()
+        except Exception:
+            count = "0"
+        lines.append(f"memory-history commits:  {count}")
+    else:
+        lines.append(
+            "memory-history commits:  — (mirror not initialised; run 'allmight init')"
+        )
+
+    journal_count = sum(
+        1 for _ in root.glob("personalities/*/memory/journal/**/*.md")
+    )
+    lines.append(f"journal entries (L3):    {journal_count}")
+
+    memory_md = root / "MEMORY.md"
+    if memory_md.is_file():
+        try:
+            body = memory_md.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            body = ""
+        if "*(none" in body:
+            lines.append("MEMORY.md placeholders:  yes — L1 has never been rewritten")
+        else:
+            lines.append("MEMORY.md placeholders:  no")
+    else:
+        lines.append("MEMORY.md placeholders:  — (no MEMORY.md)")
+    return lines
 
 
 @plugin.command("matrix")

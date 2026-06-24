@@ -87,17 +87,17 @@ class TestWriteClaudeBridge:
         assert mode & stat.S_IXGRP
         assert mode & stat.S_IXOTH
 
-    def test_writes_reflection_hook(self, project):
+    def test_writes_feedback_check_hook(self, project):
         write_claude_bridge(project)
-        hook = project / ".claude" / "hooks" / "reflection.py"
+        hook = project / ".claude" / "hooks" / "feedback_check.py"
         body = hook.read_text()
         assert body.startswith("#!/usr/bin/env python3")
         assert "all-might generated" in body
         assert "DO NOT EDIT" in body
         # Mirror-of relationship is documented in the header.
-        assert "reflection.ts" in body
+        assert "feedback-check.ts" in body
         # Prompt content is present.
-        assert "Reflection Check" in body
+        assert "Feedback Check" in body
         assert "Why did it happen?" in body
         # Hook contract: emits hookSpecificOutput with additionalContext.
         assert "hookSpecificOutput" in body
@@ -105,9 +105,9 @@ class TestWriteClaudeBridge:
         # Defaults to UserPromptSubmit when no event is given by stdin.
         assert "UserPromptSubmit" in body
 
-    def test_reflection_hook_is_executable(self, project):
+    def test_feedback_check_hook_is_executable(self, project):
         write_claude_bridge(project)
-        hook = project / ".claude" / "hooks" / "reflection.py"
+        hook = project / ".claude" / "hooks" / "feedback_check.py"
         mode = hook.stat().st_mode
         assert mode & stat.S_IXUSR
         assert mode & stat.S_IXGRP
@@ -128,7 +128,7 @@ class TestWriteClaudeBridge:
             assert any("role_load.py" in c for c in commands)
 
     def test_writes_settings_json_with_user_prompt_submit(self, project):
-        """Reflection hook is registered on UserPromptSubmit."""
+        """Feedback-check hook is registered on UserPromptSubmit."""
         write_claude_bridge(project)
         settings = json.loads(
             (project / ".claude" / "settings.json").read_text()
@@ -138,7 +138,7 @@ class TestWriteClaudeBridge:
             for block in settings["hooks"]["UserPromptSubmit"]
             for h in block["hooks"]
         ]
-        assert any("reflection.py" in c for c in commands)
+        assert any("feedback_check.py" in c for c in commands)
 
     def test_idempotent_on_rerun(self, project):
         write_claude_bridge(project)
@@ -266,10 +266,10 @@ class TestHooksRunCleanly:
         # No personalities → no context to inject → empty stdout (no JSON).
         assert result.stdout.strip() == ""
 
-    def test_reflection_hook_returns_valid_json(self, project):
-        """End-to-end: the reflection hook prints the contract shape."""
+    def test_feedback_check_hook_returns_valid_json(self, project):
+        """End-to-end: the feedback-check hook prints the contract shape."""
         write_claude_bridge(project)
-        hook = project / ".claude" / "hooks" / "reflection.py"
+        hook = project / ".claude" / "hooks" / "feedback_check.py"
 
         env = dict(os.environ)
         env["CLAUDE_PROJECT_DIR"] = str(project)
@@ -283,14 +283,14 @@ class TestHooksRunCleanly:
         assert result.returncode == 0, result.stderr
         payload = json.loads(result.stdout)
         ctx = payload["hookSpecificOutput"]["additionalContext"]
-        assert "Reflection Check" in ctx
+        assert "Feedback Check" in ctx
         assert "Why did it happen?" in ctx
         assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
 
-    def test_reflection_hook_defaults_event_name(self, project):
+    def test_feedback_check_hook_defaults_event_name(self, project):
         """No stdin (TTY-style invocation) still produces valid JSON."""
         write_claude_bridge(project)
-        hook = project / ".claude" / "hooks" / "reflection.py"
+        hook = project / ".claude" / "hooks" / "feedback_check.py"
 
         env = dict(os.environ)
         env["CLAUDE_PROJECT_DIR"] = str(project)
@@ -304,7 +304,7 @@ class TestHooksRunCleanly:
         assert result.returncode == 0, result.stderr
         payload = json.loads(result.stdout)
         assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
-        assert "Reflection Check" in payload["hookSpecificOutput"]["additionalContext"]
+        assert "Feedback Check" in payload["hookSpecificOutput"]["additionalContext"]
 
 
 class TestHeartbeatWiring:
@@ -328,10 +328,10 @@ class TestHeartbeatWiring:
         )
         assert result.returncode == 0, result.stderr
 
-    def test_reflection_writes_heartbeat(self, project):
-        self._run(project, "reflection.py", "UserPromptSubmit")
+    def test_feedback_check_writes_heartbeat(self, project):
+        self._run(project, "feedback_check.py", "UserPromptSubmit")
         marker = (
-            project / ".allmight" / "plugins" / "heartbeats" / "cc" / "reflection"
+            project / ".allmight" / "plugins" / "heartbeats" / "cc" / "feedback_check"
         )
         assert marker.is_file()
 
@@ -343,3 +343,111 @@ class TestHeartbeatWiring:
             project / ".allmight" / "plugins" / "heartbeats" / "cc" / "role_load"
         )
         assert marker.is_file()
+
+
+class TestLegacyHookCleanup:
+    """Renaming a bridge hook must not leave the old name dangling.
+
+    The 2026-06 rename (reflection.py -> feedback_check.py) is the
+    first to exercise this: a dangling settings.json registration
+    pointing at a deleted script is the OMO "stderr fed back as next
+    user prompt" cascade, so the bridge strips legacy commands
+    (removal-only) and deletes the marker'd legacy script.
+    """
+
+    def test_legacy_settings_entry_is_stripped(self, project):
+        settings = project / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        legacy_cmd = (
+            'python3 "$CLAUDE_PROJECT_DIR"/.claude/hooks/reflection.py'
+        )
+        settings.write_text(json.dumps({
+            "hooks": {
+                "UserPromptSubmit": [
+                    {"hooks": [{"type": "command", "command": legacy_cmd}]},
+                ],
+            }
+        }))
+        write_claude_bridge(project)
+        body = settings.read_text()
+        assert "hooks/reflection.py" not in body
+        assert "feedback_check.py" in body
+
+    def test_legacy_markered_script_is_deleted(self, project):
+        hooks_dir = project / ".claude" / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        legacy = hooks_dir / "reflection.py"
+        legacy.write_text("#!/usr/bin/env python3\n# all-might generated\n")
+        write_claude_bridge(project)
+        assert not legacy.exists()
+        assert (hooks_dir / "feedback_check.py").is_file()
+
+    def test_user_authored_legacy_name_is_preserved(self, project):
+        hooks_dir = project / ".claude" / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        legacy = hooks_dir / "reflection.py"
+        legacy.write_text("#!/usr/bin/env python3\n# mine, hands off\n")
+        write_claude_bridge(project)
+        assert legacy.exists()
+        assert "mine, hands off" in legacy.read_text()
+
+    def test_legacy_strip_in_non_owned_event_too(self, project):
+        """A legacy command parked under an event we don't own is
+        still stripped — removal applies everywhere."""
+        settings = project / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        legacy_cmd = (
+            'python3 "$CLAUDE_PROJECT_DIR"/.claude/hooks/reflection.py'
+        )
+        settings.write_text(json.dumps({
+            "hooks": {
+                "Notification": [
+                    {"hooks": [{"type": "command", "command": legacy_cmd}]},
+                ],
+            }
+        }))
+        write_claude_bridge(project)
+        data = json.loads(settings.read_text())
+        assert data["hooks"].get("Notification", []) == []
+
+
+class TestInjectedHeartbeats:
+    """T2 markers: hooks touch ``<stem>.injected`` only on the
+    delivery path, so ``plugin status`` can tell "handler ran" apart
+    from "content actually reached the model"."""
+
+    def _run(self, project, script, event):
+        hook = project / ".claude" / "hooks" / script
+        proc = subprocess.run(
+            [sys.executable, str(hook)],
+            input=json.dumps({"hook_event_name": event}),
+            capture_output=True, text=True,
+            cwd=project,
+            env={**os.environ, "CLAUDE_PROJECT_DIR": str(project)},
+        )
+        assert proc.returncode == 0, proc.stderr
+        return proc
+
+    def test_feedback_check_emits_injected(self, project):
+        write_claude_bridge(project)
+        self._run(project, "feedback_check.py", "UserPromptSubmit")
+        hb = project / ".allmight" / "plugins" / "heartbeats" / "cc"
+        assert (hb / "feedback_check").is_file()
+        assert (hb / "feedback_check.injected").is_file()
+
+    def test_role_load_skips_injected_when_nothing_to_say(self, project):
+        write_claude_bridge(project)
+        self._run(project, "role_load.py", "SessionStart")
+        hb = project / ".allmight" / "plugins" / "heartbeats" / "cc"
+        assert (hb / "role_load").is_file()
+        # No personalities/ -> no output -> no .injected marker.
+        assert not (hb / "role_load.injected").exists()
+
+    def test_role_load_emits_injected_with_personality(self, project):
+        role = project / "personalities" / "tester"
+        role.mkdir(parents=True)
+        (role / "ROLE.md").write_text("# Tester role\n")
+        write_claude_bridge(project)
+        self._run(project, "role_load.py", "SessionStart")
+        hb = project / ".allmight" / "plugins" / "heartbeats" / "cc"
+        assert (hb / "role_load.injected").is_file()
