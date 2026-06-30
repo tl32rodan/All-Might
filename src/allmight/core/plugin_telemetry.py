@@ -127,6 +127,7 @@ KNOWN_OPENCODE_PLUGINS: tuple[str, ...] = (
     "memory-history",
     "remember-trigger",
     "todo-curator",
+    "search-surface",
 )
 
 
@@ -198,6 +199,11 @@ PLUGIN_MANIFEST: dict[str, dict] = {
         "requires": ["cross_turn_plugin_state", "mid_turn_message_inject"],
         "claude_code_mirror": None,
         "purpose": "Cross-turn TODO ledger curation",
+    },
+    "search-surface": {
+        "requires": ["tool_execute_after_inject"],
+        "claude_code_mirror": None,
+        "purpose": "Surface top-N SMAK hits on grep/glob + lazily keep the database index fresh (read-side surfacing; OC-only, CC PreToolUse mirror deferred)",
     },
 }
 

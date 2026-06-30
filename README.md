@@ -427,6 +427,7 @@ plugins are OpenCode-only **by platform design**, not as TODOs.
 | `offline-reference` | ✓ | ✓ | Tell the agent it is air-gapped: use project_knowledge_search / memory_recall instead of web_search / context7 |
 | `remember-trigger` | ✓ | — | OpenCode-only — requires `session_idle_counter, mid_turn_message_inject` |
 | `role-load` | ✓ | ✓ | Inject the active personality's ROLE.md at session start |
+| `search-surface` | ✓ | — | OpenCode-only — requires `tool_execute_after_inject` |
 | `todo-curator` | ✓ | — | OpenCode-only — requires `cross_turn_plugin_state, mid_turn_message_inject` |
 <!-- ALLMIGHT_COMPAT_MATRIX_END -->
 

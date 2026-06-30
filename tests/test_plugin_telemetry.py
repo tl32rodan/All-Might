@@ -102,14 +102,18 @@ class TestSnippetContracts:
 
     def test_known_plugin_list_matches_generators(self):
         """If we add an OpenCode plugin we must register it here too."""
-        # Sourced from MemoryInitializer._opencode_plugin_map() + the two
-        # project-level plugins in core.personalities.
+        # Sourced from MemoryInitializer._opencode_plugin_map(), the
+        # project-level plugins in core.personalities, and the database
+        # capability's surface_plugin.
         expected_memory = {
             "memory-load", "memory-history", "remember-trigger",
             "todo-curator",
         }
         expected_project = {"role-load", "feedback-check", "offline-reference"}
-        assert set(KNOWN_OPENCODE_PLUGINS) == expected_memory | expected_project
+        expected_database = {"search-surface"}
+        assert set(KNOWN_OPENCODE_PLUGINS) == (
+            expected_memory | expected_project | expected_database
+        )
 
     def test_known_hook_list_matches_generators(self):
         """If we add a Claude hook we must register it here too."""

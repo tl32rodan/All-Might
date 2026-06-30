@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ...core.domain import ProjectManifest
-from ...core.markers import ALLMIGHT_MARKER_MD
+from ...core.markers import ALLMIGHT_MARKER_MD, ALLMIGHT_MARKER_TS
 from ...core.safe_write import write_guarded
 from ...core.skill_io import install_skill
 
@@ -73,7 +73,34 @@ class ProjectInitializer:
                 if stale_path.exists():
                     stale_path.unlink()
 
+        # search-surface.ts is written on EVERY init (fresh + staging),
+        # like the scaffold's offline-reference.ts: it is a marker-guarded
+        # project-wide plugin (not a skill), so write_guarded preserves a
+        # user-edited copy and there is no /sync template mapping to keep.
+        self._write_search_surface_plugin(root, force=force)
+
         (allmight_dir / "mode").write_text("read-only")
+
+    def _write_search_surface_plugin(
+        self, root: Path, *, force: bool = False,
+    ) -> None:
+        """Write ``.opencode/plugins/search-surface.ts`` if absent or owned.
+
+        Read-side surfacing + database auto-ingest closure
+        (``docs/retrieval-surfacing-proposal.md``). Project-wide hook;
+        OpenCode-only this round. Registered in
+        ``core.plugin_telemetry.PLUGIN_MANIFEST``.
+        """
+        from .surface_plugin import build_search_surface_ts
+
+        plugins_dir = root / ".opencode" / "plugins"
+        plugins_dir.mkdir(parents=True, exist_ok=True)
+        write_guarded(
+            plugins_dir / "search-surface.ts",
+            build_search_surface_ts(),
+            ALLMIGHT_MARKER_TS,
+            force=force,
+        )
 
     def initialize(
         self,

@@ -467,7 +467,7 @@ my-chip-project/                          ← One All-Might project
 │   │   ├── all-for-one.md
 │   │   ├── sync.md
 │   │   └── stdcell-special.md            ← downward symlink → personalities/stdcell_owner/commands/...
-│   └── plugins/{role-load,feedback-check,offline-reference,memory-load,memory-history,remember-trigger,todo-curator}.ts
+│   └── plugins/{role-load,feedback-check,offline-reference,memory-load,memory-history,remember-trigger,todo-curator,search-surface}.ts
 │
 ├── personalities/
 │   ├── stdcell_owner/

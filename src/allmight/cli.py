@@ -996,6 +996,62 @@ def migrate(path: str, dry_run: bool):
 
 
 # ------------------------------------------------------------------
+# Database capability lifecycle
+# ------------------------------------------------------------------
+
+@main.group()
+def database():
+    """Database knowledge-graph lifecycle (SMAK workspaces)."""
+
+
+@database.command("ingest")
+@click.option(
+    "--incremental/--full", default=True,
+    help="Pass --incremental to smak (default) or --full to rebuild.",
+)
+@click.option(
+    "--root", default=".", type=click.Path(exists=True),
+    help="Project root (defaults to the current directory).",
+)
+def database_ingest(incremental: bool, root: str):
+    """(Re-)index every personality's database workspace into SMAK.
+
+    Walks ``personalities/*/database/*/config.yaml`` and runs
+    ``smak ingest --config <cfg> [--incremental]`` for each. On overall
+    success, touches ``.allmight/db_last_ingest`` so the search-surface
+    plugin's throttle treats the indices as fresh-as-of-now.
+
+    Spawned fire-and-forget by the search-surface plugin when the agent
+    greps source and the marker is stale (the create/maintain closure).
+    Safe to invoke directly too — incremental mode is cheap when nothing
+    has changed.
+    """
+    import os as _os
+    from pathlib import Path as _Path
+
+    from .capabilities.database.ingest import run_db_ingest_cycle
+
+    root_path = _Path(root).resolve()
+    smak_cmd = _os.environ.get("ALLMIGHT_SMAK_CMD", "smak")
+    result = run_db_ingest_cycle(
+        root_path, incremental=incremental, smak_cmd=smak_cmd,
+    )
+
+    if result.errors:
+        click.echo("smak ingest failures:", err=True)
+        for workspace_dir, err in result.errors:
+            click.echo(f"  {workspace_dir.name}: {err}", err=True)
+        raise click.exceptions.Exit(code=1)
+
+    if not result.succeeded:
+        click.echo("No personalities with database workspaces found.")
+        return
+    click.echo(f"Ingested {len(result.succeeded)} workspace(s):")
+    for workspace_dir in result.succeeded:
+        click.echo(f"  {workspace_dir.name}")
+
+
+# ------------------------------------------------------------------
 # Agent Memory System
 # ------------------------------------------------------------------
 
