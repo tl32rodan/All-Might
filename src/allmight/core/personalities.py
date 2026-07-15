@@ -505,6 +505,12 @@ def write_init_scaffold(project_root: Path) -> None:
 
     write_opencode_reference(project_root)
 
+    # Working-discipline contract + /whip-it skill. Framework-level for
+    # the same reason — no personality owns discipline.
+    from .whip_it import write_whip_it
+
+    write_whip_it(project_root)
+
     # Claude Code compatibility bridge — markdown surface via dir
     # symlinks, agent context via @-import shim, runtime hooks for
     # role-load (memory-load lives in the memory capability).
@@ -563,6 +569,7 @@ personality a command acts for is resolved at call time — see
 | `/all-for-one` | Absorb N sources into one personality (N → 1). |
 | `/split` | Refactor within a project: extract memory + scope from one personality into another (1 → 1, same project). |
 | `/sync` | Merge `.allmight/templates/` after a re-init, or resolve compose conflicts. |
+| `/whip-it` | Re-assert the working-discipline contract (TDD-first, Unix search, recorded agreements, post-compaction re-anchor, no shortcuts). |
 
 Database is **search-only** to the agent; index builds happen
 out-of-band via `smak`. The memory journal is **auto-indexed between
@@ -637,6 +644,16 @@ wrong-shape traps the test suite cannot catch (the `chat.message`
 hook signature, the `output.parts.unshift(...)` injection path, the
 `subagent` vs `primary` mode default). The matching `/opencode-ref`
 skill auto-loads this pointer when relevant.
+
+## Working discipline — binding, survives compaction
+
+The rule sheet at `.opencode/skills/whip-it/SKILL.md` is a binding
+contract for every session: TDD-first (RED before any production
+code), native Unix search instead of built-in Grep/Glob, recorded
+agreements over general convention, full scope with real output.
+**After every compaction**, re-read that file plus `MEMORY.md`, the
+active `ROLE.md`, and this file before continuing work. The user
+invokes `/whip-it` to re-assert the contract on demand.
 
 ## Layering — what lives where
 

@@ -26,6 +26,10 @@ from allmight.capabilities.database.link_skill_content import (
 )
 from allmight.capabilities.database.sync_skill_content import SYNC_SKILL_BODY
 from allmight.capabilities.memory.initializer import MemoryInitializer
+from allmight.core.whip_it import (
+    build_whip_it_command_body,
+    build_whip_it_skill_body,
+)
 
 
 def _remember_body() -> str:
@@ -53,6 +57,8 @@ BODY_BUDGETS: list[tuple[str, callable, int]] = [
     ("/sync (skill)", lambda: SYNC_SKILL_BODY, 227),
     ("/one-for-all (skill)", lambda: ONE_FOR_ALL_SKILL_BODY, 174),
     ("/all-for-one (skill)", lambda: ALL_FOR_ONE_SKILL_BODY, 226),
+    ("/whip-it (skill)", build_whip_it_skill_body, 109),
+    ("/whip-it (command)", build_whip_it_command_body, 29),
 ]
 
 
