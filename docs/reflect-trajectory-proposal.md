@@ -1,167 +1,175 @@
-# Proposal — Make `/reflect` actually fire, and give it evidence
+# Proposal — Per-turn micro-reflection notes + consolidated `/reflect`
 
-Status: draft for review (2026-07-18). Field report from internal
-workstation deployment: `/reflect` never visibly runs — no
-self-critique in transcripts, no runtime skills ever written by
-step 6. This doc diagnoses why from the current source and proposes
-the smallest fix set.
+Status: draft v2 (2026-07-18). v1 diagnosed why `/reflect` never
+fires; v2 incorporates the maintainer's design: **jot per turn,
+consolidate rarely** — deep reflection must not run often enough to
+derail the actual task.
 
-## 1. Diagnosis (grounded in code, not vibes)
+## 1. Diagnosis (unchanged from v1, condensed)
 
-### 1.1 `/reflect` has no trigger that arrives at an actionable moment
+1. **No actionable trigger.** The only automated `/reflect` ask is
+   injected via `experimental.session.compacting` into
+   `output.context` — the compaction prompt read by the *summarizer*,
+   not the agent. There is no agent turn between "about to compact"
+   and "compacted", so the instruction lands at a moment where
+   compliance is impossible. The periodic idle nudge
+   (`_reminder_nudge_text()`) never mentions `/reflect` at all, and
+   "end of session" has no delivery mechanism (nudges deliver on the
+   *next* user turn; at `session.deleted` there is none).
+2. **`/reflect`'s body audits memory files, not behaviour.** No step
+   reviews tool failures, dead-ends, or user corrections; step 6
+   (repetition → skill) relies on post-compaction recall of exactly
+   the details summaries drop first.
+3. **The per-turn cue already exists but evaporates.**
+   `feedback-check.ts` injects, every `chat.message`, a prompt asking
+   the agent to do a 2-3 sentence retrospective if the user
+   redirected it / it retried into a dead-end / an assumption broke
+   (`FEEDBACK_CHECK_PROMPT`, `core/personalities.py`). The output
+   goes into the chat and is lost — nothing persists it, so nothing
+   downstream can consolidate it.
+4. **Evidence plumbing existed and was cut.** `trajectory-writer.ts`
+   (deleted 2026-06, "no consumer") captured tool calls but not
+   error messages or aborts, and buffered in memory with the same
+   broken flush timing as (1).
 
-- The periodic nudge (`_reminder_nudge_text()` in
-  `capabilities/memory/initializer.py`) mentions **only `/remember`**.
-  `/reflect` is absent from the every-3rd-idle nudge entirely.
-- The only automated `/reflect` trigger is `preCompactText()` inside
-  `remember-trigger.ts`, delivered via the
-  `experimental.session.compacting` hook — which pushes the text into
-  `output.context`, i.e. **the compaction prompt read by the
-  summarizer model, not the agent**. The instruction "you MUST run
-  /reflect before history is condensed" is delivered at the exact
-  moment compliance is impossible: compaction is already underway and
-  the agent has no turn in which to act. At best the summary carries
-  a paraphrase of the instruction.
-- The `chat.message` pending-nudge pattern only delivers on the
-  *next user turn*. "End of session" — the ideal `/reflect` moment
-  named in the command body — has **no delivery mechanism at all**:
-  by `session.deleted` there are no turns left.
-- `experimental.*` hooks are exactly that; on the internal
-  workstation's OpenCode build the compacting hook may not fire at
-  all (see the V2-plugin-API risk note, `docs/daily-learning/
-  2026-06-29.md`). Step 0 of any fix: run `allmight plugin status`
-  on the workstation and read remember-trigger's fired/injected
-  columns before trusting any of this plumbing.
+Field observation ("agent never self-critiques, never writes a
+skill") is the expected output of this structure — not primarily a
+weak-model problem.
 
-Conclusion: "the agent never reflects" is **structural**, not (only)
-a weak-internal-model problem. Nothing ever asks it to reflect at a
-moment where reflecting is possible.
+## 2. Design principle (maintainer-set)
 
-### 1.2 `/reflect`'s body audits memory files, not behaviour
-
-Steps 1–7 of `templates/commands/reflect.md` are memory hygiene:
-L1 accuracy, L2 additions, scope drift, cap triage. **No step says
-"review what went wrong"** — tool-call errors, aborted turns, user
-corrections are never mentioned. Step 6 (turn repetition into a
-skill) depends on the agent recalling repeated procedures from its
-own context — precisely the detail class a compaction summary drops
-first. The observed "never writes a skill, never self-critiques"
-is the expected output of this body.
-
-### 1.3 The evidence infrastructure existed and was deleted
-
-`trajectory-writer.ts` (removed 2026-06, commit b93a80e) captured
-input / tool_calls-with-verdict / output and flushed a journal entry
-per session. Verdict at the time: "No consumer ever read it. Bring
-back when (if) an adaptive plugin actually needs it"
-(`docs/plugin-observability.md`). `/reflect` reading trajectory
-evidence **is that consumer**. Two caveats for a revival:
-
-- The old schema is not reflect-shaped: it kept tool names + args +
-  a coarse verdict, but **not error messages** and not
-  aborts/interruptions — the two things a reflection actually needs.
-- It buffered state in memory and flushed on compaction/deletion —
-  the same unreliable flush timing as §1.1. A revival should append
-  per-event instead.
-
-## 2. What NOT to do
-
-- **Do not feed a full session export to the agent.** OpenCode can
-  produce one (plugin-side `client.session.messages({path:{id}})`;
-  CLI-side `opencode export`), but `/reflect` typically runs when
-  context is already tight — re-ingesting the whole transcript is a
-  token explosion and re-introduces the salience problem it was
-  meant to fix. Deterministic extraction belongs in the plugin;
-  judgment belongs in the agent. (Same split as `/onboard` calling
-  `allmight add`.)
-- **No LLM-side "was this a user correction?" detection in the
-  plugin.** Corrections are a judgment call; the plugin records
-  facts (errors, aborts), the agent interprets them.
-- **No structured telemetry platform.** Heartbeats stay touch-files
-  per `docs/plugin-observability.md`. The evidence file below is a
-  new artifact class (agent-consumed working data, like the journal),
-  not telemetry.
+- **Per-turn: jot, don't dwell.** One-line note when the previous
+  turn shows friction; no deep analysis mid-task. Deep reflection
+  that fires often derails the task it is reflecting on.
+- **Rarely: consolidate.** On `/reflect` (manual or nudged) — and
+  only then — read the accumulated notes and decide the expensive
+  things: update `AGENTS.md`? write a skill? update L2? prune.
+- **Never feed a full transcript export to the agent** (token
+  explosion; `/reflect` runs when context is tightest). Plugins
+  capture deterministically; the agent judges from compact notes.
 
 ## 3. Proposal
 
-### 3.1 Evidence side — `session-evidence.ts` (revived writer, new shape)
+### 3.1 Layer 1 — per-turn micro-reflection note (agent-written)
 
-A transparent plugin (no injection) that **appends on event**, no
-flush step to mis-time:
+Extend `FEEDBACK_CHECK_PROMPT` (single source, both surfaces): keep
+the existing two triggers —
 
-- `tool.execute.after`: if the result is an error, append
-  `{ts, tool, error: <first ~300 chars>}`.
-- `session.error` / turn-abort events: append `{ts, kind: abort}`.
-- Target: `.allmight/evidence/<yyyy-mm-dd>-<sid8>.yaml`, capped
-  (e.g. 100 entries, then count-only) so it stays cheap to read.
-- Registered in `PLUGIN_MANIFEST` with heartbeats (T1 + `.injected`
-  T2 on each append). Claude Code mirror: `session_evidence.py` via
-  PostToolUse (tool errors are visible there), abort capture marked
-  OC-only if no CC equivalent exists — manifest decides, per the
-  dual-platform invariant.
-- On `session.created`, also write the current session's evidence
-  path to `.allmight/evidence/current` so command bodies can find it
-  without knowing the session ID.
+- repeated tool use without the expected result (including *different
+  commands* aiming at the same goal — not just literal retries);
+- the user's message answers/corrects what the previous turn did;
 
-Why not pull `client.session.messages()` once at reflect time
-instead? It's more complete, but it depends on the SDK client shape
-(V2 plugin API risk on the internal build) and on knowing the
-session ID from inside a command body. Append-on-event is dumber and
-survives crashes; the pull-based variant can be a later upgrade if
-the internal build proves to expose `client` reliably.
+— but replace "reflect in 2-3 sentences" with **"append ONE line to
+`.allmight/feedback/notes.md` and move on"**:
 
-### 3.2 Trigger side — deliver the ask when acting is possible
+```
+- 2026-07-18 turn~12 [tool-deadend] 3x grep variants for X found nothing; answer was in docs/plan.md
+- 2026-07-18 turn~15 [user-correction] proposed per-personality commands; user: globals only
+```
 
-1. **Post-compaction, not pre-compaction.** Keep the compacting hook
-   only to set a per-session flag; on the **first `chat.message`
-   after compaction**, inject: "History was just compacted. The
-   evidence file at `.allmight/evidence/...` survived — run
-   /reflect now." This inverts the current dead-end: with evidence
-   on disk, *after* compaction becomes a legitimate reflect moment
-   because the details no longer live only in context.
-2. **Escalating idle nudge.** The existing every-3rd-idle nudge
-   checks the evidence file (cheap line count): ≥N error entries →
-   the nudge upgrades from "/remember" to "run /reflect — N tool
-   errors recorded this session." Deterministic condition, no new
-   plugin.
-3. `_reminder_nudge_text()` grows one line pointing at `/reflect`
-   for the audit case, so the periodic surface mentions it at all.
+Line format: date, rough turn, tag (`tool-deadend` /
+`user-correction` / `assumption-broke`), one sentence. Nothing
+happened → write nothing. This is *cheaper* in-chat than today's
+2-3-sentence retrospective, and it survives compaction because it
+is on disk.
 
-### 3.3 Body side — `/reflect` Step 0
+Location rationale: not `journal/` (L3 is per-personality,
+ingest-indexed, frontmatter-schema'd — heavyweight for scratch);
+`.allmight/feedback/` is project-level scratch, plain markdown,
+consumed and pruned by `/reflect`. "Versatile" = no schema beyond
+the one-line convention.
 
-Prepend one step to `templates/commands/reflect.md`:
+### 3.2 Layer 2 — deterministic evidence (plugin-written backstop)
 
-> **0. Review the evidence.** Read the newest file under
-> `.allmight/evidence/` (path in `.allmight/evidence/current`). For
-> each recorded error/abort: your mistake, an environment
-> limitation, or a missing skill? Carry the answers into steps 5–6.
+The internal model may ignore the cue (today's nudges already
+"sometimes surface"). Backstop: a small `session-evidence` plugin
+appends hard signals per event — tool result errors (first ~300
+chars), aborts — to `.allmight/feedback/auto-<date>-<sid8>.jsonl`.
+Append-on-event; no flush step to mis-time. Registered in
+`PLUGIN_MANIFEST` with T1/T2 heartbeats; Claude Code mirror via
+PostToolUse where capabilities allow. Layer 2 catches what Layer 1
+sleeps through; Layer 1 catches what Layer 2 can't see (a
+"successful" tool call that didn't achieve the goal; user
+corrections).
 
-Step 6's repetition check then has a deterministic input (repeated
-failing tool patterns) instead of relying on post-compaction recall.
-Budget note: `tests/test_skill_body_size.py` pins the body size —
-trim steps 1–4 wording or consciously bump the budget in the same
-commit.
+### 3.3 Consolidation — `/reflect` reads notes, targets AGENTS.md/skills
 
-## 4. Open decisions (need maintainer confirmation)
+New Step 0 in `templates/commands/reflect.md`:
 
-1. Evidence file format: YAML (human-diffable, matches journal
-   ethos) vs JSONL (append-safe, matches `trajectory_export.py`).
-   Leaning JSONL for append atomicity.
-2. Does the internal workstation's OpenCode build fire
-   `session.idle` / `tool.execute.after` at all? → run
-   `allmight plugin status` there first; if remember-trigger has
-   never injected, fix delivery before adding new plumbing.
-3. Should `/reflect` keep owning memory hygiene (steps 1–4) or
-   should behaviour-reflection become its own command? Current lean:
-   keep one command — the split rule in CLAUDE.md is about trigger
-   context, and both halves share the same trigger.
-4. Evidence retention: delete files >7 days old on session start, or
-   leave to `/reflect` step 0 to prune after reading.
+> **0. Review friction notes.** Read `.allmight/feedback/notes.md`
+> and the newest `auto-*.jsonl`. For each entry decide: my mistake /
+> environment limitation / missing knowledge. Then:
+> - a recurring *procedure* gap → write a skill (existing step 6);
+> - a wrong *project-level fact the agent keeps assuming* → fix the
+>   relevant `ROLE.md` (AGENTS.md recomposes via `allmight compose`)
+>   or `MEMORY.md`/L2 per scope;
+> - one-off noise → drop it.
+> Prune consolidated lines from `notes.md` (leave unresolved ones).
 
-## 5. Out of scope here
+AGENTS.md note: per the compose invariant, the agent edits
+`personalities/<p>/ROLE.md` (source of truth) and runs
+`allmight compose` — never AGENTS.md directly.
 
-The second field report — personalities used rigidly, the agent
-never proposes creating/merging personalities as work shifts — is a
-separate design conversation (likely a `/reflect` step or an
-`/onboard` re-run trigger, plus suggestion-catalog surfacing). Not
-addressed in this doc; noted so it isn't lost.
+Body size is pinned by `tests/test_skill_body_size.py`; the same
+commit must trim or consciously bump the budget.
+
+### 3.4 Consolidation triggers
+
+1. **Manual `/reflect`** — unchanged.
+2. **Escalating idle nudge** — when `notes.md` + `auto-*.jsonl`
+   exceed ~N entries, the existing every-3rd-idle nudge upgrades
+   from "/remember" to "run /reflect — N friction notes pending".
+   Deterministic file check inside `remember-trigger.ts`.
+3. **Compaction-adjacent** — see §4; the honest options are limited.
+
+## 4. Why consolidation cannot run "right before" compaction
+
+The worry — "won't post-compaction reflection lose the mistakes?" —
+is correct **when mistakes live only in the context window**. This
+design moves capture to per-turn disk writes precisely so that
+compaction can no longer destroy evidence: the summarizer drops
+context, not files.
+
+Mechanically, OpenCode offers no agent-actionable pre-compaction
+moment. `experimental.session.compacting` fires once compaction has
+*started*, and anything a plugin adds there goes into the
+summarizer's prompt — the agent never gets a turn in between. Nor is
+"the turn before compaction will trigger" predictable. So:
+
+- **Capture** happens per turn, when the detail is fresh and cheap —
+  strictly earlier and richer than any pre-compaction batch job
+  could be. Nothing waits for compaction, so nothing is lost to it.
+- **Consolidation** is timing-insensitive (it reads disk) and runs
+  at the first *possible* moment near compaction: the compacting
+  hook sets a flag; the first post-compaction `chat.message` injects
+  "history was compacted; friction notes survived on disk — run
+  /reflect if ≥N pending". Post-compaction is not the preferred
+  moment; it is the only real one, and per-turn capture makes it
+  lossless.
+
+The v1 idea of using compaction as the *primary* reflect trigger is
+demoted: with per-turn capture, compaction is just one more
+"pending notes" checkpoint.
+
+## 5. Open decisions
+
+1. `notes.md` single rolling file vs per-day files. Lean: single
+   file, `/reflect` prunes; simplest for the cue to state.
+2. Threshold N for the nudge upgrade (lean: 5 combined entries).
+3. Should Layer 2 ship in the same change, or land Layer 1 first and
+   watch heartbeats/`notes.md` on the workstation to see if the cue
+   alone suffices? Lean: Layer 1 + nudge upgrade first (smallest
+   change: one prompt constant, one command body, one nudge
+   condition), Layer 2 second.
+4. Workstation pre-check unchanged from v1: run
+   `allmight plugin status`; if `feedback-check` shows `injected: —`
+   the cue never reaches the model and Layer 1 is moot until
+   delivery is fixed.
+
+## 6. Out of scope
+
+Personality rigidity (agent never proposes new/merged personalities
+as work shifts) — separate conversation. Note the hook: `/reflect`
+step 0's "missing knowledge" bucket is a natural place to also ask
+"does recent work still fit the installed personalities?" → route to
+`/onboard` re-run. Not designed here.
