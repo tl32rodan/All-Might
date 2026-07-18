@@ -1,9 +1,16 @@
 # Proposal — Per-turn micro-reflection notes + consolidated `/reflect`
 
-Status: draft v2 (2026-07-18). v1 diagnosed why `/reflect` never
-fires; v2 incorporates the maintainer's design: **jot per turn,
-consolidate rarely** — deep reflection must not run often enough to
-derail the actual task.
+Status: **implemented** (2026-07-18, same branch). v1 diagnosed why
+`/reflect` never fires; v2 incorporates the maintainer's design:
+**jot per turn, consolidate rarely** — deep reflection must not run
+often enough to derail the actual task. §3 below is now a
+description of what shipped: Layer 1 = `FEEDBACK_CHECK_PROMPT`
+(`core/personalities.py`), Layer 2 = `session-evidence.ts` /
+`session_evidence.py`, consolidation = `/reflect` Step 0, triggers =
+`remember-trigger.ts` (friction escalation at `FRICTION_THRESHOLD=5`
++ `session.compacted` nudge; the compacting hook now addresses the
+summarizer only). Open decision 3 was resolved as "ship both layers
+together"; decision 4 (retention) landed as "/reflect prunes".
 
 ## 1. Diagnosis (unchanged from v1, condensed)
 

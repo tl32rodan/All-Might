@@ -98,7 +98,8 @@ class TestWriteClaudeBridge:
         assert "feedback-check.ts" in body
         # Prompt content is present.
         assert "Feedback Check" in body
-        assert "Why did it happen?" in body
+        assert "[tool-deadend]" in body
+        assert ".allmight/feedback/notes.md" in body
         # Hook contract: emits hookSpecificOutput with additionalContext.
         assert "hookSpecificOutput" in body
         assert "additionalContext" in body
@@ -139,6 +140,31 @@ class TestWriteClaudeBridge:
             for h in block["hooks"]
         ]
         assert any("feedback_check.py" in c for c in commands)
+
+    def test_writes_session_evidence_hook(self, project):
+        write_claude_bridge(project)
+        hook = project / ".claude" / "hooks" / "session_evidence.py"
+        body = hook.read_text()
+        assert body.startswith("#!/usr/bin/env python3")
+        assert "all-might generated" in body
+        # Mirror-of relationship is documented in the header.
+        assert "session-evidence.ts" in body
+        assert ".allmight/feedback/" in body
+        mode = hook.stat().st_mode
+        assert mode & stat.S_IXUSR
+
+    def test_writes_settings_json_with_post_tool_use(self, project):
+        """Session-evidence hook is registered on PostToolUse."""
+        write_claude_bridge(project)
+        settings = json.loads(
+            (project / ".claude" / "settings.json").read_text()
+        )
+        commands = [
+            h["command"]
+            for block in settings["hooks"]["PostToolUse"]
+            for h in block["hooks"]
+        ]
+        assert any("session_evidence.py" in c for c in commands)
 
     def test_idempotent_on_rerun(self, project):
         write_claude_bridge(project)
@@ -284,7 +310,7 @@ class TestHooksRunCleanly:
         payload = json.loads(result.stdout)
         ctx = payload["hookSpecificOutput"]["additionalContext"]
         assert "Feedback Check" in ctx
-        assert "Why did it happen?" in ctx
+        assert "[user-correction]" in ctx
         assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
 
     def test_feedback_check_hook_defaults_event_name(self, project):
@@ -434,6 +460,53 @@ class TestInjectedHeartbeats:
         hb = project / ".allmight" / "plugins" / "heartbeats" / "cc"
         assert (hb / "feedback_check").is_file()
         assert (hb / "feedback_check.injected").is_file()
+
+    def _run_payload(self, project, script, payload):
+        hook = project / ".claude" / "hooks" / script
+        proc = subprocess.run(
+            [sys.executable, str(hook)],
+            input=json.dumps(payload),
+            capture_output=True, text=True,
+            cwd=project,
+            env={**os.environ, "CLAUDE_PROJECT_DIR": str(project)},
+        )
+        assert proc.returncode == 0, proc.stderr
+        return proc
+
+    def test_session_evidence_records_tool_error(self, project):
+        """An explicit error marker in tool_response produces one JSONL
+        record and the T2 heartbeat; stdout stays empty (transparent)."""
+        write_claude_bridge(project)
+        proc = self._run_payload(project, "session_evidence.py", {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "session_id": "s1",
+            "tool_response": {"is_error": True, "error": "boom: exit 1"},
+        })
+        assert proc.stdout.strip() == ""
+        feedback = project / ".allmight" / "feedback"
+        files = list(feedback.glob("auto-*.jsonl"))
+        assert len(files) == 1
+        record = json.loads(files[0].read_text().splitlines()[0])
+        assert record["tool"] == "Bash"
+        assert "boom" in record["error"]
+        hb = project / ".allmight" / "plugins" / "heartbeats" / "cc"
+        assert (hb / "session_evidence").is_file()
+        assert (hb / "session_evidence.injected").is_file()
+
+    def test_session_evidence_silent_on_clean_response(self, project):
+        """No error marker -> no record, no T2 (T1 still fires)."""
+        write_claude_bridge(project)
+        self._run_payload(project, "session_evidence.py", {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Read",
+            "tool_response": {"output": "file contents"},
+        })
+        feedback = project / ".allmight" / "feedback"
+        assert not list(feedback.glob("auto-*.jsonl")) if feedback.exists() else True
+        hb = project / ".allmight" / "plugins" / "heartbeats" / "cc"
+        assert (hb / "session_evidence").is_file()
+        assert not (hb / "session_evidence.injected").exists()
 
     def test_role_load_skips_injected_when_nothing_to_say(self, project):
         write_claude_bridge(project)

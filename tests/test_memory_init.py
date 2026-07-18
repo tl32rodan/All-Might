@@ -643,6 +643,38 @@ class TestOpenCodeHooks:
         # Throttle constant (every N turns) must exist
         assert "NUDGE_EVERY" in content
 
+    def test_remember_trigger_escalates_on_pending_friction(self, project_root):
+        """session.idle checks .allmight/feedback/ (read-only) and
+        upgrades the /remember nudge to a /reflect ask once entries
+        reach the threshold; session.compacted queues the
+        post-compaction ask (the first actionable moment)."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "plugins" / "remember-trigger.ts").read_text()
+        assert "FRICTION_THRESHOLD" in content
+        assert 'join(cwd, ".allmight", "feedback")' in content
+        assert '"session.compacted"' in content
+        assert "/reflect" in content
+        # The friction check is read-only — the delegates test already
+        # pins the absence of write calls; re-assert here so a future
+        # edit to the counter cannot start writing.
+        assert "writeFileSync" not in content
+        assert "appendFileSync" not in content
+
+    def test_remember_trigger_compacting_addresses_summarizer_only(self, project_root):
+        """The compacting hook's output.context is read by the
+        SUMMARIZER while compaction is already running — the agent has
+        no turn there. The old design injected 'you MUST run /reflect
+        before history is condensed' at exactly that moment, which is
+        impossible to comply with; it must never come back."""
+        MemoryInitializer().initialize(project_root)
+        content = (project_root / ".opencode" / "plugins" / "remember-trigger.ts").read_text()
+        assert "Before history is condensed" not in content
+        assert "preCompactText" not in content
+        # The summarizer note + the agent-facing post-compaction text
+        # are separate generators — both must exist.
+        assert "summarizerNoteText" in content
+        assert "postCompactText" in content
+
     def test_plugins_use_correct_chat_message_signature(self, project_root):
         """chat.message is (input, output) and injects via output.parts.unshift."""
         MemoryInitializer().initialize(project_root)

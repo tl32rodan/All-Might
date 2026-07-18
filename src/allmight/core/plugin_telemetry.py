@@ -127,6 +127,7 @@ KNOWN_OPENCODE_PLUGINS: tuple[str, ...] = (
     "memory-history",
     "remember-trigger",
     "todo-curator",
+    "session-evidence",
 )
 
 
@@ -160,6 +161,12 @@ PLATFORM_CAPABILITIES: dict[str, dict[str, bool]] = {
     "cross_turn_plugin_state":   {"opencode": True, "claude_code": False},
     "mid_turn_message_inject":   {"opencode": True, "claude_code": False},
     "tool_execute_after_inject": {"opencode": True, "claude_code": False},
+    # Observe (not mutate) tool results, including error outcomes.
+    # OpenCode: message.part.updated events carry ToolPart.state
+    # ("error" status + error text). Claude Code: PostToolUse receives
+    # tool_response. Distinct from tool_execute_after_inject, which is
+    # about mutating the result — unavailable on Claude Code.
+    "tool_result_observe":       {"opencode": True, "claude_code": True},
 }
 
 
@@ -182,7 +189,7 @@ PLUGIN_MANIFEST: dict[str, dict] = {
     "feedback-check": {
         "requires": ["user_prompt_inject"],
         "claude_code_mirror": "feedback_check.py",
-        "purpose": "Per-turn feedback-check cue (renamed from 'reflection'; the periodic audit is /reflect)",
+        "purpose": "Per-turn friction-jot cue: on tool dead-end / user correction / broken assumption, append one line to .allmight/feedback/notes.md (consolidated by /reflect)",
     },
     "offline-reference": {
         "requires": ["user_prompt_inject"],
@@ -192,12 +199,17 @@ PLUGIN_MANIFEST: dict[str, dict] = {
     "remember-trigger": {
         "requires": ["session_idle_counter", "mid_turn_message_inject"],
         "claude_code_mirror": None,
-        "purpose": "Throttled /remember nudge based on session.idle count",
+        "purpose": "Throttled /remember nudge; escalates to /reflect when .allmight/feedback/ friction entries accumulate, and queues the post-compaction /reflect ask",
     },
     "todo-curator": {
         "requires": ["cross_turn_plugin_state", "mid_turn_message_inject"],
         "claude_code_mirror": None,
         "purpose": "Cross-turn TODO ledger curation",
+    },
+    "session-evidence": {
+        "requires": ["tool_result_observe"],
+        "claude_code_mirror": "session_evidence.py",
+        "purpose": "Append tool-error records to .allmight/feedback/auto-<date>.jsonl — the deterministic backstop for the feedback-check jot; consolidated by /reflect",
     },
 }
 

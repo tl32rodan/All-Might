@@ -1,11 +1,21 @@
 Structured self-reflection to keep memory accurate and tidy.
 
 Run periodically: end of session, after major work, when the
-sentinel `memory/.l1-over-cap` exists, or when the user asks you to
-consolidate what you learned.
+sentinel `memory/.l1-over-cap` exists, when a nudge reports pending
+friction notes, or when the user asks you to consolidate.
 
 For single-observation persistence (the default `/remember` flow):
 use `/remember`, not this command.
+
+## 0. Review friction notes
+
+Read `.allmight/feedback/notes.md` (per-turn jots) and any
+`.allmight/feedback/auto-*.jsonl` (auto-recorded tool errors), then
+route each entry: recurring procedure gap → Step 6 (skill); a fact
+you kept assuming wrong → fix the owning
+`personalities/<active>/ROLE.md` + `allmight compose`, or the right
+tier in Steps 1–2; one-off noise → drop. Delete what you
+consolidated (incl. exhausted `auto-*` files); keep the rest.
 
 ## 1. Review L1 — MEMORY.md
 
@@ -29,8 +39,6 @@ List `memory/`. Check each file is scoped correctly:
   one-line pointer in `MEMORY.md`.
 - Any `memory/journal/general/` entry that's actually
   workspace-specific? Move it under `memory/journal/<workspace>/`.
-- Any ad-hoc `memory/<kind>/<workspace>.md` you (or a past session)
-  created? Confirm names follow `<kind>/<workspace>.md`.
 
 ## 4. L1 cap triage (only if `memory/.l1-over-cap` exists)
 
@@ -40,8 +48,7 @@ List `memory/`. Check each file is scoped correctly:
    (move to `understanding/`) / **open TODO** (move to
    `memory/todos/<workspace>.md` or matching `<kind>`).
 2. Distill duplicates and stale bullets.
-3. Save. The next Stop hook re-audits and removes the sentinel
-   automatically when the body is back under cap.
+3. Save — the next Stop hook removes the sentinel once under cap.
 
 The cap **never silently evicts** — only this step removes content
 from L1.
@@ -71,7 +78,8 @@ Write it under `memory/journal/<workspace>/` or
 ## 6. Skill check — turn repetition into a skill
 
 If the same multi-step procedure appears twice or more across this
-session and the journal entries you just reviewed:
+session, the friction notes (Step 0), and the journal entries you
+just reviewed:
 
 1. Write it to `personalities/<active>/skills/<name>/SKILL.md`
    (frontmatter `name:` + `description:`; body = the steps).
@@ -84,5 +92,5 @@ session and the journal entries you just reviewed:
 smak ingest --config memory/smak_config.yaml
 ```
 
-(Or rely on the next-session auto-drain — same effect, just delayed
-by one session boundary.)
+(Or rely on the next-session auto-drain — same effect, one session
+later.)
