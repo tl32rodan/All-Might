@@ -496,6 +496,7 @@ def write_init_scaffold(project_root: Path) -> None:
 
     _write_role_load_plugin(project_root)
     _write_feedback_check_plugin(project_root)
+    _write_session_evidence_plugin(project_root)
     _write_offline_reference_plugin(project_root)
 
     # Bundled OpenCode reference + /opencode-ref skill. Framework-level
@@ -1012,17 +1013,20 @@ export default RoleLoadPlugin;
 
 FEEDBACK_CHECK_PROMPT = (
     "--- Feedback Check ---\n"
-    "Before this turn's work, glance back at the last few turns:\n"
-    "- Reflect in 2-3 sentences if ANY of these happened (not only explicit\n"
-    "  corrections): the user pointed out a mistake or redirected you; you\n"
-    "  retried something, hit a dead-end, or were surprised by a result; or\n"
-    "  an assumption you acted on turned out wrong. Cover:\n"
-    "    * What happened / went wrong?\n"
-    "    * Why did it happen?\n"
-    "    * How will I avoid the same class of issue next time?\n"
-    "  Then proceed with the turn.\n"
-    "- Only skip if the last turns were genuinely clean and uneventful\n"
-    "  (e.g. the first user turn, or a simple request with no friction).\n"
+    "Before this turn's work, glance back at the last few turns. If ANY\n"
+    "of these happened, append ONE line to `.allmight/feedback/notes.md`\n"
+    "(create it if missing) and move on — no in-chat analysis, do not\n"
+    "derail the task:\n"
+    "- [tool-deadend] you used tools repeatedly (same or different\n"
+    "  commands) without getting the result you were after;\n"
+    "- [user-correction] the user's message answers, corrects, or\n"
+    "  redirects what your previous turn did or asked;\n"
+    "- [assumption-broke] an assumption you acted on turned out wrong.\n"
+    "Line format (append-only, never rewrite existing lines):\n"
+    "- <YYYY-MM-DD> [<tag>] <one sentence: what happened + what turned\n"
+    "  out to work or what the user actually wanted>\n"
+    "Nothing of the sort happened -> write nothing and skip silently.\n"
+    "Deep analysis happens later in /reflect, never mid-task.\n"
     "--- End Feedback Check ---"
 )
 
@@ -1142,11 +1146,12 @@ def _write_feedback_check_plugin(project_root: Path) -> None:
 
     Project-level plugin (same status as role-load). At every
     ``chat.message`` it prepends a short instruction asking the agent
-    to glance at the user's latest message and, if it points out a
-    mistake, do a 2-3 sentence retrospective (what / why / how to
-    avoid) before proceeding. Positive or neutral feedback skips the
-    retrospective — the gating happens inside the agent's head, so
-    the plugin itself is stateless and fires every turn.
+    to glance at the last few turns and, on friction (tool dead-end,
+    user correction, broken assumption), append a one-line note to
+    ``.allmight/feedback/notes.md`` — jot, don't dwell; consolidation
+    is ``/reflect``'s job. Clean turns write nothing — the gating
+    happens inside the agent's head, so the plugin itself is
+    stateless and fires every turn.
 
     This is NOT the periodic self-reflection surface — that is the
     ``/reflect`` command (memory capability). The plugin was renamed
@@ -1191,13 +1196,14 @@ _FEEDBACK_CHECK_PLUGIN_TEMPLATE = """\
  * Feedback Check — OpenCode plugin (All-Might)
  *
  * On every chat.message, prepends a brief instruction asking the
- * agent to glance at the user's latest message and, if it points
- * out a mistake, do a 2-3 sentence retrospective (what went wrong /
- * why / how to avoid) before proceeding with the turn. Positive or
- * neutral feedback skips it.
+ * agent to glance at the last few turns and, on friction (tool
+ * dead-end, user correction, broken assumption), append a ONE-LINE
+ * note to .allmight/feedback/notes.md — jot, don't dwell. Clean
+ * turns write nothing.
  *
  * NOT the periodic self-reflection surface — that is the /reflect
- * command. This plugin only cues an in-turn check on user feedback.
+ * command, which consolidates the accumulated notes. This plugin
+ * only cues the per-turn jot.
  *
  * The plugin is stateless — the agent itself decides whether the
  * latest user message constitutes negative feedback. Firing every
@@ -1245,6 +1251,120 @@ export const FeedbackCheckPlugin: Plugin = async ({ directory }: any) => {
 };
 
 export default FeedbackCheckPlugin;
+"""
+
+
+def _write_session_evidence_plugin(project_root: Path) -> None:
+    """Write ``.opencode/plugins/session-evidence.ts`` if absent or owned.
+
+    Project-level plugin (same status as feedback-check — the two form
+    one system). Observes ``message.part.updated`` events and appends a
+    JSONL record to ``.allmight/feedback/auto-<date>.jsonl`` whenever a
+    tool part lands in the ``error`` state. Deterministic backstop for
+    the feedback-check jot: it catches hard tool failures even when the
+    agent ignores the cue. Transparent — never injects into the chat.
+
+    Sibling Claude Code hook is ``.claude/hooks/session_evidence.py``
+    (see ``core.claude_bridge``); both surfaces append the same record
+    shape to the same file family.
+    """
+    from .markers import ALLMIGHT_MARKER_TS
+    from .safe_write import write_guarded
+
+    plugins_dir = project_root / ".opencode" / "plugins"
+    plugins_dir.mkdir(parents=True, exist_ok=True)
+    write_guarded(
+        plugins_dir / "session-evidence.ts",
+        _session_evidence_plugin_content(),
+        ALLMIGHT_MARKER_TS,
+    )
+
+
+def _session_evidence_plugin_content() -> str:
+    from .plugin_telemetry import TS_HEARTBEAT_SNIPPET
+    return _SESSION_EVIDENCE_PLUGIN_TEMPLATE.replace(
+        "__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET,
+    )
+
+
+_SESSION_EVIDENCE_PLUGIN_TEMPLATE = """\
+// all-might generated
+/**
+ * Session Evidence — OpenCode plugin (All-Might)
+ *
+ * Appends a one-line JSONL record to .allmight/feedback/auto-<date>.jsonl
+ * whenever a tool call ends in the error state. Deterministic backstop
+ * for the feedback-check jot (.allmight/feedback/notes.md): hard tool
+ * failures are recorded even when the agent ignores the per-turn cue.
+ * /reflect consolidates both files.
+ *
+ * Transparent: never injects into the chat, never blocks a tool. A
+ * failed evidence write is silently dropped — losing a record must
+ * never break the session.
+ *
+ * Contract verified against @opencode-ai/sdk types: the
+ * message.part.updated event carries a ToolPart whose state is
+ * ToolStateError = { status: "error", error: string, ... }. The
+ * tool.execute.after hook is NOT used — it is not guaranteed to run
+ * on the error path.
+ *
+ * Sibling Claude Code hook is .claude/hooks/session_evidence.py — both
+ * surfaces append the same record shape; changes to one MUST land in
+ * the other (see All-Might CLAUDE.md -> Editor Compatibility).
+ *
+ * Event:
+ *   message.part.updated -> tool part with state.status === "error"
+ *                           -> append {ts, sessionID, tool, error}
+ */
+import type { Plugin } from "@opencode-ai/plugin";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+
+__TS_HEARTBEAT_SNIPPET__
+// Streaming updates re-emit the same part several times; record each
+// failed call once. Caps keep the file cheap for /reflect to read.
+const MAX_ENTRIES_PER_RUN = 100;
+const ERROR_SNIPPET_CHARS = 300;
+
+const seenParts = new Set<string>();
+let appended = 0;
+
+export const SessionEvidencePlugin: Plugin = async ({ directory }: any) => {
+  const cwd = (directory as string | undefined) ?? process.cwd();
+
+  return {
+    event: async ({ event }: { event: any }) => {
+      emitHeartbeat("session-evidence", cwd);
+      if (event?.type !== "message.part.updated") return;
+      const part = event?.properties?.part;
+      if (part?.type !== "tool") return;
+      if (part?.state?.status !== "error") return;
+      const key = part?.id ?? part?.callID ?? "";
+      if (!key || seenParts.has(key)) return;
+      seenParts.add(key);
+      if (appended >= MAX_ENTRIES_PER_RUN) return;
+      try {
+        const dir = join(cwd, ".allmight", "feedback");
+        mkdirSync(dir, { recursive: true });
+        const now = new Date();
+        const record = {
+          ts: now.toISOString(),
+          sessionID: part?.sessionID ?? "",
+          tool: part?.tool ?? "unknown",
+          error: String(part?.state?.error ?? "").slice(0, ERROR_SNIPPET_CHARS),
+        };
+        const path = join(dir, `auto-${now.toISOString().slice(0, 10)}.jsonl`);
+        appendFileSync(path, JSON.stringify(record) + "\\n");
+        appended += 1;
+        emitHeartbeat("session-evidence.injected", cwd);
+      } catch {
+        // Best-effort: dropping one record must never break the session.
+      }
+    },
+  };
+};
+
+export default SessionEvidencePlugin;
 """
 
 

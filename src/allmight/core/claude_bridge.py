@@ -90,14 +90,14 @@ _FEEDBACK_CHECK_HOOK_TEMPLATE = '''\
 # in the .ts plugin too; see All-Might CLAUDE.md -> Editor Compatibility.
 """Feedback-check hook for Claude Code (UserPromptSubmit).
 
-Injects a brief instruction asking the agent to glance at the user's
-latest message and, if it points out a mistake, do a 2-3 sentence
-retrospective (what / why / how to avoid) before proceeding. Positive
-or neutral feedback skips it. Same content the OpenCode
-feedback-check plugin injects via chat.message.
+Injects a brief instruction asking the agent to glance at the last
+few turns and, on friction (tool dead-end, user correction, broken
+assumption), append a one-line note to .allmight/feedback/notes.md.
+Clean turns write nothing. Same content the OpenCode feedback-check
+plugin injects via chat.message.
 
 NOT the periodic self-reflection surface — that is the /reflect
-command.
+command, which consolidates the accumulated notes.
 """
 import json
 import sys
@@ -197,6 +197,96 @@ if __name__ == "__main__":
 '''
 
 
+def _session_evidence_hook_content() -> str:
+    from .plugin_telemetry import PY_HEARTBEAT_SNIPPET
+    return _SESSION_EVIDENCE_HOOK_TEMPLATE.replace(
+        "__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET,
+    )
+
+
+_SESSION_EVIDENCE_HOOK_TEMPLATE = '''\
+#!/usr/bin/env python3
+# all-might generated — DO NOT EDIT.
+#
+# Mirror of .opencode/plugins/session-evidence.ts. Changes here MUST
+# land in the .ts plugin too; see All-Might CLAUDE.md -> Editor
+# Compatibility.
+"""Session-evidence hook for Claude Code (PostToolUse).
+
+Appends a one-line JSONL record to .allmight/feedback/auto-<date>.jsonl
+when a tool response carries an error signal. Deterministic backstop
+for the feedback-check jot (.allmight/feedback/notes.md); /reflect
+consolidates both files. Transparent: prints nothing, never blocks.
+
+Claude Code exposes no structured tool-error state, so detection is
+conservative: only explicit markers (is_error / success=False / a
+non-empty "error" field) count. Ambiguous responses are skipped —
+Layer 1 (the feedback-check jot) covers soft failures.
+"""
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+
+ERROR_SNIPPET_CHARS = 300
+
+
+__PY_HEARTBEAT_SNIPPET__
+
+def _error_text(resp):
+    """Return the error string, or None when no explicit error marker."""
+    if not isinstance(resp, dict):
+        return None
+    flagged = resp.get("is_error") is True or resp.get("success") is False
+    err = resp.get("error")
+    if isinstance(err, str) and err.strip():
+        return err
+    if flagged:
+        for key in ("stderr", "message", "output"):
+            val = resp.get(key)
+            if isinstance(val, str) and val.strip():
+                return val
+        return json.dumps(resp, ensure_ascii=False)
+    return None
+
+
+def main() -> int:
+    _hb("session_evidence")
+    try:
+        payload = json.load(sys.stdin) if not sys.stdin.isatty() else {}
+    except (json.JSONDecodeError, ValueError):
+        payload = {}
+    err = _error_text(payload.get("tool_response"))
+    if err is None:
+        return 0
+    root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    now = datetime.datetime.now()
+    record = {
+        "ts": now.isoformat(timespec="seconds"),
+        "sessionID": payload.get("session_id", ""),
+        "tool": payload.get("tool_name", "unknown"),
+        "error": err[:ERROR_SNIPPET_CHARS],
+    }
+    try:
+        feedback_dir = root / ".allmight" / "feedback"
+        feedback_dir.mkdir(parents=True, exist_ok=True)
+        out = feedback_dir / f"auto-{now.date().isoformat()}.jsonl"
+        with open(out, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\\n")
+    except OSError:
+        # Best-effort: dropping one record must never break the session.
+        return 0
+    _hb("session_evidence.injected")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+
 def _role_load_hook_content() -> str:
     from .plugin_telemetry import PY_HEARTBEAT_SNIPPET
     return _ROLE_LOAD_HOOK_TEMPLATE.replace(
@@ -288,9 +378,19 @@ _TURN_END_SCRIPTS = ("memory_history.py",)
 # chat.message hook.
 _USER_PROMPT_SCRIPTS = ("feedback_check.py", "offline_reference.py")
 
+# Tool-result scripts: fire after each tool call. Used for transparent
+# bookkeeping on tool outcomes (session-evidence error records).
+# Claude Code analogue of OpenCode's message.part.updated observation.
+_TOOL_RESULT_SCRIPTS = ("session_evidence.py",)
+
 # Union — used by tests and by the merge logic to identify our owned
 # hook commands across all events.
-_HOOK_SCRIPTS = _RELOAD_SCRIPTS + _TURN_END_SCRIPTS + _USER_PROMPT_SCRIPTS
+_HOOK_SCRIPTS = (
+    _RELOAD_SCRIPTS
+    + _TURN_END_SCRIPTS
+    + _USER_PROMPT_SCRIPTS
+    + _TOOL_RESULT_SCRIPTS
+)
 
 # Hook scripts the bridge USED to ship under a different name. Their
 # settings.json registrations are stripped on every bridge write
@@ -323,6 +423,7 @@ def _settings_payload() -> dict:
         "PreCompact": reload_block,
         "Stop": _block(_TURN_END_SCRIPTS),
         "UserPromptSubmit": _block(_USER_PROMPT_SCRIPTS),
+        "PostToolUse": _block(_TOOL_RESULT_SCRIPTS),
     }
 
 
@@ -479,6 +580,20 @@ def _prune_legacy_hooks(project_root: Path) -> None:
             continue
 
 
+def _write_session_evidence_hook(project_root: Path) -> None:
+    """Write the session-evidence Claude Code hook script.
+
+    Mirrors ``.opencode/plugins/session-evidence.ts``. The settings.json
+    registration is added by ``_write_settings_json`` under
+    ``PostToolUse``.
+    """
+    hooks_dir = project_root / ".claude" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    target = hooks_dir / "session_evidence.py"
+    write_guarded(target, _session_evidence_hook_content(), CLAUDE_HOOK_MARKER)
+    target.chmod(0o755)
+
+
 def _write_offline_reference_hook(project_root: Path) -> None:
     """Write the offline-reference Claude Code hook script.
 
@@ -576,9 +691,11 @@ def write_claude_bridge(project_root: Path) -> None:
     * ``.claude/commands`` and ``.claude/skills`` directory symlinks
     * ``.claude/hooks/role_load.py`` (mirrors role-load.ts)
     * ``.claude/hooks/feedback_check.py`` (mirrors feedback-check.ts)
+    * ``.claude/hooks/session_evidence.py`` (mirrors session-evidence.ts)
     * ``.claude/settings.json`` hook registrations for both
       ``role_load.py`` and the memory capability's ``memory_load.py``,
-      plus ``feedback_check.py`` under ``UserPromptSubmit``
+      plus ``feedback_check.py`` under ``UserPromptSubmit`` and
+      ``session_evidence.py`` under ``PostToolUse``
     * ``.mcp.json`` registration of the knowledge MCP server
 
     Legacy-named hooks (``_LEGACY_HOOK_SCRIPTS``) are pruned: the
@@ -593,6 +710,7 @@ def write_claude_bridge(project_root: Path) -> None:
     _write_claude_dir_symlinks(project_root)
     _write_role_load_hook(project_root)
     _write_feedback_check_hook(project_root)
+    _write_session_evidence_hook(project_root)
     _write_offline_reference_hook(project_root)
     _prune_legacy_hooks(project_root)
     _write_settings_json(project_root)

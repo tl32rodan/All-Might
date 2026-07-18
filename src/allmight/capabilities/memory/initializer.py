@@ -847,17 +847,30 @@ export default MemoryLoadPlugin;
  * the single source of truth for how memory gets written.
  *
  * Events:
- *   session.idle                     — every NUDGE_EVERY turns, queue nudge
- *   experimental.session.compacting  — queue last-chance nudge pre-compaction
+ *   session.idle      — every NUDGE_EVERY turns queue a /remember nudge;
+ *                       escalates to a /reflect nudge once friction
+ *                       entries (.allmight/feedback/) reach
+ *                       FRICTION_THRESHOLD
+ *   session.compacted — queue the post-compaction nudge. This is the
+ *                       first moment the agent can act after
+ *                       compaction; the on-disk friction record makes
+ *                       it lossless.
  *   session.created / session.deleted — init / cleanup per-session state
  *
- * Hook:
+ * Hooks:
  *   chat.message — inject any queued nudge as a prefix to the next user turn
+ *   experimental.session.compacting — add a note to the SUMMARIZER
+ *     prompt only. The agent has no turn while compaction runs, so no
+ *     instruction addressed to the agent may go here — the old design
+ *     did exactly that and never fired a single /reflect.
  */
 import type { Plugin } from "@opencode-ai/plugin";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 
 __TS_HEARTBEAT_SNIPPET__
 const NUDGE_EVERY = 3;
+const FRICTION_THRESHOLD = 5;
 
 type State = { idleCount: number; pendingNudge: string | null };
 const sessions = new Map<string, State>();
@@ -868,17 +881,67 @@ function nudgeText(turn: number): string {
   return `[Memory Nudge \\u2014 turn ${turn}]\\n` + SHARED_NUDGE;
 }
 
-function preCompactText(): string {
+// Read-only count of pending friction entries: bulleted lines in
+// notes.md (the feedback-check jots) + records in auto-*.jsonl (the
+// session-evidence tool-error log). Cheap enough for session.idle.
+function pendingFrictionCount(cwd: string): number {
+  let count = 0;
+  const dir = join(cwd, ".allmight", "feedback");
+  try {
+    for (const name of readdirSync(dir)) {
+      const isNotes = name === "notes.md";
+      const isAuto = name.startsWith("auto-") && name.endsWith(".jsonl");
+      if (!isNotes && !isAuto) continue;
+      for (const line of readFileSync(join(dir, name), "utf8").split("\\n")) {
+        const t = line.trim();
+        if (!t) continue;
+        if (isNotes && !t.startsWith("- ")) continue;
+        count += 1;
+      }
+    }
+  } catch {
+    // No feedback dir yet — nothing pending.
+  }
+  return count;
+}
+
+function reflectNudgeText(n: number): string {
   return [
-    "[Memory Nudge \\u2014 pre-compaction]",
-    "Conversation is about to be summarised — this is a forced checkpoint.",
-    "Before history is condensed you MUST: (1) run /reflect to audit this",
-    "session, then (2) run /remember for anything worth persisting (user",
-    "prefs, corrections, per-corpus discoveries). Skipping is allowed only",
-    "if you state in one line why nothing is worth keeping. Delegate scope",
-    "and writing to /remember.",
-    "",
-    SHARED_NUDGE,
+    `[Memory Nudge \\u2014 ${n} friction entries pending]`,
+    "Friction notes have accumulated in .allmight/feedback/ (notes.md +",
+    "auto-*.jsonl). Run /reflect now to consolidate them \\u2014 its Step 0",
+    "reads and prunes these files \\u2014 or state in one line why they can",
+    "wait. Then run /remember for anything else worth keeping.",
+  ].join("\\n");
+}
+
+function postCompactText(n: number): string {
+  const lines = [
+    "[Memory Nudge \\u2014 post-compaction]",
+    "History was just compacted; earlier-turn detail is gone from",
+    "context, but the on-disk record survived.",
+  ];
+  if (n > 0) {
+    lines.push(
+      `${n} friction entries are pending in .allmight/feedback/ \\u2014 run`,
+      "/reflect now (its Step 0 reads and prunes them).",
+    );
+  } else {
+    lines.push(
+      "Run /remember if anything from before the compaction is worth",
+      "persisting.",
+    );
+  }
+  return lines.join("\\n");
+}
+
+// Reader: the compaction SUMMARIZER, not the agent. Never place an
+// instruction for the agent here — it has no turn during compaction.
+function summarizerNoteText(): string {
+  return [
+    "Preserve in the summary: pending friction notes live in",
+    ".allmight/feedback/ and the agent will be asked to run /reflect",
+    "on its next turn.",
   ].join("\\n");
 }
 
@@ -904,9 +967,15 @@ export const RememberTriggerPlugin: Plugin = async ({ directory }: any) => {
       if (type === "session.idle") {
         const s = ensure(sid);
         s.idleCount += 1;
-        if (s.idleCount % NUDGE_EVERY === 0) {
+        const friction = pendingFrictionCount(cwd);
+        if (friction >= FRICTION_THRESHOLD) {
+          s.pendingNudge = reflectNudgeText(friction);
+        } else if (s.idleCount % NUDGE_EVERY === 0) {
           s.pendingNudge = nudgeText(s.idleCount);
         }
+      } else if (type === "session.compacted") {
+        const s = ensure(sid);
+        s.pendingNudge = postCompactText(pendingFrictionCount(cwd));
       } else if (type === "session.created") {
         sessions.set(sid, { idleCount: 0, pendingNudge: null });
       } else if (type === "session.deleted") {
@@ -939,8 +1008,10 @@ export const RememberTriggerPlugin: Plugin = async ({ directory }: any) => {
       emitHeartbeat("remember-trigger.injected", cwd);
     },
 
-    // Pre-compaction hook: inject the scope reminder directly into the
-    // compaction prompt so the generated summary carries the framing.
+    // Compacting hook: the ONLY reader of output.context is the
+    // summarizer model. Ask it to preserve the friction-notes pointer
+    // in the summary; the agent-facing ask happens on session.compacted
+    // (the first turn where acting is possible).
     "experimental.session.compacting": async (input: any, output: any) => {
       emitHeartbeat("remember-trigger", cwd);
       const sid = input?.sessionID;
@@ -948,7 +1019,7 @@ export const RememberTriggerPlugin: Plugin = async ({ directory }: any) => {
       if (!output) return;
       const context = output.context ?? (output.context = []);
       if (Array.isArray(context)) {
-        context.push(preCompactText());
+        context.push(summarizerNoteText());
         emitHeartbeat("remember-trigger.injected", cwd);
       }
     },
@@ -1700,7 +1771,8 @@ Log the recall to `memory/usage.log`:
         Writes four plugin files:
         - memory-load.ts   — primes MEMORY.md + scope-first principle per session
         - memory-history.ts — post-turn auto-snapshot of memory data
-        - remember-trigger.ts — throttled per-session nudge (/remember + skills-log)
+        - remember-trigger.ts — throttled per-session nudge (/remember + skills-log
+          + friction-based /reflect escalation + post-compaction /reflect ask)
         - todo-curator.ts  — tracks TODOs across sessions per corpus
         """
         _, plugins_dir = self._agent_surface_dirs(root)

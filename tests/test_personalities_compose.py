@@ -266,13 +266,16 @@ class TestFeedbackCheckPlugin:
         body = (tmp_path / ".opencode" / "plugins" / "feedback-check.ts").read_text()
         # The user-facing prompt content.
         assert "Feedback Check" in body
-        # Substance check (not just the header): the three retrospective
-        # questions must survive into the generated plugin. Substrings are
-        # kept reword-tolerant so a prompt copy-edit doesn't break the test
-        # while still catching an accidental deletion of a question.
-        assert "went wrong?" in body
-        assert "Why did it happen?" in body
-        assert "How will I avoid" in body
+        # Substance check (not just the header): the three friction tags,
+        # the notes-file target, and the jot-don't-dwell rule must survive
+        # into the generated plugin. Substrings are kept reword-tolerant
+        # so a prompt copy-edit doesn't break the test while still
+        # catching an accidental deletion.
+        assert "[tool-deadend]" in body
+        assert "[user-correction]" in body
+        assert "[assumption-broke]" in body
+        assert ".allmight/feedback/notes.md" in body
+        assert "/reflect" in body
 
     def test_feedback_check_plugin_preserves_user_authored(
         self, tmp_path: Path
@@ -291,6 +294,46 @@ class TestFeedbackCheckPlugin:
         write_init_scaffold(tmp_path)
         second = (tmp_path / ".opencode" / "plugins" / "feedback-check.ts").read_text()
         assert first == second
+
+
+class TestSessionEvidencePlugin:
+    """Project-level session-evidence OpenCode plugin (mirrors session_evidence.py)."""
+
+    def test_writes_session_evidence_plugin(self, tmp_path: Path) -> None:
+        write_init_scaffold(tmp_path)
+        plugin = tmp_path / ".opencode" / "plugins" / "session-evidence.ts"
+        assert plugin.is_file()
+
+    def test_session_evidence_plugin_carries_marker(self, tmp_path: Path) -> None:
+        write_init_scaffold(tmp_path)
+        body = (tmp_path / ".opencode" / "plugins" / "session-evidence.ts").read_text()
+        assert ALLMIGHT_MARKER_TS in body
+
+    def test_session_evidence_observes_error_parts(self, tmp_path: Path) -> None:
+        """Exact contract (verified against @opencode-ai/sdk types): the
+        plugin observes ``message.part.updated`` events on the bus and
+        filters for tool parts in the ``error`` state. It must NOT use
+        the ``tool.execute.after`` hook — that hook is not guaranteed
+        to fire on the error path."""
+        write_init_scaffold(tmp_path)
+        body = (tmp_path / ".opencode" / "plugins" / "session-evidence.ts").read_text()
+        assert '"message.part.updated"' in body
+        assert 'part?.state?.status !== "error"' in body
+        assert 'join(cwd, ".allmight", "feedback")' in body
+        # Negative: not the after-hook, and fully transparent — the
+        # plugin never injects into the chat.
+        assert '"tool.execute.after"' not in body
+        assert '"chat.message"' not in body
+        assert "output.parts.unshift" not in body
+
+    def test_session_evidence_preserves_user_authored(self, tmp_path: Path) -> None:
+        """write_guarded contract — never overwrite a user-authored file."""
+        plugins_dir = tmp_path / ".opencode" / "plugins"
+        plugins_dir.mkdir(parents=True)
+        custom = "// my own plugin\n"
+        (plugins_dir / "session-evidence.ts").write_text(custom)
+        write_init_scaffold(tmp_path)
+        assert (plugins_dir / "session-evidence.ts").read_text() == custom
 
 
 def _instance_with_role(

@@ -46,7 +46,11 @@ def _recall_body() -> str:
 # same PR so future regressions get caught.
 BODY_BUDGETS: list[tuple[str, callable, int]] = [
     ("/remember (command)", _remember_body, 109),
-    ("/reflect (command)", _reflect_body, 104),
+    # /reflect: raised 104 -> 112 (2026-07) for the new Step 0
+    # (friction-note consolidation — reads .allmight/feedback/);
+    # steps 3/4/7 were trimmed in the same change to offset most of
+    # the addition. Conscious raise, not drift.
+    ("/reflect (command)", _reflect_body, 112),
     ("/recall (command)", _recall_body, 118),
     ("/onboard (skill)", lambda: ONBOARD_SKILL_BODY, 70),
     ("/link (skill)", build_link_skill_md, 37),

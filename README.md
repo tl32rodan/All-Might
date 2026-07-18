@@ -418,15 +418,15 @@ plugins are OpenCode-only **by platform design**, not as TODOs.
 
 <!-- ALLMIGHT_COMPAT_MATRIX_START -->
 <!-- Generated from src/allmight/core/plugin_telemetry.py::PLUGIN_MANIFEST. -->
-<!-- Regenerate via `allmight plugin matrix`. -->
 | Plugin | OpenCode | Claude Code | Notes |
 |--------|----------|-------------|-------|
-| `feedback-check` | ✓ | ✓ | Per-turn feedback-check cue (renamed from 'reflection'; the periodic audit is /reflect) |
+| `feedback-check` | ✓ | ✓ | Per-turn friction-jot cue: on tool dead-end / user correction / broken assumption, append one line to .allmight/feedback/notes.md (consolidated by /reflect) |
 | `memory-history` | ✓ | ✓ | Snapshot memory data after every turn; mark L3 ingest pending if journal changed |
 | `memory-load` | ✓ | ✓ | Inject MEMORY.md + scope-first principle at session start; drain L3 ingest if pending |
 | `offline-reference` | ✓ | ✓ | Tell the agent it is air-gapped: use project_knowledge_search / memory_recall instead of web_search / context7 |
 | `remember-trigger` | ✓ | — | OpenCode-only — requires `session_idle_counter, mid_turn_message_inject` |
 | `role-load` | ✓ | ✓ | Inject the active personality's ROLE.md at session start |
+| `session-evidence` | ✓ | ✓ | Append tool-error records to .allmight/feedback/auto-<date>.jsonl — the deterministic backstop for the feedback-check jot; consolidated by /reflect |
 | `todo-curator` | ✓ | — | OpenCode-only — requires `cross_turn_plugin_state, mid_turn_message_inject` |
 <!-- ALLMIGHT_COMPAT_MATRIX_END -->
 
