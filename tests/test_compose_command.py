@@ -106,33 +106,81 @@ class TestComposeCommand:
 
 
 class TestComposeAgentsMdGuard:
-    """compose_agents_md must never clobber a user-authored AGENTS.md.
+    """compose_agents_md must never clobber user content in AGENTS.md.
 
     super-learner ships a hand-written AGENTS.md entry point (no
-    marker). Before this guard, any ``allmight init`` / ``compose``
-    run overwrote it silently — a data-loss bug.
+    marker). Before the guard, any ``allmight init`` / ``compose``
+    run overwrote it silently — a data-loss bug. The guard used to
+    *refuse* to write, which cost the project its framework primer;
+    now the composition is fenced and coexists with the user's prose.
     """
 
-    def test_compose_preserves_custom_agents_md(self, runner):
+    def test_compose_appends_fence_below_custom_agents_md(self, runner):
         with runner.isolated_filesystem():
             _init_project(runner)
             custom = "# my hand-written agents file\ndo not lose me\n"
             Path("AGENTS.md").write_text(custom)
             result = runner.invoke(main, ["compose"])
             assert result.exit_code == 0, result.output
-            assert Path("AGENTS.md").read_text() == custom
-            staged = Path(".allmight/templates/AGENTS.md")
-            assert staged.is_file(), "fresh composition must be staged for /sync"
-            assert "all-might generated" in staged.read_text()
+            merged = Path("AGENTS.md").read_text()
+            # User bytes survive verbatim, as a prefix.
+            assert merged.startswith(custom)
+            # ...and the framework primer actually lands, fenced.
+            assert "<!-- ALL-MIGHT:BEGIN -->" in merged
+            assert "<!-- ALL-MIGHT:END -->" in merged
+            assert "## About All-Might" in merged
+            # No stale whole-file conflict left for /sync to chew on.
+            assert not Path(".allmight/templates/AGENTS.md").exists()
 
-    def test_reinit_preserves_custom_agents_md(self, runner):
+    def test_reinit_appends_fence_below_custom_agents_md(self, runner):
         with runner.isolated_filesystem():
             _init_project(runner)
             custom = "# my hand-written agents file\n"
             Path("AGENTS.md").write_text(custom)
             result = runner.invoke(main, ["init", ".", "--yes"])
             assert result.exit_code == 0, result.output
+            merged = Path("AGENTS.md").read_text()
+            assert merged.startswith(custom)
+            assert "<!-- ALL-MIGHT:BEGIN -->" in merged
+
+    def test_opt_out_marker_blocks_all_writes(self, runner):
+        """``ALL-MIGHT:OFF`` outside the fence means hands off entirely."""
+        with runner.isolated_filesystem():
+            _init_project(runner)
+            custom = "<!-- ALL-MIGHT:OFF -->\n# mine alone\n"
+            Path("AGENTS.md").write_text(custom)
+            result = runner.invoke(main, ["compose"])
+            assert result.exit_code == 0, result.output
             assert Path("AGENTS.md").read_text() == custom
+            staged = Path(".allmight/templates/AGENTS.md")
+            assert staged.is_file(), "opted-out composition must stage for /sync"
+            assert "all-might generated" in staged.read_text()
+
+    def test_user_prose_around_fence_survives_recompose(self, runner):
+        """The regression this fence exists for.
+
+        A user who appends their own dedicated agent prompts to a
+        previously-composed AGENTS.md lost them on the next
+        ``allmight add`` — whole-file regeneration, no warning, no
+        staging.
+        """
+        with runner.isolated_filesystem():
+            _init_project(runner)
+            before = "# house rules\nalways check reset polarity\n\n"
+            after = "\n## My dedicated agent prompts\n- reviewer: be terse\n"
+            Path("AGENTS.md").write_text(
+                before + Path("AGENTS.md").read_text() + after
+            )
+            result = runner.invoke(main, ["add", "second", "--capabilities", "memory"])
+            assert result.exit_code == 0, result.output
+            merged = Path("AGENTS.md").read_text()
+            assert merged.startswith(before)
+            assert merged.endswith(after)
+            assert "always check reset polarity" in merged
+            assert "reviewer: be terse" in merged
+            # Exactly one fence — recompose must not stack blocks.
+            assert merged.count("<!-- ALL-MIGHT:BEGIN -->") == 1
+            assert merged.count("<!-- ALL-MIGHT:END -->") == 1
 
     def test_markered_agents_md_still_recomposed(self, runner):
         with runner.isolated_filesystem():

@@ -8,7 +8,10 @@ Code consumes the same project without forking the source of truth:
 * **Markdown surface** — ``.claude/commands`` and ``.claude/skills``
   become directory-level symlinks into ``.opencode/``. New
   commands/skills written by capability templates show up on both
-  sides without re-running anything.
+  sides without re-running anything. If the user already owns a real
+  ``.claude/commands/`` directory, we fall back to per-entry symlinks
+  inside it (their files always win) rather than dropping the whole
+  Claude-side surface.
 
 * **Agent context** — root ``CLAUDE.md`` ``@``-imports the same
   ``AGENTS.md`` and ``MEMORY.md`` that OpenCode reads directly.
@@ -34,6 +37,7 @@ initializer, alongside its OpenCode plugin sibling.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from .safe_write import write_guarded
@@ -512,28 +516,95 @@ def _write_root_claude_md(project_root: Path) -> None:
     write_guarded(project_root / "CLAUDE.md", _CLAUDE_MD_CONTENT, _CLAUDE_MD_MARKER)
 
 
-def _write_claude_dir_symlinks(project_root: Path) -> None:
-    """Project ``.opencode/{commands,skills}`` into ``.claude/`` via dir symlinks.
+def _write_claude_dir_symlinks(project_root: Path) -> list[str]:
+    """Project ``.opencode/{commands,skills}`` into ``.claude/``.
 
-    Directory-level (not per-file) so any later command/skill written
-    by a capability template appears on the Claude Code side without
-    re-running anything. Idempotent — already-correct symlinks are
-    left alone, and an existing non-symlink path is preserved (the
-    user wrote it, we don't touch).
+    Preferred shape is a **directory symlink** (``.claude/commands ->
+    ../.opencode/commands``) so any later command/skill written by a
+    capability template appears on the Claude Code side without
+    re-running anything. Idempotent — an already-correct symlink is left
+    alone.
+
+    When the user already has a real ``.claude/commands/`` (or
+    ``skills/``) directory we cannot take the path over, and their
+    directory is never deleted. Previously we simply gave up there,
+    which silently cost the user *the entire All-Might slash-command
+    surface* on Claude Code — no symlink, no warning, no staging. Now we
+    fall back to **per-entry relative symlinks inside their directory**:
+    each ``.opencode/<kind>/<entry>`` is linked in unless a same-named
+    entry already exists (theirs wins, always).
+
+    Returns the project-relative paths of entries we could not link
+    because the user occupies the name — the caller surfaces them so
+    ``/sync`` can reconcile.
     """
     claude_dir = project_root / ".claude"
     claude_dir.mkdir(exist_ok=True)
+    clashes: list[str] = []
     for kind in ("commands", "skills"):
         link = claude_dir / kind
         target = Path("..") / ".opencode" / kind
         if link.is_symlink():
             if link.readlink() == target:
                 continue
+            # A symlink somewhere else is the user's own wiring (e.g.
+            # a shared command library). Replacing it silently discarded
+            # that wiring; only normalise a link that already resolves
+            # to our target but spells the path differently.
+            try:
+                same = link.resolve() == (claude_dir / target).resolve()
+            except OSError:
+                same = False
+            if not same:
+                clashes.append(str(link.relative_to(project_root)))
+                continue
             link.unlink()
+        elif link.is_dir():
+            clashes.extend(_link_entries_into(project_root, kind, link))
+            continue
         elif link.exists():
-            # User-authored; leave alone.
+            # A regular file at .claude/<kind> — user-authored, and not
+            # something we can merge into. Leave it exactly as-is.
+            clashes.append(str(link.relative_to(project_root)))
             continue
         link.symlink_to(target)
+    return clashes
+
+
+def _link_entries_into(project_root: Path, kind: str, dest_dir: Path) -> list[str]:
+    """Symlink each ``.opencode/<kind>/*`` entry into an existing ``dest_dir``.
+
+    Per-entry fallback for :func:`_write_claude_dir_symlinks`. Existing
+    names are never replaced — the user's file wins and is reported as a
+    clash. Symlinks we placed on an earlier run are refreshed so a
+    renamed target does not leave a dangling link.
+
+    Unlike the directory symlink, this snapshot only covers entries that
+    exist *now*: a command added by a later ``allmight add`` needs
+    another ``allmight init`` (or ``/sync``) to show up on the Claude
+    side. That is the price of the user owning the directory.
+    """
+    src_dir = project_root / ".opencode" / kind
+    if not src_dir.is_dir():
+        return []
+    clashes: list[str] = []
+    for entry in sorted(src_dir.iterdir()):
+        dst = dest_dir / entry.name
+        rel_target = Path(os.path.relpath(entry, dest_dir))
+        if dst.is_symlink():
+            if dst.readlink() == rel_target:
+                continue
+            # A symlink pointing elsewhere is the user's own wiring.
+            clashes.append(str(dst.relative_to(project_root)))
+            continue
+        if dst.exists():
+            clashes.append(str(dst.relative_to(project_root)))
+            continue
+        try:
+            dst.symlink_to(rel_target)
+        except OSError:
+            clashes.append(str(dst.relative_to(project_root)))
+    return clashes
 
 
 def _write_role_load_hook(project_root: Path) -> None:
@@ -560,14 +631,20 @@ def _write_feedback_check_hook(project_root: Path) -> None:
 
 
 def _prune_legacy_hooks(project_root: Path) -> None:
-    """Delete marker'd hook scripts the bridge no longer ships.
+    """Retire marker'd hook scripts the bridge no longer ships.
 
     Only files listed in ``_LEGACY_HOOK_SCRIPTS`` AND carrying
-    ``CLAUDE_HOOK_MARKER`` are removed — a user-authored script with
+    ``CLAUDE_HOOK_MARKER`` are touched — a user-authored script with
     the same name is preserved. Pairs with the removal-only strip in
     ``_merge_hook_config`` so neither the file nor its settings.json
     registration survives a rename.
+
+    The script is moved to ``.allmight/attic/`` rather than deleted:
+    same reasoning as ``prune_stale_plugins`` — a hook the user forked
+    from ours still carries our marker.
     """
+    from .attic import quarantine
+
     hooks_dir = project_root / ".claude" / "hooks"
     for name in _LEGACY_HOOK_SCRIPTS:
         target = hooks_dir / name
@@ -575,7 +652,7 @@ def _prune_legacy_hooks(project_root: Path) -> None:
             if target.is_file() and CLAUDE_HOOK_MARKER in target.read_text(
                 encoding="utf-8", errors="replace"
             )[:4096]:
-                target.unlink()
+                quarantine(project_root, target)
         except OSError:
             continue
 
@@ -682,7 +759,7 @@ def _write_claude_mcp_json(project_root: Path) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
-def write_claude_bridge(project_root: Path) -> None:
+def write_claude_bridge(project_root: Path) -> list[str]:
     """Project-level Claude Code bridge — call once per ``allmight init``.
 
     Writes everything that does not belong to a specific capability:
@@ -705,9 +782,19 @@ def write_claude_bridge(project_root: Path) -> None:
     The memory-load hook script itself is written by
     ``MemoryInitializer`` since its content is a Python rewrite of
     that capability's ``memory-load.ts`` plugin.
+
+    Returns the project-relative ``.claude/`` paths the user already
+    occupies, so the caller can tell them which parts of the surface
+    did not make it across (empty in the common case).
+
+    This runs at the *start* of ``allmight init``, before capability
+    templates have written their commands and skills. In the normal
+    directory-symlink shape that does not matter. In the per-entry
+    fallback it does, so :func:`refresh_claude_links` re-runs the
+    linking step once the templates are done.
     """
     _write_root_claude_md(project_root)
-    _write_claude_dir_symlinks(project_root)
+    clashes = _write_claude_dir_symlinks(project_root)
     _write_role_load_hook(project_root)
     _write_feedback_check_hook(project_root)
     _write_session_evidence_hook(project_root)
@@ -715,3 +802,18 @@ def write_claude_bridge(project_root: Path) -> None:
     _prune_legacy_hooks(project_root)
     _write_settings_json(project_root)
     _write_claude_mcp_json(project_root)
+    return clashes
+
+
+def refresh_claude_links(project_root: Path) -> list[str]:
+    """Re-run the ``.claude/`` markdown-surface projection.
+
+    Cheap and idempotent. Call after anything that adds entries to
+    ``.opencode/{commands,skills}`` so the Claude Code side keeps up —
+    required only in the per-entry fallback (the user owns a real
+    ``.claude/commands/``), where each entry is linked individually
+    instead of the whole directory.
+
+    Returns the project-relative paths we could not claim.
+    """
+    return _write_claude_dir_symlinks(project_root)

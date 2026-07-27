@@ -54,7 +54,10 @@ BODY_BUDGETS: list[tuple[str, callable, int]] = [
     ("/recall (command)", _recall_body, 118),
     ("/onboard (skill)", lambda: ONBOARD_SKILL_BODY, 70),
     ("/link (skill)", build_link_skill_md, 37),
-    ("/sync (skill)", lambda: SYNC_SKILL_BODY, 227),
+    # /sync: lowered 227 -> 178 (2026-07). The rewrite added AGENTS.md
+    # fence semantics, attic recovery and .claude/ clash handling while
+    # compressing the orphan-reconciliation and compose-conflict prose.
+    ("/sync (skill)", lambda: SYNC_SKILL_BODY, 178),
     ("/one-for-all (skill)", lambda: ONE_FOR_ALL_SKILL_BODY, 174),
     ("/all-for-one (skill)", lambda: ALL_FOR_ONE_SKILL_BODY, 226),
 ]

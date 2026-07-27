@@ -153,7 +153,9 @@ class TestInitPrunesStalePlugins(unittest.TestCase):
     Deleting (or renaming) a plugin in the framework must not leave
     the old generated ``.ts`` behind in deployed projects — stale
     files keep firing inside OpenCode forever. ``prune_stale_plugins``
-    is marker-gated so user-authored plugins are never touched.
+    is marker-gated so user-authored plugins are never touched, and
+    what it does sweep is *moved to* ``.allmight/attic/``, never
+    deleted.
     """
 
     def test_reinit_prunes_markered_unknown_plugins(self) -> None:
@@ -176,7 +178,45 @@ class TestInitPrunesStalePlugins(unittest.TestCase):
             self.assertFalse((plugins / "trajectory-writer.ts").exists())
             self.assertFalse((plugins / "usage-logger.ts").exists())
             self.assertTrue((plugins / "mine.ts").exists())
-            self.assertIn("Pruned", result.output)
+            self.assertIn("Retired", result.output)
+            self.assertIn(".allmight/attic/", result.output)
+
+    def test_retired_plugin_is_recoverable_from_attic(self) -> None:
+        """A swept plugin must be *movable back*, not gone.
+
+        The marker only proves All-Might wrote the file once. Copying
+        one of our plugins as a starting point copies the marker too,
+        so an unrecoverable delete here destroys user work.
+        """
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            runner.invoke(main, ["init", ".", "--yes"])
+            fork = Path(".opencode/plugins/memory-load-custom.ts")
+            body = "// all-might generated\n// my fork, months of tweaks\n"
+            fork.write_text(body)
+            result = runner.invoke(main, ["init", ".", "--yes"])
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertFalse(fork.exists())
+            attic = Path(".allmight/attic/.opencode/plugins/memory-load-custom.ts")
+            self.assertTrue(attic.is_file(), result.output)
+            self.assertEqual(attic.read_text(), body)
+
+    def test_repeated_retire_does_not_clobber_attic(self) -> None:
+        """Two sweeps of the same basename keep both copies."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            runner.invoke(main, ["init", ".", "--yes"])
+            fork = Path(".opencode/plugins/gone.ts")
+            fork.write_text("// all-might generated\nfirst\n")
+            runner.invoke(main, ["init", ".", "--yes"])
+            fork.write_text("// all-might generated\nsecond\n")
+            runner.invoke(main, ["init", ".", "--yes"])
+            attic_dir = Path(".allmight/attic/.opencode/plugins")
+            names = sorted(p.name for p in attic_dir.iterdir())
+            self.assertEqual(names, ["gone.ts", "gone.ts.1"])
+            bodies = {(attic_dir / n).read_text().strip().splitlines()[-1]
+                      for n in names}
+            self.assertEqual(bodies, {"first", "second"})
 
     def test_prune_never_touches_current_plugins(self) -> None:
         runner = CliRunner()

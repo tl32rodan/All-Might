@@ -149,9 +149,17 @@ def _init_callback(
 
     # Sweep generated plugins the framework no longer ships (deleted
     # or renamed since the last init). Marker-gated: user-authored
-    # plugins are never touched.
+    # plugins are never touched, and what is swept moves to
+    # ``.allmight/attic/`` rather than being deleted.
     from .core.plugin_telemetry import prune_stale_plugins
     pruned = prune_stale_plugins(root)
+
+    # Re-link the Claude Code markdown surface now that the templates
+    # have written their commands/skills. No-op in the usual
+    # directory-symlink shape; the work happens only when the user owns
+    # a real .claude/commands/ and each entry has to be linked in.
+    from .core.claude_bridge import refresh_claude_links
+    claude_clashes = refresh_claude_links(root)
 
     # Re-init on a populated project must NOT lose the existing
     # personality registry — preserve it and recompose AGENTS.md +
@@ -203,8 +211,15 @@ def _init_callback(
         click.echo(f"  Templates:  .allmight/templates/ ({file_count} files)")
         if pruned:
             click.echo(
-                "  Pruned:     "
+                "  Retired:    "
                 + ", ".join(str(p.relative_to(root)) for p in pruned)
+                + "  -> moved to .allmight/attic/ (recoverable)"
+            )
+        if claude_clashes:
+            click.echo(
+                "  Shadowed:   " + ", ".join(claude_clashes)
+                + "  -> your file wins; All-Might's is not visible to "
+                "Claude Code (run /sync)"
             )
         if existing:
             click.echo(
@@ -220,8 +235,15 @@ def _init_callback(
         click.echo(f"  Languages:  {', '.join(manifest.languages) or 'none detected'}")
         if pruned:
             click.echo(
-                "  Pruned:     "
+                "  Retired:    "
                 + ", ".join(str(p.relative_to(root)) for p in pruned)
+                + "  -> moved to .allmight/attic/ (recoverable)"
+            )
+        if claude_clashes:
+            click.echo(
+                "  Shadowed:   " + ", ".join(claude_clashes)
+                + "  -> your file wins; All-Might's is not visible to "
+                "Claude Code (run /sync)"
             )
         click.echo("")
         click.echo("What's next:")
@@ -478,6 +500,12 @@ def compose_cmd(force: bool) -> None:
     manifest = ProjectScanner().scan(root)
     compose_agents_md(root, instances, project_name=manifest.name)
     compose_role_agents(root, instances)
+
+    # Newly projected entries need linking on the Claude Code side when
+    # the user owns a real .claude/commands/ (per-entry fallback).
+    from .core.claude_bridge import refresh_claude_links
+    for shadowed in refresh_claude_links(root):
+        click.echo(f"  shadowed: {shadowed} — your file wins; run /sync")
 
     click.echo(f"Composed {len(instances)} personalities into .opencode/.")
     for c in conflicts:

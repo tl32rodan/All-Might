@@ -309,12 +309,45 @@ class TestSyncSkillContent:
         assert "enrich.md" in content
         assert "ingest.md" in content
 
-    def test_sync_skill_references_opencode_paths(self, sample_project):
-        """Sync skill only references .opencode paths, not .claude paths."""
+    def test_sync_skill_treats_claude_dir_as_generated_not_legacy(
+        self, sample_project,
+    ):
+        """`.claude/` is a generated bridge, not leftover cruft.
+
+        The body used to end with "any legacy `.claude/` directory can
+        be deleted manually once sync is complete" — following that
+        removes settings.json, the hook scripts and the dir symlinks,
+        i.e. the entire Claude Code surface. It must instead teach the
+        clash case (user owns a real `.claude/commands/`).
+        """
         from allmight.capabilities.database.sync_skill_content import SYNC_SKILL_BODY
         assert ".opencode/commands" in SYNC_SKILL_BODY
-        assert ".claude/commands" not in SYNC_SKILL_BODY
-        assert ".claude/hooks" not in SYNC_SKILL_BODY
+        assert "legacy `.claude/`" not in SYNC_SKILL_BODY
+        assert "`.claude/commands`" in SYNC_SKILL_BODY
+        assert "Do not delete it." in SYNC_SKILL_BODY
+
+    def test_sync_skill_covers_attic_recovery(self, sample_project):
+        """Retired files land in `.allmight/attic/`; the agent has to be
+        able to tell the user how to get one back."""
+        from allmight.capabilities.database.sync_skill_content import SYNC_SKILL_BODY
+        assert ".allmight/attic/" in SYNC_SKILL_BODY
+        assert "never deletes" in SYNC_SKILL_BODY
+
+    def test_sync_skill_teaches_agents_md_fence(self, sample_project):
+        """AGENTS.md is shared: the agent must know only the fenced
+        region is ours, and that `.prev` is a recoverable backup."""
+        from allmight.capabilities.database.sync_skill_content import SYNC_SKILL_BODY
+        assert "<!-- ALL-MIGHT:BEGIN -->" in SYNC_SKILL_BODY
+        assert "<!-- ALL-MIGHT:END -->" in SYNC_SKILL_BODY
+        assert "AGENTS.md.prev" in SYNC_SKILL_BODY
+
+    def test_sync_skill_marker_gates_command_removal(self, sample_project):
+        """`remove.txt` must never be applied blind — the same filename
+        may be a command the user wrote."""
+        from allmight.capabilities.database.sync_skill_content import SYNC_SKILL_BODY
+        idx = SYNC_SKILL_BODY.index("remove.txt")
+        section = " ".join(SYNC_SKILL_BODY[idx:idx + 600].split()).replace("*", "")
+        assert "only if it carries our marker" in section
 
 
 # ======================================================================
@@ -324,8 +357,9 @@ class TestSyncSkillContent:
 
 class TestDeprecatedCommandCleanup:
     """The retired ``/enrich`` and ``/ingest`` slash commands must not
-    survive a re-init, regardless of whether they were left over from
-    an older install or hand-authored."""
+    survive a re-init **when they are ours** — a marker-carrying
+    leftover from an older writable-mode install. A hand-authored file
+    at the same path belongs to the user and is preserved."""
 
     def test_mode_is_always_read_only(self, sample_project):
         """All-Might no longer has a writable mode — ``.allmight/mode``
@@ -345,24 +379,51 @@ class TestDeprecatedCommandCleanup:
         assert "ingest.md" in content
 
     def test_first_init_cleans_legacy_enrich(self, sample_project):
-        """If a pre-existing ``enrich.md`` is on disk, init removes it."""
+        """A marker'd ``enrich.md`` left by an older install is retired."""
         _full_init(sample_project)
         commands = sample_project / ".opencode" / "commands"
         legacy = commands / "enrich.md"
-        legacy.write_text("legacy content")
+        legacy.write_text("<!-- all-might generated -->\nlegacy content")
         # Re-run with --force so we hit the non-staging path.
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
         ProjectInitializer().initialize(manifest, force=True)
         assert not legacy.exists()
+        attic = (
+            sample_project / ".allmight" / "attic"
+            / ".opencode" / "commands" / "enrich.md"
+        )
+        assert attic.is_file(), "retired command must be recoverable"
 
     def test_first_init_cleans_legacy_ingest(self, sample_project):
-        """If a pre-existing ``ingest.md`` is on disk, init removes it."""
+        """A marker'd ``ingest.md`` left by an older install is retired."""
         _full_init(sample_project)
         commands = sample_project / ".opencode" / "commands"
         legacy = commands / "ingest.md"
-        legacy.write_text("legacy content")
+        legacy.write_text("<!-- all-might generated -->\nlegacy content")
         scanner = ProjectScanner()
         manifest = scanner.scan(sample_project)
         ProjectInitializer().initialize(manifest, force=True)
         assert not legacy.exists()
+
+    @pytest.mark.parametrize("name", ["enrich.md", "ingest.md"])
+    def test_user_authored_retired_name_is_never_removed(
+        self, sample_project, name,
+    ):
+        """A user's own ``enrich.md`` / ``ingest.md`` is not ours to delete.
+
+        The retirement sweep used to ``unlink()`` these names
+        unconditionally, with no marker check — so a first-time
+        ``allmight init`` inside a project that already had
+        ``.opencode/commands/enrich.md`` destroyed it.
+        """
+        _full_init(sample_project)
+        commands = sample_project / ".opencode" / "commands"
+        mine = commands / name
+        body = f"# my own {name}, nothing to do with All-Might\n"
+        mine.write_text(body)
+        scanner = ProjectScanner()
+        manifest = scanner.scan(sample_project)
+        ProjectInitializer().initialize(manifest, force=True)
+        assert mine.is_file()
+        assert mine.read_text() == body
