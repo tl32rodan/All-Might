@@ -641,10 +641,15 @@ class TestAgentsMdFrameworkPrimer:
         personality_body = content.index("Standard-cell characterisation")
         assert primer_anchor < personalities_anchor < personality_body
 
-    def test_marker_stays_on_first_line(self, tmp_path: Path) -> None:
-        """Re-init safety: the file is recognised as All-Might-owned by
-        ``write_guarded`` / conflict staging only if the marker is on
-        line 1. Don't let the primer push it out of place."""
+    def test_marker_stays_at_the_head_of_the_fenced_block(
+        self, tmp_path: Path,
+    ) -> None:
+        """Re-init safety: ownership detection reads the *head* of a file
+        (``_looks_owned`` takes the first 4 KiB, ``/sync`` reads "the
+        first lines"). The marker must therefore stay at the top of our
+        block — right under the fence opener — and not get pushed down
+        by the primer."""
         compose_agents_md(tmp_path, [], project_name="demo")
-        first_line = (tmp_path / "AGENTS.md").read_text().splitlines()[0]
-        assert first_line == "<!-- all-might generated -->"
+        lines = (tmp_path / "AGENTS.md").read_text().splitlines()
+        assert lines[0] == "<!-- ALL-MIGHT:BEGIN -->"
+        assert lines[1] == "<!-- all-might generated -->"

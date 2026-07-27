@@ -60,18 +60,8 @@ class ProjectInitializer:
             self._install_link_skill(root, force=force)
 
             allmight_dir.mkdir(exist_ok=True)
-            templates_dir = allmight_dir / "templates"
-            if templates_dir.exists():
-                import shutil
-                shutil.rmtree(templates_dir)
-            # Clean up legacy enrich.md / ingest.md if they survived
-            # from an older writable-mode install. The slash commands
-            # are gone; the files should not linger.
-            commands_dir = root / ".opencode" / "commands"
-            for stale in ("enrich.md", "ingest.md"):
-                stale_path = commands_dir / stale
-                if stale_path.exists():
-                    stale_path.unlink()
+            self._clear_own_staging(allmight_dir / "templates")
+            self._retire_legacy_commands(root)
 
         (allmight_dir / "mode").write_text("read-only")
 
@@ -110,6 +100,72 @@ class ProjectInitializer:
             self._stage_templates_role(root, manifest)
         else:
             self._write_role_md(root, manifest, force=force)
+
+    #: Staged files this capability owns. Cleared after a non-staging
+    #: write (they are obsolete once the real files were rewritten from
+    #: the same source). Everything else under ``.allmight/templates/``
+    #: — other capabilities' staging, ``conflicts.yaml``,
+    #: ``AGENTS.md.prev``, per-personality ``ROLE.md`` staging — belongs
+    #: to someone else and is left alone.
+    _OWN_STAGED_FILES = (
+        "commands/search.md",
+        "claude-md-section.md",
+        "remove.txt",
+    )
+
+    #: Slash commands the framework retired. Removed from the live
+    #: surface only when they still carry our marker; a same-named file
+    #: the user wrote is theirs.
+    _RETIRED_COMMANDS = ("enrich.md", "ingest.md")
+
+    def _clear_own_staging(self, templates_dir: Path) -> None:
+        """Drop this capability's staged copies after a direct write.
+
+        Previously this was ``shutil.rmtree(templates_dir)`` — which
+        deleted *every* capability's staging plus ``conflicts.yaml``,
+        i.e. a database-owned code path reaching outside its share (see
+        CLAUDE.md → "A capability template owns its directory, nothing
+        else").
+        """
+        if not templates_dir.is_dir():
+            return
+        for rel in self._OWN_STAGED_FILES:
+            target = templates_dir / rel
+            if target.is_file():
+                target.unlink()
+        # Tidy up directories our own files emptied; never recursive.
+        for parent in (templates_dir / "commands", templates_dir):
+            try:
+                if parent.is_dir() and not any(parent.iterdir()):
+                    parent.rmdir()
+            except OSError:
+                pass
+
+    def _retire_legacy_commands(self, root: Path) -> None:
+        """Quarantine retired slash commands that are still ours.
+
+        ``/enrich`` and ``/ingest`` were removed from the agent surface
+        (the knowledge graph is read-only to the agent; SMAK handles
+        ingest out-of-band). Leftover copies from an older writable-mode
+        install must not keep loading — but this used to ``unlink()``
+        unconditionally, so a user's *own* ``.opencode/commands/enrich.md``
+        was destroyed by a first-time ``allmight init`` in a populated
+        project. Marker-gate it, and quarantine rather than delete.
+        """
+        from ...core.attic import quarantine
+
+        commands_dir = root / ".opencode" / "commands"
+        for stale in self._RETIRED_COMMANDS:
+            stale_path = commands_dir / stale
+            if not stale_path.is_file():
+                continue
+            try:
+                head = stale_path.read_text(encoding="utf-8", errors="replace")[:4096]
+            except OSError:
+                continue
+            if ALLMIGHT_MARKER_MD not in head:
+                continue  # user-authored; not ours to remove
+            quarantine(root, stale_path)
 
     def _create_metadata(self, root: Path, manifest: ProjectManifest) -> None:
         """Create database/ inside the instance dir.
@@ -482,7 +538,11 @@ JSON output with a `results` array. Each result contains:
         """Splice the corpus section into root AGENTS.md (legacy path)."""
         agents_md = root / "AGENTS.md"
         if agents_md.is_symlink():
-            agents_md.unlink()
+            # Never just drop the user's link — park it in the attic so
+            # the target (and the wiring) stay recoverable.
+            from ...core.attic import quarantine
+
+            quarantine(root, agents_md)
 
         marker = "<!-- ALL-MIGHT -->"
         body = self._role_md_body(manifest)

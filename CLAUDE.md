@@ -127,10 +127,13 @@ rejected before and will be rejected again.
   through process memory.
 - **One root `AGENTS.md`, composed from per-personality `ROLE.md`.**
   `compose_agents_md` stitches every personality's ROLE.md into
-  the single root `AGENTS.md`. The scaffold-owned `role-load.ts`
-  plugin re-injects each ROLE.md at every `chat.message` for an
-  un-primed session — same pattern as `memory-load.ts` keeping
-  `MEMORY.md` warm after compaction.
+  the single root `AGENTS.md` — **inside the `ALL-MIGHT:BEGIN` /
+  `ALL-MIGHT:END` fence only** (`core/agents_md.py`). AGENTS.md is a
+  shared file: the user's own project instructions and dedicated
+  agent prompts live outside the fence and are never touched. The
+  scaffold-owned `role-load.ts` plugin re-injects each ROLE.md at
+  every `chat.message` for an un-primed session — same pattern as
+  `memory-load.ts` keeping `MEMORY.md` warm after compaction.
 - **Two-stage bootstrap (Track A).** `allmight init` is a CLI
   scaffold — no personality is created at install time. It writes
   `.opencode/` globals, `AGENTS.md`, `MEMORY.md`, an empty registry,
@@ -245,7 +248,7 @@ truth. The mirror has three layers, each with a different sync model:
 
 | Asset | Source of truth | Mirror | Sync model |
 |---|---|---|---|
-| Slash commands | `.opencode/commands/*.md` | `.claude/commands` (dir symlink) | Symlink — adding a new command is automatically visible on both sides |
+| Slash commands | `.opencode/commands/*.md` | `.claude/commands` (dir symlink) | Symlink — adding a new command is automatically visible on both sides. If the user owns a real `.claude/commands/`, falls back to **per-entry** symlinks inside it (snapshot; needs `init`/`compose` to pick up later additions) |
 | Skills | `.opencode/skills/<name>/` | `.claude/skills` (dir symlink) | Same |
 | Agent context | `AGENTS.md`, `MEMORY.md`, `personalities/*/ROLE.md` | root `CLAUDE.md` (`@`-import shim) | Single set of files, both editors read |
 | Runtime hooks | `.opencode/plugins/*.ts` | `.claude/hooks/*.py` + `.claude/settings.json` | **Hand-mirrored** — updates to one require updates to the other |
@@ -643,6 +646,33 @@ is a regression even if tests pass.
   user-authored on re-init and preserved. **Skipping the marker
   is a silent data-loss bug** — the file gets clobbered or, worse,
   silently divorced from re-init flow.
+- **`allmight init` is additive: it never deletes.** Three rules,
+  pinned end-to-end by `tests/test_init_is_additive.py`:
+  1. **No unconditional `unlink()` / `rmtree()` on a path the user
+     can occupy.** Marker-gate every removal. `.opencode/commands/
+     enrich.md` shipped without the gate and destroyed a user's own
+     command on first init; the whole-dir `rmtree` of
+     `.allmight/templates/` (from inside the *database* capability)
+     took other capabilities' staging and `conflicts.yaml` with it.
+     A capability clears only the staged files it wrote.
+  2. **Retiring is a move, not a delete.** Files the framework
+     stopped shipping go to `.allmight/attic/<original path>` via
+     `core/attic.py::quarantine`. The marker only proves All-Might
+     wrote the file *once* — a user's fork of one of our plugins
+     carries it too.
+  3. **Shared files get a fence, not whole-file regeneration.**
+     Root `AGENTS.md` holds the user's own instructions alongside our
+     composition; only the region between `<!-- ALL-MIGHT:BEGIN -->`
+     and `<!-- ALL-MIGHT:END -->` is ours (`core/agents_md.py`).
+     Everything outside survives byte-for-byte, a hand-written
+     AGENTS.md gets the block *appended* rather than being rejected,
+     and `<!-- ALL-MIGHT:OFF -->` opts the file out entirely. Never
+     go back to `write_guarded(AGENTS.md, whole_file)` — the marker
+     does not prove the body is still ours.
+
+  Corollary for new code that must make something disappear: if you
+  cannot marker-gate it, quarantine it; if you cannot quarantine it,
+  it is not init's call to make — stage it for `/sync`.
 - **Re-init (`staging=True`) skips every skill write except `/sync`.**
   When a capability ships a skill via `install_skill`, its
   `initialize_globals` must `if staging: return` before the install

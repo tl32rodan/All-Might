@@ -54,10 +54,10 @@ def emit_heartbeat(
 
 
 def prune_stale_plugins(project_root: Path) -> list[Path]:
-    """Delete All-Might-generated plugins that are no longer shipped.
+    """Retire All-Might-generated plugins that are no longer shipped.
 
     Sweeps ``.opencode/plugins/*.ts`` and the re-init staging dir
-    ``.allmight/templates/*.ts``. A file is pruned only when BOTH hold:
+    ``.allmight/templates/*.ts``. A file is retired only when BOTH hold:
 
     * its basename is not ``<name>.ts`` for any name in
       ``KNOWN_OPENCODE_PLUGINS`` (i.e. the framework stopped shipping
@@ -65,10 +65,17 @@ def prune_stale_plugins(project_root: Path) -> list[Path]:
     * its head carries ``ALLMIGHT_MARKER_TS`` (we wrote it; a
       user-authored plugin without the marker is never touched).
 
-    Returns the deleted paths so ``allmight init`` can report them.
+    Retired files are **moved to ``.allmight/attic/``**, not deleted —
+    the marker only proves All-Might wrote the file once. Copying one of
+    our plugins as a template for your own copies the marker too, and
+    that fork used to vanish on the next ``allmight init`` with no way
+    back. See :mod:`allmight.core.attic`.
+
+    Returns the *original* paths so ``allmight init`` can report them.
     Errors are swallowed per-file — a prune failure must never break
     init.
     """
+    from .attic import quarantine
     from .markers import ALLMIGHT_MARKER_TS
 
     current = {f"{name}.ts" for name in KNOWN_OPENCODE_PLUGINS}
@@ -85,11 +92,12 @@ def prune_stale_plugins(project_root: Path) -> list[Path]:
                 continue
             try:
                 head = entry.read_text(encoding="utf-8", errors="replace")[:4096]
-                if ALLMIGHT_MARKER_TS in head:
-                    entry.unlink()
-                    pruned.append(entry)
             except OSError:
                 continue
+            if ALLMIGHT_MARKER_TS not in head:
+                continue
+            if quarantine(project_root, entry) is not None:
+                pruned.append(entry)
     return pruned
 
 

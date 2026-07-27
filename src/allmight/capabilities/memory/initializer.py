@@ -1528,7 +1528,11 @@ Log the recall to `memory/usage.log`:
         """Splice the memory section into root AGENTS.md (legacy path)."""
         agents_md = root / "AGENTS.md"
         if agents_md.is_symlink():
-            agents_md.unlink()
+            # Never just drop the user's link — park it in the attic so
+            # the target (and the wiring) stay recoverable.
+            from ...core.attic import quarantine
+
+            quarantine(root, agents_md)
 
         marker = "<!-- ALL-MIGHT-MEMORY -->"
         body = self._role_md_body()

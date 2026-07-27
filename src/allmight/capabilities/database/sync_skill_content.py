@@ -2,8 +2,10 @@
 
 Installed when ``allmight init`` detects a re-init (existing
 ``.allmight/`` dir).  Teaches the agent how to reconcile staged
-templates with existing files, and how to resolve compose conflicts
-where the user authored a file All-Might also wanted to write.
+templates with existing files, how to recover anything ``init``
+retired into ``.allmight/attic/``, and how to resolve compose
+conflicts where the user authored a file All-Might also wanted to
+write.
 """
 
 SYNC_SKILL_BODY = """\
@@ -14,185 +16,154 @@ SYNC_SKILL_BODY = """\
 
 ## When to use
 
-- After `allmight init` on an already-initialized project
-  (templates are staged in `.allmight/templates/`)
-- After `allmight init` reports `.opencode/` **compose conflicts**
-  (manifest at `.allmight/templates/conflicts.yaml`) — you authored a
-  file All-Might also wanted to write
-- To register **orphan personalities** — directories under
-  `personalities/<name>/` that have a `ROLE.md` but aren't listed in
-  `.allmight/personalities.yaml` (e.g. copied in from another project
-  or created out-of-band)
+- After `allmight init` on an already-initialized project (templates
+  staged in `.allmight/templates/`)
+- After init reports **compose conflicts** — you authored a file
+  All-Might also wanted to write (`.allmight/templates/conflicts.yaml`)
+- After init reports **retired** files (moved to `.allmight/attic/`)
+- After init warns that a `.claude/` entry you own shadows ours
+- To register **orphan personalities** — a `personalities/<name>/`
+  with a `ROLE.md` but no row in `.allmight/personalities.yaml`
+  (copied in from another project, or created out-of-band)
 
-## How it works
+## Template sync
 
-### Template sync (after re-init)
+1. List `.allmight/templates/` and map each staged file to its
+   working location (table at the end of this skill).
+2. **Check ownership before merging.** Read the working file's first
+   lines and look for `<!-- all-might generated -->` (markdown) or
+   `// all-might generated` (TypeScript). No marker means the user
+   authored it — do **not** overwrite or merge; name the file and ask
+   whether to keep theirs or take ours.
+3. For files that are ours (or absent): identical → copy the staged
+   version over; meaningfully customised → merge, keeping the user's
+   changes, and summarise what you did.
+4. Delete `.allmight/templates/` once every staged file is resolved.
 
-1. List all files in `.allmight/templates/`
-2. For each staged file, find the corresponding working file:
-   - `.allmight/templates/commands/search.md` → `.opencode/commands/search.md`
-   - `.allmight/templates/agents/<name>.md` → `.opencode/agents/<name>.md`
-   - `.allmight/templates/{claude,memory}-md-section.md` → `AGENTS.md` (within the matching `<!-- ALL-MIGHT* -->` markers)
-   - `.allmight/templates/AGENTS.md` → `AGENTS.md` (whole-file: user-authored root — keep theirs, offer a diff)
-   - `.allmight/templates/opencode.json` → `.opencode/opencode.json`
-   - `.allmight/templates/memory-load.ts` → `.opencode/plugins/memory-load.ts`
-3. **Verify the working file is All-Might-owned before merging.**
-   Read the working file's first lines and check for one of:
-   - `<!-- all-might generated -->` (markdown — commands, SKILL.md)
-   - `// all-might generated` (TypeScript — plugins)
+## AGENTS.md — fence semantics
 
-   If the working file exists **without** that marker, the user authored
-   it (or it pre-existed before All-Might). Do **NOT** merge or
-   overwrite — surface a warning naming the file and ask the user
-   whether to delete/rename their version or skip this template.
-4. If the working file is ours (or doesn't exist), compare staged vs. working:
-   - **Identical or nearly identical**: overwrite working file with staged version
-   - **User has meaningful customizations**: merge — keep user customizations,
-     incorporate new template changes. Present a summary to the user.
-5. For AGENTS.md section files (`claude-md-section.md`, `memory-md-section.md`):
-   - Replace only the content between the markers (`<!-- ALL-MIGHT -->`, `<!-- ALL-MIGHT-MEMORY -->`)
-   - Never touch content outside the markers
-6. After all files are merged, delete `.allmight/templates/`
+All-Might owns **only** the region between `<!-- ALL-MIGHT:BEGIN -->`
+and `<!-- ALL-MIGHT:END -->`. Everything outside it is the user's and
+survives every recompose automatically.
 
-### Deprecated-command cleanup
+- Never move user prose inside the fence, and never hand-edit inside
+  it: `allmight compose` regenerates that region from
+  `personalities/*/ROLE.md`. To change what it says, edit the ROLE.md.
+- `.allmight/templates/AGENTS.md` is staged **only** when the file
+  carries an `ALL-MIGHT:OFF` comment (the opt-out). Show the user the
+  staged block; if they want it live, remove the OFF marker and run
+  `allmight compose`.
+- `.allmight/templates/AGENTS.md.prev` is a backup taken when a
+  pre-fence AGENTS.md had to be rewritten. Diff it against the live
+  file, restore any of the user's prose the migration dropped (place
+  it *outside* the fence), then delete the `.prev`.
 
-1. If `.allmight/templates/remove.txt` exists:
-   - Read the list of command files to remove (one filename per line)
-   - Delete each listed file from `.opencode/commands/`
-   - Delete `remove.txt` when done
-2. The legacy slash commands `/enrich` and `/ingest` were retired —
-   delete `.opencode/commands/enrich.md` and `.opencode/commands/ingest.md`
-   if they are still present. The knowledge graph is now read-only from
-   the agent surface; SMAK CLI handles ingest/enrich out-of-band.
-3. Update the AGENTS.md ALL-MIGHT section to match the staged `claude-md-section.md`
+## Retired files (`.allmight/attic/`)
 
-### Orphan personality reconciliation
+`allmight init` never deletes. Marker-carrying files the framework no
+longer ships (renamed plugins, retired commands) are **moved** to
+`.allmight/attic/<original path>`.
 
-If `personalities/<name>/` exists on disk but isn't in
-`.allmight/personalities.yaml`, the personality is "orphaned" — the
-role-load plugin still injects its `ROLE.md` at every turn, but
-`allmight list` won't show it and `AGENTS.md` won't include it.
-This happens when a personality was copied in from another project,
-restored from `.allmight/memory-history/`, or created out-of-band.
+Show the user what is in the attic. A fork of one of our plugins keeps
+our marker, so their work can land here by mistake — if they want one
+back, move it out under a name of their own and strip the
+`// all-might generated` line so the next init leaves it alone:
 
-The reconciliation path **reuses `allmight add --force`** — there is
-no separate "reconcile" command. `add --force` is intentionally
-incremental on populated personality dirs:
+```bash
+mv .allmight/attic/.opencode/plugins/<name>.ts .opencode/plugins/<their-name>.ts
+```
 
-- `ROLE.md` carries a write-once guard at the framework level
-  (database + memory both check `if target.exists(): return` before
-  writing it; `--force` is ignored on this path) — your customised
-  ROLE.md is **never overwritten**.
-- `memory/journal/`, `memory/understanding/`, `memory/usage.log`,
-  `memory/skills-log.md`, `memory/config.yaml`, `STATUS.md` all use
-  write-once guards or `mkdir(exist_ok=True)` — existing files are
-  preserved, only missing scaffolding is created.
-- `database/<workspace>/config.yaml` and the SMAK vector index
-  `database/<workspace>/store/` are managed by SMAK out-of-band;
-  `add` does not touch them.
-- The work that actually happens: registry append, root `AGENTS.md`
-  ALL-MIGHT section recompose, and `.opencode/agents/<name>.md`
-  subagent pointer write.
+Otherwise leave the attic alone. It is a recovery bin, not clutter.
 
-To reconcile:
+## Deprecated-command cleanup
 
-1. List the registered personalities and compare against disk:
+`.allmight/templates/remove.txt` lists commands the framework retired
+— `enrich.md` and `ingest.md` (the knowledge graph is read-only from
+the agent surface; SMAK handles ingest out-of-band). For each
+filename: remove `.opencode/commands/<name>` **only if it carries our
+marker**. A same-named file the user wrote is theirs — leave it and
+say so. Delete `remove.txt` when done.
 
-   ```bash
-   allmight list
-   ls personalities/ 2>/dev/null
-   ```
+## Claude Code surface clashes
 
-   The orphans are the directories listed by the second command but
-   missing from the first.
+`.claude/commands` and `.claude/skills` are normally directory
+symlinks into `.opencode/`. When the user already owns a real
+directory there, init links our entries in one by one and reports the
+names it could not claim. For each reported path: show both versions
+and ask whether to rename theirs (then re-run `allmight init` to link
+ours) or keep theirs and drop ours. Never delete a user file here.
 
-2. For each orphan, inspect the directory to confirm it is a real
-   personality (has `ROLE.md`) and infer its capabilities from
-   subdir presence:
+Note the per-entry fallback is a snapshot — a command added later
+needs another `allmight init` to appear on the Claude Code side.
 
-   - `personalities/<name>/database/` exists → include `database`
-   - `personalities/<name>/memory/` exists → include `memory`
+## Orphan personality reconciliation
 
-   Skip directories without `ROLE.md` or without any capability
-   subdir — they aren't well-formed personalities.
+A `personalities/<name>/` missing from `.allmight/personalities.yaml`
+still gets its `ROLE.md` injected every turn, but `allmight list` and
+`AGENTS.md` ignore it. Reconciliation reuses `allmight add --force` —
+there is no separate command, and it is **additive only**: `ROLE.md`,
+memory data, `STATUS.md` and workspace configs all carry write-once
+guards, so nothing you wrote is overwritten. What it actually does is
+append the registry row, recompose `AGENTS.md`, and write
+`.opencode/agents/<name>.md`.
 
-3. Snapshot memory before applying changes, so any surprise is
-   recoverable via `allmight memory restore`:
+1. Compare `allmight list` against `ls personalities/`.
+2. For each orphan with a `ROLE.md`, infer capabilities from the
+   subdirs present (`database/`, `memory/`). Skip directories with no
+   `ROLE.md` or no capability subdir — they are not personalities.
+3. Snapshot first so any surprise is recoverable:
+   `allmight memory snapshot --message "before reconcile <names>"`
+4. Show the user the list with detected capabilities and confirm.
+5. `allmight add --force <name> --capabilities <list>` for each.
+6. Run `allmight list` and report which were registered.
 
-   ```bash
-   allmight memory snapshot --message "before reconcile <names>"
-   ```
+Reconciliation never removes registry entries whose directory is
+gone; to prune those, edit `.allmight/personalities.yaml` directly.
 
-4. Show the user the orphan list with detected capabilities and ask
-   them to confirm. If they want a different capability set for a
-   given orphan, use their answer instead of the detection.
-
-5. For each confirmed orphan, register it:
-
-   ```bash
-   allmight add --force <name> --capabilities <detected,or,user-supplied>
-   ```
-
-   This appends the registry row, recomposes `AGENTS.md`, and writes
-   `.opencode/agents/<name>.md`. Existing user content in
-   `personalities/<name>/` is preserved (see write-once guards
-   above).
-
-6. After all orphans are processed, run `allmight list` to verify
-   they now appear, and tell the user which were registered.
-
-Reconciliation is **additive only** — it never removes registry
-entries whose personality directory has been deleted. To prune
-stale entries, edit `.allmight/personalities.yaml` directly.
-
-### Compose conflicts (`.opencode/` entries you authored)
+## Compose conflicts (`.opencode/` entries you authored)
 
 `allmight init` never overwrites a `.opencode/<kind>/<name>` you wrote
-yourself. When it detects one, it leaves your file alone and stages a
-manifest at `.allmight/templates/conflicts.yaml` listing every
-skipped composition target.
-
-Each entry has:
+yourself. It leaves your file alone and lists every skipped target in
+`.allmight/templates/conflicts.yaml`:
 
 ```yaml
 compose_conflicts:
-  - instance: <project>-corpus       # who wanted to install this
-    kind: commands                   # skills | commands | plugins
+  - instance: stdcell_owner          # who wanted to install this
+    kind: commands                   # skills | commands
     basename: search.md
     dst: .opencode/commands/search.md       # what currently exists
-    source: personalities/<project>-corpus/commands/search.md
+    source: personalities/stdcell_owner/commands/search.md
     existing: file                   # file | directory | symlink-to-elsewhere
 ```
 
-To resolve each entry:
+For each entry, read both files (`dst` and `source`), then:
 
-1. Read both files: `cat <dst>` and `cat <source>`.
-2. Decide:
-   - **Keep yours, drop ours** — leave `dst` as-is and remove the
-     entry from `compose_conflicts`. Optionally delete the unused
-     `<source>` if you're sure you don't want it.
-   - **Replace yours with ours** — delete `dst`, then create a
-     relative symlink:
-     ```bash
-     ln -sfn ../../<source> <dst>
-     ```
-     (`<source>` and `<dst>` come from the manifest; the symlink
-     target is `<source>` relative to `<dst>`'s parent dir.)
-   - **Merge** — splice your customizations into the All-Might
-     version, write the merged content back to the **source** file
-     (`personalities/<instance>/<kind>/<basename>`), then replace
-     `dst` with a symlink as in the previous bullet. Future re-inits
-     will then pick up your merged content via the symlink.
-3. After resolving every entry, delete
-   `.allmight/templates/conflicts.yaml`.
+- **Keep yours** — leave `dst` alone and drop the entry.
+- **Take ours** — delete `dst`, then
+  `ln -sfn ../../<source> <dst>` (target relative to `dst`'s parent).
+- **Merge** — splice your changes into the All-Might version, write
+  the result back to the **source** file, then symlink as above so
+  future re-inits keep your merged content.
 
-`existing: symlink-to-elsewhere` means `dst` is a symlink that points
-somewhere other than the All-Might instance — likely a hand-rolled
-link to your own command file. Treat it the same as `existing: file`.
+Delete `conflicts.yaml` once every entry is resolved.
 
-`existing: directory` means `dst` is a non-All-Might directory at our
-target. Inspect its contents before deleting; only the user can
-decide whether the directory is still wanted.
+`existing: symlink-to-elsewhere` is a hand-rolled link of yours —
+treat it like `file`. `existing: directory` means a non-All-Might
+directory sits at our target; inspect it before touching anything.
+
+## Personality agent files (`.opencode/agents/<name>.md`)
+
+One OpenCode subagent file per personality, regenerated on every
+add/import. It is a thin pointer —
+`prompt: "{file:../personalities/<name>/ROLE.md}"` — so ROLE.md stays
+the single source of truth.
+
+- **You only edited ROLE.md** (typical): drop your working file and
+  take the staged version.
+- **You customised the agent file itself**: merge the staged
+  frontmatter into yours, keeping extra fields (`model`, `tools`, …),
+  and keep one `<!-- all-might generated -->` line so the next re-init
+  recognises ownership.
 
 ## File mapping reference
 
@@ -201,39 +172,21 @@ decide whether the directory is still wanted.
 | `.allmight/templates/skills/**` | `.opencode/skills/**` |
 | `.allmight/templates/commands/**` | `.opencode/commands/**` |
 | `.allmight/templates/agents/<name>.md` | `.opencode/agents/<name>.md` |
-| `.allmight/templates/{claude,memory}-md-section.md` | `AGENTS.md` (matching marker block) |
-| `.allmight/templates/AGENTS.md` | `AGENTS.md` (whole-file conflict: keep user's) |
+| `.allmight/templates/<name>.ts` | `.opencode/plugins/<name>.ts` |
 | `.allmight/templates/opencode.json` | `.opencode/opencode.json` |
-| `.allmight/templates/memory-load.ts` | `.opencode/plugins/memory-load.ts` |
+| `.allmight/templates/{claude,memory}-md-section.md` | `AGENTS.md`, inside the fence |
+| `.allmight/templates/AGENTS.md` | staged composition (opt-out only) |
+| `.allmight/templates/AGENTS.md.prev` | backup of a pre-fence `AGENTS.md` |
 | `.allmight/templates/conflicts.yaml` | manifest of skipped compose targets |
-
-### Personality agent files (`.opencode/agents/<name>.md`)
-
-All-Might emits one OpenCode subagent file per personality. The file
-itself is a thin pointer — `prompt: "{file:../personalities/<name>/ROLE.md}"` —
-so editing ROLE.md updates the agent's behaviour without re-running
-`allmight init`. The agent file is regenerated on every personality
-add / import; if you customised `.opencode/agents/<name>.md` directly
-(without ROLE.md), the fresh template is staged at
-`.allmight/templates/agents/<name>.md` and resolved here:
-
-- **Your customisation matters**: merge the staged frontmatter
-  (`description` / `mode` / `prompt`) into your working file, keeping
-  any per-agent fields you added (e.g. `model`, `temperature`,
-  `tools`). The body comment block is the source of the All-Might
-  marker — keep at least one of those `<!-- all-might generated -->`
-  lines so the next re-init recognises ownership.
-- **You only edited ROLE.md (the typical case)**: drop your working
-  file and replace it with the staged version. `ROLE.md` is the
-  single source of truth; the agent file is just a frontmatter
-  pointer.
+| `.allmight/templates/remove.txt` | commands to retire (marker-gated) |
 
 ## Important
 
-- **MEMORY.md** is never staged or overwritten — it is agent-writable
-- If workspace configs changed, rebuild the SMAK index out-of-band via
-  the `smak ingest` CLI — All-Might no longer ships an `/ingest` slash command
-- Any legacy `.claude/` directory can be deleted manually once sync is complete
+- **MEMORY.md** is never staged or overwritten — it is agent-writable.
+- `.claude/` is a **generated bridge** (settings.json, hooks, dir
+  symlinks), not legacy cruft. Do not delete it.
+- If workspace configs changed, rebuild the SMAK index out-of-band
+  via `smak ingest`.
 """
 
 SYNC_COMMAND_BODY = """\
@@ -246,7 +199,8 @@ reconcile new templates.
 
 1. Reads `.allmight/templates/` for staged template updates
 2. For each file: compares staged vs. working, merges intelligently
-3. Cleans up staging directory when done
+3. Reports anything `init` retired into `.allmight/attic/`
+4. Cleans up staging directory when done
 
 ## How to execute
 
