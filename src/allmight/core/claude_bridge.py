@@ -103,7 +103,6 @@ plugin injects via chat.message.
 NOT the periodic self-reflection surface — that is the /reflect
 command, which consolidates the accumulated notes.
 """
-import json
 import sys
 
 
@@ -114,19 +113,8 @@ __PY_HEARTBEAT_SNIPPET__
 
 def main() -> int:
     _hb("feedback_check")
-    try:
-        payload = json.load(sys.stdin) if not sys.stdin.isatty() else {}
-    except (json.JSONDecodeError, ValueError):
-        payload = {}
-    event = payload.get("hook_event_name") or "UserPromptSubmit"
-
     _hb("feedback_check.injected")
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": event,
-            "additionalContext": FEEDBACK_CHECK_PROMPT,
-        }
-    }))
+    sys.stdout.write(FEEDBACK_CHECK_PROMPT)
     return 0
 
 
@@ -169,7 +157,6 @@ web_search / context7) and to use the project_knowledge_search /
 memory_recall MCP tools instead. Same content the OpenCode
 offline-reference plugin injects via chat.message.
 """
-import json
 import sys
 
 
@@ -180,19 +167,8 @@ __PY_HEARTBEAT_SNIPPET__
 
 def main() -> int:
     _hb("offline_reference")
-    try:
-        payload = json.load(sys.stdin) if not sys.stdin.isatty() else {}
-    except (json.JSONDecodeError, ValueError):
-        payload = {}
-    event = payload.get("hook_event_name") or "UserPromptSubmit"
-
     _hb("offline_reference.injected")
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": event,
-            "additionalContext": OFFLINE_REFERENCE_NOTICE,
-        }
-    }))
+    sys.stdout.write(OFFLINE_REFERENCE_NOTICE)
     return 0
 
 
@@ -292,9 +268,18 @@ if __name__ == "__main__":
 
 
 def _role_load_hook_content() -> str:
-    from .plugin_telemetry import PY_HEARTBEAT_SNIPPET
-    return _ROLE_LOAD_HOOK_TEMPLATE.replace(
-        "__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET,
+    from .plugin_telemetry import (
+        PY_HEARTBEAT_SNIPPET,
+        ROLE_INDEX_NOTICE,
+        ROLE_OMITTED_NOTICE,
+        py_budget_snippet,
+    )
+    return (
+        _ROLE_LOAD_HOOK_TEMPLATE
+        .replace("__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET)
+        .replace("__PY_BUDGET_SNIPPET__", py_budget_snippet())
+        .replace("__ROLE_INDEX_NOTICE__", ROLE_INDEX_NOTICE)
+        .replace("__ROLE_OMITTED_NOTICE__", ROLE_OMITTED_NOTICE)
     )
 
 
@@ -304,14 +289,22 @@ _ROLE_LOAD_HOOK_TEMPLATE = '''\
 #
 # Mirror of .opencode/plugins/role-load.ts. Changes here MUST land in
 # the .ts plugin too; see All-Might CLAUDE.md -> Editor Compatibility.
-"""Role-load hook for Claude Code (SessionStart, PreCompact).
+"""Role-load hook for Claude Code (SessionStart, every source).
 
-Reads every ``personalities/*/ROLE.md`` and emits the concatenated
-content as ``additionalContext`` so the agent has each role primed
-before the first user turn — same role-stability guarantee the
-OpenCode role-load plugin gives via ``chat.message`` injection.
+Reads every ``personalities/*/ROLE.md`` and writes the concatenated
+content to stdout so the agent has each role primed before the first
+user turn — same role-stability guarantee the OpenCode role-load
+plugin gives via ``chat.message`` injection.
+
+Registered on SessionStart with no matcher, so it fires for every
+source including ``compact``; that is what re-primes roles after a
+compaction. Plain stdout is the documented context channel for
+SessionStart — ``hookSpecificOutput`` has no section for this event
+and a mis-shaped object is absorbed as a non-blocking error.
+
+Output is capped at HOOK_OUTPUT_BUDGET; past it the roles degrade to a
+read-on-demand index rather than being silently truncated.
 """
-import json
 import os
 import sys
 from pathlib import Path
@@ -319,10 +312,62 @@ from pathlib import Path
 
 __PY_HEARTBEAT_SNIPPET__
 
+__PY_BUDGET_SNIPPET__
+
+ROLE_INDEX_NOTICE = "__ROLE_INDEX_NOTICE__"
+ROLE_OMITTED_NOTICE = "__ROLE_OMITTED_NOTICE__"
+
+
+def _summarise(body, name):
+    """First meaningful prose line of a ROLE.md, for the index fallback.
+
+    Prefers prose over headings: a leading ``# <name>`` just repeats
+    the name we already print. Falls back to a heading when the file
+    is headings-only.
+    """
+    fallback = ""
+    for raw in body.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("<!--"):
+            continue
+        if line.startswith("#"):
+            stripped = line.lstrip("#").strip()
+            if stripped and stripped != name and not fallback:
+                fallback = stripped[:120]
+            continue
+        return line[:120]
+    return fallback
+
+
+def _build_index(roles):
+    """Render name + summary + path per role, dropping the tail if needed."""
+    header = [ROLE_INDEX_NOTICE, ""]
+    lines = []
+    for name, body in roles:
+        summary = _summarise(body, name)
+        lines.append(
+            "- {0} — personalities/{0}/ROLE.md{1}".format(
+                name, ": " + summary if summary else "",
+            )
+        )
+    kept = len(lines)
+    while kept > 0:
+        omitted = len(lines) - kept
+        tail = (
+            [ROLE_OMITTED_NOTICE.replace("__N__", str(omitted))]
+            if omitted else []
+        )
+        text = "\\n".join(header + lines[:kept] + tail).strip()
+        if len(text) <= HOOK_OUTPUT_BUDGET:
+            return text
+        kept -= 1
+    return ROLE_INDEX_NOTICE
+
+
 def main() -> int:
     _hb("role_load")
     cwd = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
-    parts: list[str] = []
+    roles = []
     personalities_dir = cwd / "personalities"
     if personalities_dir.is_dir():
         for entry in sorted(personalities_dir.iterdir()):
@@ -330,30 +375,25 @@ def main() -> int:
             if not role.is_file():
                 continue
             try:
-                body = role.read_text(encoding="utf-8")
+                roles.append((entry.name, role.read_text(encoding="utf-8")))
             except OSError:
                 continue
-            parts.append(f"--- Role: {entry.name} (ROLE.md) ---")
-            parts.append(body.rstrip())
-            parts.append(f"--- End Role: {entry.name} ---")
-            parts.append("")
+    parts = []
+    for name, body in roles:
+        parts.append(f"--- Role: {name} (ROLE.md) ---")
+        parts.append(body.rstrip())
+        parts.append(f"--- End Role: {name} ---")
+        parts.append("")
     text = "\\n".join(parts).strip()
     if not text:
         return 0
-
-    try:
-        payload = json.load(sys.stdin) if not sys.stdin.isatty() else {}
-    except (json.JSONDecodeError, ValueError):
-        payload = {}
-    event = payload.get("hook_event_name") or "SessionStart"
+    if len(text) > HOOK_OUTPUT_BUDGET:
+        # Full bodies do not fit. Degrade to an index so every role
+        # stays discoverable, rather than dropping the tail silently.
+        text = _build_index(roles)
 
     _hb("role_load.injected")
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": event,
-            "additionalContext": text,
-        }
-    }))
+    sys.stdout.write(text)
     return 0
 
 
@@ -405,15 +445,36 @@ _HOOK_SCRIPTS = (
 # next user prompt.
 _LEGACY_HOOK_SCRIPTS = ("reflection.py",)
 
+# Events this bridge used to own. Our commands are stripped from these
+# on every bridge write and never re-added — the event-level analogue
+# of _LEGACY_HOOK_SCRIPTS. Without this, dropping an event from
+# _settings_payload() would strand our registration in every project
+# that was initialised while we still owned it, and a dangling
+# registration is the OMO failure cascade CLAUDE.md warns about.
+#
+# PreCompact: retired 2026-08. It fired *before* compaction, so
+# anything it injected was part of the context compaction was about to
+# summarise away — the opposite end of the operation from the OpenCode
+# side, which re-primes *after* (session.compacted marks the session
+# un-primed, the next chat.message re-injects). SessionStart already
+# covers the post-compaction case: its documented sources are
+# startup|resume|clear|compact|fork and we register it with no matcher,
+# so the correct re-prime was always in place and PreCompact was
+# redundant as well as mistimed. See
+# docs/compaction-reprime-proposal.md.
+_LEGACY_HOOK_EVENTS = ("PreCompact",)
+
 
 def _settings_payload() -> dict:
     """Return the hook config block this bridge owns.
 
     Returned shape matches what ``.claude/settings.json`` expects under
-    the top-level ``"hooks"`` key. ``SessionStart`` and ``PreCompact``
-    re-prime memory + role context; ``Stop`` triggers the per-turn
-    memory-history snapshot; ``UserPromptSubmit`` injects the
-    feedback-check prompt before each user turn.
+    the top-level ``"hooks"`` key. ``SessionStart`` re-primes memory +
+    role context — with no matcher it fires for every source, including
+    ``compact``, which is what makes the post-compaction re-prime work;
+    ``Stop`` triggers the per-turn memory-history snapshot;
+    ``UserPromptSubmit`` injects the feedback-check prompt before each
+    user turn.
     """
     def _block(scripts: tuple[str, ...]) -> list:
         return [{"hooks": [
@@ -423,8 +484,8 @@ def _settings_payload() -> dict:
 
     reload_block = _block(_RELOAD_SCRIPTS)
     return {
+        # No matcher -> every source, including "compact".
         "SessionStart": reload_block,
-        "PreCompact": reload_block,
         "Stop": _block(_TURN_END_SCRIPTS),
         "UserPromptSubmit": _block(_USER_PROMPT_SCRIPTS),
         "PostToolUse": _block(_TOOL_RESULT_SCRIPTS),
@@ -459,7 +520,21 @@ def _merge_hook_config(existing: dict, owned: dict) -> dict:
         existing_blocks = hooks_section.get(event)
         if not isinstance(existing_blocks, list):
             continue
-        cleaned = _strip_commands(existing_blocks, legacy_commands)
+        # On a retired event, our own commands go too — otherwise
+        # dropping the event from _settings_payload() would leave the
+        # registration behind forever. User-authored hooks on the same
+        # event survive: _strip_commands filters by exact command.
+        strip = (
+            drop_commands
+            if event in _LEGACY_HOOK_EVENTS
+            else legacy_commands
+        )
+        cleaned = _strip_commands(existing_blocks, strip)
+        if not cleaned and event in _LEGACY_HOOK_EVENTS:
+            # Nothing of the user's left under a retired event — drop
+            # the key rather than leaving an empty list behind.
+            del hooks_section[event]
+            continue
         hooks_section[event] = cleaned
     for event, blocks in owned.items():
         existing_blocks = hooks_section.get(event)

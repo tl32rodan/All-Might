@@ -7,8 +7,9 @@ truth. These tests pin the contract:
 * directory-level symlinks (so new commands/skills written by any
   capability template flow through to ``.claude/`` automatically),
 * root ``CLAUDE.md`` is a thin ``@``-import shim,
-* ``.claude/settings.json`` registers our hooks for SessionStart and
-  PreCompact and merges with user-authored hooks instead of clobbering,
+* ``.claude/settings.json`` registers our hooks on SessionStart (no
+  matcher, so every source including ``compact``) and merges with
+  user-authored hooks instead of clobbering,
 * ``.claude/hooks/role_load.py`` is generated and executable.
 """
 
@@ -21,6 +22,7 @@ import sys
 import pytest
 
 from allmight.core.claude_bridge import (
+    _hook_command,
     _merge_hook_config,
     _settings_payload,
     write_claude_bridge,
@@ -100,10 +102,11 @@ class TestWriteClaudeBridge:
         assert "Feedback Check" in body
         assert "[tool-deadend]" in body
         assert ".allmight/feedback/notes.md" in body
-        # Hook contract: emits hookSpecificOutput with additionalContext.
-        assert "hookSpecificOutput" in body
-        assert "additionalContext" in body
-        # Defaults to UserPromptSubmit when no event is given by stdin.
+        # Hook contract: plain stdout is the documented context channel
+        # for UserPromptSubmit. Negative assertion — hookSpecificOutput
+        # has no section for this event and is absorbed silently.
+        assert "sys.stdout.write(FEEDBACK_CHECK_PROMPT)" in body
+        assert '"hookSpecificOutput":' not in body
         assert "UserPromptSubmit" in body
 
     def test_feedback_check_hook_is_executable(self, project):
@@ -114,19 +117,22 @@ class TestWriteClaudeBridge:
         assert mode & stat.S_IXGRP
         assert mode & stat.S_IXOTH
 
-    def test_writes_settings_json_with_both_hooks(self, project):
+    def test_writes_settings_json_session_start_only(self, project):
         write_claude_bridge(project)
         settings = json.loads(
             (project / ".claude" / "settings.json").read_text()
         )
-        for event in ("SessionStart", "PreCompact"):
-            commands = [
-                h["command"]
-                for block in settings["hooks"][event]
-                for h in block["hooks"]
-            ]
-            assert any("memory_load.py" in c for c in commands)
-            assert any("role_load.py" in c for c in commands)
+        # SessionStart only — no matcher, so it fires for every source
+        # including "compact". PreCompact was retired: it fired *before*
+        # compaction, the opposite end from the OpenCode side.
+        commands = [
+            h["command"]
+            for block in settings["hooks"]["SessionStart"]
+            for h in block["hooks"]
+        ]
+        assert any("memory_load.py" in c for c in commands)
+        assert any("role_load.py" in c for c in commands)
+        assert "PreCompact" not in settings["hooks"]
 
     def test_writes_settings_json_with_user_prompt_submit(self, project):
         """Feedback-check hook is registered on UserPromptSubmit."""
@@ -237,20 +243,77 @@ class TestSettingsHookMerge:
     def test_merge_idempotent_does_not_duplicate_owned_entries(self):
         merged_once = _merge_hook_config({}, _settings_payload())
         merged_twice = _merge_hook_config(merged_once, _settings_payload())
-        for event in ("SessionStart", "PreCompact"):
-            commands = [
-                h["command"]
-                for block in merged_twice["hooks"][event]
-                for h in block["hooks"]
-            ]
-            assert sum("memory_load.py" in c for c in commands) == 1
-            assert sum("role_load.py" in c for c in commands) == 1
+        commands = [
+            h["command"]
+            for block in merged_twice["hooks"]["SessionStart"]
+            for h in block["hooks"]
+        ]
+        assert sum("memory_load.py" in c for c in commands) == 1
+        assert sum("role_load.py" in c for c in commands) == 1
+        assert "PreCompact" not in merged_twice["hooks"]
+
+
+class TestRetiredEvents:
+    """Retiring an event must clean up projects already carrying it.
+
+    _merge_hook_config only strips our commands from events it still
+    owns. Without _LEGACY_HOOK_EVENTS, dropping PreCompact from
+    _settings_payload() would strand our registration in every project
+    initialised while we still owned it — and a dangling registration
+    is the OMO failure cascade CLAUDE.md warns about (missing script ->
+    stderr fed back as the next user prompt).
+    """
+
+    def _stale_settings(self):
+        """A settings.json as written by a pre-fix All-Might."""
+        reload_block = [{"hooks": [
+            {"type": "command", "command": _hook_command("memory_load.py")},
+            {"type": "command", "command": _hook_command("role_load.py")},
+        ]}]
+        return {"hooks": {
+            "SessionStart": [dict(b) for b in reload_block],
+            "PreCompact": [dict(b) for b in reload_block],
+        }}
+
+    def test_reinit_strips_our_stale_precompact_entries(self):
+        merged = _merge_hook_config(self._stale_settings(), _settings_payload())
+        # Nothing of ours left under the retired event; the key itself
+        # goes rather than lingering as an empty list.
+        assert "PreCompact" not in merged["hooks"]
+        # And the live event still carries exactly one of each.
+        commands = [
+            h["command"]
+            for block in merged["hooks"]["SessionStart"]
+            for h in block["hooks"]
+        ]
+        assert sum("memory_load.py" in c for c in commands) == 1
+        assert sum("role_load.py" in c for c in commands) == 1
+
+    def test_reinit_preserves_user_authored_precompact_hooks(self):
+        """We remove only our own commands — never the user's."""
+        stale = self._stale_settings()
+        stale["hooks"]["PreCompact"].append(
+            {"hooks": [{"type": "command", "command": "echo my-precompact"}]}
+        )
+        merged = _merge_hook_config(stale, _settings_payload())
+        commands = [
+            h["command"]
+            for block in merged["hooks"]["PreCompact"]
+            for h in block["hooks"]
+        ]
+        assert commands == ["echo my-precompact"]
+        assert not any("role_load.py" in c for c in commands)
+
+    def test_cleanup_is_idempotent(self):
+        once = _merge_hook_config(self._stale_settings(), _settings_payload())
+        twice = _merge_hook_config(once, _settings_payload())
+        assert "PreCompact" not in twice["hooks"]
 
 
 class TestHooksRunCleanly:
     """End-to-end: the generated hook scripts produce valid JSON."""
 
-    def test_role_load_hook_returns_valid_json(self, project, tmp_path):
+    def test_role_load_hook_writes_plain_stdout(self, project, tmp_path):
         # Set up a personality with a ROLE.md so the hook has content.
         role_dir = project / "personalities" / "demo"
         role_dir.mkdir(parents=True)
@@ -269,11 +332,11 @@ class TestHooksRunCleanly:
             env=env,
         )
         assert result.returncode == 0, result.stderr
-        payload = json.loads(result.stdout)
-        ctx = payload["hookSpecificOutput"]["additionalContext"]
+        ctx = result.stdout
         assert "Role: demo (ROLE.md)" in ctx
         assert "body" in ctx
-        assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+        # Negative: must NOT be the JSON envelope any more.
+        assert "hookSpecificOutput" not in ctx
 
     def test_role_load_hook_silent_when_no_personalities(self, project):
         write_claude_bridge(project)
@@ -292,8 +355,8 @@ class TestHooksRunCleanly:
         # No personalities → no context to inject → empty stdout (no JSON).
         assert result.stdout.strip() == ""
 
-    def test_feedback_check_hook_returns_valid_json(self, project):
-        """End-to-end: the feedback-check hook prints the contract shape."""
+    def test_feedback_check_hook_writes_plain_stdout(self, project):
+        """End-to-end: the feedback-check hook prints plain text."""
         write_claude_bridge(project)
         hook = project / ".claude" / "hooks" / "feedback_check.py"
 
@@ -307,14 +370,13 @@ class TestHooksRunCleanly:
             env=env,
         )
         assert result.returncode == 0, result.stderr
-        payload = json.loads(result.stdout)
-        ctx = payload["hookSpecificOutput"]["additionalContext"]
+        ctx = result.stdout
         assert "Feedback Check" in ctx
         assert "[user-correction]" in ctx
-        assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+        assert "hookSpecificOutput" not in ctx
 
-    def test_feedback_check_hook_defaults_event_name(self, project):
-        """No stdin (TTY-style invocation) still produces valid JSON."""
+    def test_feedback_check_hook_needs_no_stdin(self, project):
+        """No stdin (TTY-style invocation) still emits the prompt."""
         write_claude_bridge(project)
         hook = project / ".claude" / "hooks" / "feedback_check.py"
 
@@ -328,9 +390,8 @@ class TestHooksRunCleanly:
             env=env,
         )
         assert result.returncode == 0, result.stderr
-        payload = json.loads(result.stdout)
-        assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
-        assert "Feedback Check" in payload["hookSpecificOutput"]["additionalContext"]
+        assert "Feedback Check" in result.stdout
+        assert "hookSpecificOutput" not in result.stdout
 
 
 class TestHeartbeatWiring:

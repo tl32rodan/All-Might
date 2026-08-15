@@ -606,7 +606,11 @@ See `/remember` and `/recall` commands for detailed guides.
 
     def _opencode_plugin_content(self) -> str:
         """Return the OpenCode memory-load.ts plugin content."""
-        from ...core.plugin_telemetry import TS_HEARTBEAT_SNIPPET
+        from ...core.plugin_telemetry import (
+            DOC_TRUNCATED_NOTICE,
+            TS_HEARTBEAT_SNIPPET,
+            ts_budget_snippet,
+        )
         return ("""\
 /**
  * Memory L1 Loader — OpenCode plugin (All-Might)
@@ -629,7 +633,9 @@ import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { spawn } from "child_process";
 
-""" + TS_HEARTBEAT_SNIPPET + """
+""" + TS_HEARTBEAT_SNIPPET + ts_budget_snippet() + """
+const DOC_TRUNCATED_NOTICE = "__DOC_TRUNCATED_NOTICE__";
+
 // Memory Size Watch thresholds — pinned in both TS and Python.
 // If you change them here, change them in
 // _claude_memory_load_hook_content too. See docs/plan.md E'.
@@ -753,21 +759,29 @@ function maybeDrainIngest(cwd: string): void {
 }
 
 function buildPrefix(cwd: string): string {
+  // The scope principle and the size watch are the tail. They are
+  // short, always relevant, and must survive the budget — so the
+  // MEMORY.md body is what gets trimmed, never them. Budget shared
+  // with the Claude Code hook so both surfaces degrade identically.
+  const tail: string[] = [SCOPE_FIRST_PRINCIPLE, ""];
+  const sizeWatch = computeSizeWatch(cwd);
+  if (sizeWatch) {
+    tail.push(sizeWatch, "");
+  }
+  const tailText = tail.join("\\n");
+
   const parts: string[] = [];
   const memoryPath = join(cwd, "MEMORY.md");
   if (existsSync(memoryPath)) {
+    const room = HOOK_OUTPUT_BUDGET - tailText.length - 120;
     parts.push(
       "--- Project Memory (MEMORY.md) ---",
-      readFileSync(memoryPath, "utf-8"),
+      fitBudget(readFileSync(memoryPath, "utf-8"), DOC_TRUNCATED_NOTICE, room),
       "--- End Project Memory ---",
       ""
     );
   }
-  parts.push(SCOPE_FIRST_PRINCIPLE, "");
-  const sizeWatch = computeSizeWatch(cwd);
-  if (sizeWatch) {
-    parts.push(sizeWatch, "");
-  }
+  parts.push(tailText);
   return parts.join("\\n");
 }
 
@@ -824,7 +838,7 @@ export const MemoryLoadPlugin: Plugin = async ({ directory }: any) => {
 };
 
 export default MemoryLoadPlugin;
-""")
+""").replace("__DOC_TRUNCATED_NOTICE__", DOC_TRUNCATED_NOTICE)
 
     def _remember_trigger_plugin_content(self) -> str:
         """Return the OpenCode remember-trigger.ts plugin content."""
@@ -1840,14 +1854,18 @@ Log the recall to `memory/usage.log`:
         principle, emitting the result as ``additionalContext`` for
         SessionStart / PreCompact.
         """
-        from ...core.plugin_telemetry import PY_HEARTBEAT_SNIPPET
+        from ...core.plugin_telemetry import (
+            DOC_TRUNCATED_NOTICE,
+            PY_HEARTBEAT_SNIPPET,
+            py_budget_snippet,
+        )
         template = '''\
 #!/usr/bin/env python3
 # all-might generated — DO NOT EDIT.
 #
 # Mirror of .opencode/plugins/memory-load.ts. Changes here MUST land in
 # the .ts plugin too; see All-Might CLAUDE.md -> Editor Compatibility.
-"""Memory-load hook for Claude Code (SessionStart, PreCompact).
+"""Memory-load hook for Claude Code (SessionStart, every source).
 
 Primes the agent with MEMORY.md (L1) plus the scope-first memory
 principle. Same content the OpenCode memory-load plugin injects via
@@ -1864,6 +1882,10 @@ from pathlib import Path
 
 
 __PY_HEARTBEAT_SNIPPET__
+
+__PY_BUDGET_SNIPPET__
+
+DOC_TRUNCATED_NOTICE = "__DOC_TRUNCATED_NOTICE__"
 
 
 def _maybe_drain_ingest(cwd):
@@ -1971,8 +1993,17 @@ def main() -> int:
     _hb("memory_load")
     cwd = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     _maybe_drain_ingest(cwd)
-    parts: list[str] = []
     size_watch = _compute_size_watch(cwd)
+    # The scope principle and the size watch are the tail. They are
+    # short, always relevant, and must survive the budget — so the
+    # MEMORY.md body is what gets trimmed, never them.
+    tail: list[str] = [SCOPE_FIRST_PRINCIPLE]
+    if size_watch:
+        tail.append("")
+        tail.append(size_watch)
+    tail_text = "\\n".join(tail).strip()
+
+    parts: list[str] = []
     memory_md = cwd / "MEMORY.md"
     if memory_md.is_file():
         try:
@@ -1980,38 +2011,32 @@ def main() -> int:
         except OSError:
             body = ""
         if body:
+            # Budget left for the body once the tail is reserved.
+            room = HOOK_OUTPUT_BUDGET - len(tail_text) - 120
+            body = _fit_budget(body.rstrip(), DOC_TRUNCATED_NOTICE, room)
             parts.append("--- Project Memory (MEMORY.md) ---")
-            parts.append(body.rstrip())
+            parts.append(body)
             parts.append("--- End Project Memory ---")
             parts.append("")
-    parts.append(SCOPE_FIRST_PRINCIPLE)
-    if size_watch:
-        parts.append("")
-        parts.append(size_watch)
+    parts.append(tail_text)
     text = "\\n".join(parts).strip()
     if not text:
         return 0
 
-    try:
-        payload = json.load(sys.stdin) if not sys.stdin.isatty() else {}
-    except (json.JSONDecodeError, ValueError):
-        payload = {}
-    event = payload.get("hook_event_name") or "SessionStart"
-
     _hb("memory_load.injected")
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": event,
-            "additionalContext": text,
-        }
-    }))
+    sys.stdout.write(text)
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
 '''
-        return template.replace("__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET)
+        return (
+            template
+            .replace("__PY_HEARTBEAT_SNIPPET__", PY_HEARTBEAT_SNIPPET)
+            .replace("__PY_BUDGET_SNIPPET__", py_budget_snippet())
+            .replace("__DOC_TRUNCATED_NOTICE__", DOC_TRUNCATED_NOTICE)
+        )
 
     def _opencode_plugin_map(self) -> dict[str, str]:
         """Return mapping of plugin filename → content."""

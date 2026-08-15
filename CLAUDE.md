@@ -793,3 +793,34 @@ regressions; break them and the same bugs come back.
 - **Verify the API on one file before propagating to many.** If
   three files share an unverified assumption, they break together
   — and the tests pass in all three.
+- **Output contracts are per-event, not per-tool.** A field that
+  works on one hook event is not thereby available on another.
+  `hookSpecificOutput.additionalContext` is supported on
+  `SessionStart`-adjacent and tool events but has **no section** for
+  `PreCompact` / `PostCompact`; the documented context channel for
+  `SessionStart` / `UserPromptSubmit` / `UserPromptExpansion` is
+  **plain stdout**. We shipped `PreCompact` hooks emitting
+  `additionalContext` for months: schema-invalid output is a
+  *non-blocking* error, so the payload never reached the agent while
+  the tests — which asserted the JSON shape we were wrongly emitting —
+  stayed green. Before registering a hook on a new event, read that
+  event's own output section; do not generalise from a sibling.
+- **Know the host's output cap, and degrade deliberately.** Claude
+  Code truncates hook output (stdout, `additionalContext`,
+  `systemMessage`) at 10,000 characters **silently**. Any generator
+  that concatenates an unbounded number of files must budget against
+  `HOOK_OUTPUT_BUDGET` (`core/plugin_telemetry.py`) and degrade to a
+  read-on-demand index rather than a blind slice — a mid-sentence cut
+  drops whole roles with no signal anywhere. The budget is shared with
+  the OpenCode surface even though `output.parts.unshift` has no
+  documented cap: a role visible in one editor and absent in the other
+  is precisely the drift the dual-platform invariant forbids. Pinned
+  by `tests/test_hook_output_budget.py`, which measures **length and
+  role coverage** — string-presence assertions cannot see truncation.
+- **Retiring an event needs a removal path, like retiring a script.**
+  `_merge_hook_config` strips our commands only from events still in
+  the owned set, so dropping an event from `_settings_payload()`
+  without adding it to `_LEGACY_HOOK_EVENTS` strands the registration
+  in every already-initialised project — the OMO failure cascade.
+  Same contract as `_LEGACY_HOOK_SCRIPTS`: removal-only, never
+  re-added, and user-authored hooks on that event survive untouched.

@@ -68,7 +68,10 @@ class TestClaudeHook:
     def test_hook_shape(self, scaffolded: Path) -> None:
         body = (scaffolded / ".claude" / "hooks" / "offline_reference.py").read_text()
         assert "UserPromptSubmit" in body
-        assert "additionalContext" in body
+        # Plain stdout is the documented context channel for
+        # UserPromptSubmit; hookSpecificOutput has no section for it.
+        assert "sys.stdout.write(OFFLINE_REFERENCE_NOTICE)" in body
+        assert '"hookSpecificOutput":' not in body
         assert '_hb("offline_reference")' in body
         assert "project_knowledge_search" in body
 
@@ -81,7 +84,7 @@ class TestClaudeHook:
         ]
         assert any("offline_reference.py" in c for c in cmds)
 
-    def test_hook_runs_and_emits_valid_json(self, scaffolded: Path) -> None:
+    def test_hook_runs_and_writes_plain_stdout(self, scaffolded: Path) -> None:
         hook = scaffolded / ".claude" / "hooks" / "offline_reference.py"
         proc = subprocess.run(
             [sys.executable, str(hook)],
@@ -90,9 +93,8 @@ class TestClaudeHook:
             text=True,
         )
         assert proc.returncode == 0, proc.stderr
-        out = json.loads(proc.stdout)
-        ctx = out["hookSpecificOutput"]["additionalContext"]
-        assert "project_knowledge_search" in ctx
+        assert "project_knowledge_search" in proc.stdout
+        assert "hookSpecificOutput" not in proc.stdout
 
 
 class TestBothSurfacesAgree:
