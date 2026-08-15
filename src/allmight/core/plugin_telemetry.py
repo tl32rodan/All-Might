@@ -335,3 +335,104 @@ def _hb(name):
         pass  # heartbeats must never throw
 # --- end heartbeat ---
 '''
+
+
+# ---------------------------------------------------------------------------
+# Context-injection budget (shared by both surfaces)
+# ---------------------------------------------------------------------------
+#
+# Claude Code caps hook output — plain stdout, ``additionalContext`` and
+# ``systemMessage`` alike — at 10,000 characters, and truncates past it
+# *silently*. ``role_load`` concatenates every personality's full
+# ROLE.md, so a three-personality project clears the cap and loses the
+# alphabetically-last roles with no error anywhere.
+#
+# The budget sits below the hard cap so a fallback notice always fits.
+# It is deliberately shared with the OpenCode surface even though
+# ``output.parts.unshift`` has no documented cap: a role visible in one
+# editor and absent in the other is exactly the "behaviour depends on
+# which editor I open the project with" drift the dual-platform
+# invariant exists to prevent (see CLAUDE.md -> Editor Compatibility).
+#
+# See docs/compaction-reprime-proposal.md for the full rationale.
+HOOK_OUTPUT_BUDGET = 9_000
+
+# Emitted in place of the full role bodies when they exceed the budget.
+# Degrades to a read-on-demand index rather than a blind mid-sentence
+# cut — the same progressive-disclosure pattern L2 ``_index.md`` uses,
+# so every role stays discoverable at any project size.
+ROLE_INDEX_NOTICE = (
+    "Role bodies were omitted to stay within this editor's "
+    "context-injection budget. The roles below are an index only — read "
+    "personalities/<name>/ROLE.md in full before acting for that role."
+)
+
+# Appended when even the index does not fit. __N__ is substituted with
+# the number of roles dropped, so the omission is always stated rather
+# than silent.
+ROLE_OMITTED_NOTICE = (
+    "... and __N__ further role(s) not listed; see personalities/."
+)
+
+# Appended when a single-document injection (MEMORY.md) is trimmed.
+DOC_TRUNCATED_NOTICE = (
+    "... truncated to fit this editor's context-injection budget. "
+    "Read the file directly for the remainder."
+)
+
+
+TS_BUDGET_SNIPPET = """\
+// --- All-Might context-injection budget (do not edit) ---
+const HOOK_OUTPUT_BUDGET = __HOOK_OUTPUT_BUDGET__;
+function fitBudget(text: string, notice: string, limit?: number): string {
+  const cap = limit === undefined ? HOOK_OUTPUT_BUDGET : limit;
+  if (text.length <= cap) return text;
+  const room = cap - notice.length - 2;
+  if (room <= 0) return notice.slice(0, Math.max(cap, 0));
+  let cut = text.slice(0, room);
+  const nl = cut.lastIndexOf("\\n");
+  if (nl > 0) cut = cut.slice(0, nl);
+  return cut.replace(/\\s+$/, "") + "\\n\\n" + notice;
+}
+// --- end budget ---
+"""
+
+
+PY_BUDGET_SNIPPET = '''\
+# --- All-Might context-injection budget (do not edit) ---
+HOOK_OUTPUT_BUDGET = __HOOK_OUTPUT_BUDGET__
+
+
+def _fit_budget(text, notice, limit=None):
+    """Trim ``text`` to the budget at a line boundary, stating the trim.
+
+    ``limit`` overrides the budget when part of it is already reserved
+    for content that must survive (e.g. a trailing principle block).
+    """
+    cap = HOOK_OUTPUT_BUDGET if limit is None else limit
+    if len(text) <= cap:
+        return text
+    room = cap - len(notice) - 2
+    if room <= 0:
+        return notice[:max(cap, 0)]
+    cut = text[:room]
+    nl = cut.rfind("\\n")
+    if nl > 0:
+        cut = cut[:nl]
+    return cut.rstrip() + "\\n\\n" + notice
+# --- end budget ---
+'''
+
+
+def ts_budget_snippet() -> str:
+    """Return the TS budget helper with the shared constant inlined."""
+    return TS_BUDGET_SNIPPET.replace(
+        "__HOOK_OUTPUT_BUDGET__", str(HOOK_OUTPUT_BUDGET),
+    )
+
+
+def py_budget_snippet() -> str:
+    """Return the Python budget helper with the shared constant inlined."""
+    return PY_BUDGET_SNIPPET.replace(
+        "__HOOK_OUTPUT_BUDGET__", str(HOOK_OUTPUT_BUDGET),
+    )

@@ -1,6 +1,9 @@
 # Proposal — Fix the Claude Code compaction re-prime + hook output budget
 
-**Status**: proposal, awaiting maintainer approval. No code changed.
+**Status**: **implemented** 2026-08-15. Both maintainer decisions in
+§6 were resolved *in favour of the rules*: the budget applies to both
+surfaces, and the two `UserPromptSubmit` scripts converted in the same
+change. See §7 for what actually shipped.
 **Found**: 2026-08-15 platform recon (`docs/daily-learning/2026-08-15.md` §6).
 **Scope**: two defects in the Claude Code hook surface, both pre-existing,
 both invisible to the current test suite. Neither is caused by an
@@ -356,3 +359,83 @@ generators, consistent with *"add a flag, not a capability."*
 - §2.4 note — convert `feedback_check.py` / `offline_reference.py` to
   plain stdout in the same change (consistency), or leave them for a
   follow-up (narrower diff)?
+
+
+---
+
+## 7. What shipped
+
+Both §6 decisions were resolved by the maintainer with "keep the
+rules/disciplines first" — so in both cases the invariant won over the
+narrower local option.
+
+| Decision | Resolution |
+|---|---|
+| §3.3 — budget on OpenCode too? | **Yes.** Parity beats leaving OpenCode marginally better. A role visible in one editor and absent in the other is the exact drift the dual-platform invariant forbids. |
+| §2.4 — convert the `UserPromptSubmit` scripts? | **Yes.** `feedback_check.py` and `offline_reference.py` now use plain stdout too, so all four hooks share one output convention. |
+
+### Changes
+
+**`core/plugin_telemetry.py`** — new shared source of truth:
+`HOOK_OUTPUT_BUDGET = 9_000`, the three user-visible notices
+(`ROLE_INDEX_NOTICE`, `ROLE_OMITTED_NOTICE`, `DOC_TRUNCATED_NOTICE`),
+and `py_budget_snippet()` / `ts_budget_snippet()` emitting the same
+`fitBudget` helper into both runtimes.
+
+**`core/claude_bridge.py`** — `PreCompact` dropped from
+`_settings_payload()`; `_LEGACY_HOOK_EVENTS` added with the
+removal-only contract, including deleting the key once nothing of the
+user's remains under it; `role_load.py`, `feedback_check.py` and
+`offline_reference.py` switched to plain stdout; `role_load.py` gained
+the index fallback with prose-preferring summaries.
+
+**`capabilities/memory/initializer.py`** — `memory_load.py` switched to
+plain stdout and budgeted; both it and `memory-load.ts` now reserve the
+scope-first principle and size watch as an untrimmable tail and budget
+only the `MEMORY.md` body.
+
+**`core/personalities.py`** — `role-load.ts` gained the same budget,
+`buildIndex` and `summarise`, ported to match the Python behaviour.
+
+### Verification
+
+- `822 passed` (was 803; +19 new, 8 updated).
+- **8 pre-existing tests were updated, not extended** — they asserted
+  the JSON shape that was itself the bug. `TestHooksRunCleanly`'s
+  `*_returns_valid_json` tests are now `*_writes_plain_stdout` with
+  negative assertions that `hookSpecificOutput` is *absent*.
+- New `tests/test_hook_output_budget.py` (16 tests) measures **length
+  and role coverage**, not string presence — the only thing that can
+  see silent truncation. Covers 1/3/12/200/400-personality projects.
+- New `TestRetiredEvents` (3 tests) proves re-init strips our stale
+  `PreCompact` entries, **preserves user-authored hooks on that same
+  event**, and is idempotent.
+- `tsc --noEmit --skipLibCheck --types node .opencode/plugins/*.ts` —
+  clean, per CLAUDE.md *After Code Changes* step 2.
+- **Cross-surface equivalence checked at runtime, not by inspection**:
+  the generated `role_load.py` and a compiled `role-load.js` were run
+  against the same 12-personality fixture and their output compared —
+  **identical, 1215 bytes both sides**. That is the dual-platform
+  invariant actually satisfied rather than nominally.
+
+### Disciplines recorded
+
+Four rules added to CLAUDE.md → *Discipline When Generating
+Third-Party Integrations*: output contracts are per-event not
+per-tool; know the host's output cap and degrade deliberately;
+retiring an event needs a removal path like retiring a script; plus
+the existing verify-before-propagating rule now has this as its
+worked example. A caution was also added to
+`docs/retrieval-surfacing-proposal.md`, which plans to use
+`additionalContext` on `PreToolUse` and should confirm that event's
+own contract first.
+
+### Still outstanding
+
+The two inferences in §5 remain inferences — the empirical heartbeat
+check was not run, because it needs a live Claude Code session and a
+forced compaction, which this environment cannot provide. Neither the
+fix nor its tests depend on them: §2.3 (timing parity) justifies the
+change on its own, and `SessionStart` with no matcher was already the
+registration doing the real work. Worth confirming opportunistically
+via `allmight plugin status` on a real project.

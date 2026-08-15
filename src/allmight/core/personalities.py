@@ -935,9 +935,18 @@ def _write_role_load_plugin(project_root: Path) -> None:
 
 
 def _role_load_plugin_content() -> str:
-    from .plugin_telemetry import TS_HEARTBEAT_SNIPPET
-    return _ROLE_LOAD_PLUGIN_TEMPLATE.replace(
-        "__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET,
+    from .plugin_telemetry import (
+        ROLE_INDEX_NOTICE,
+        ROLE_OMITTED_NOTICE,
+        TS_HEARTBEAT_SNIPPET,
+        ts_budget_snippet,
+    )
+    return (
+        _ROLE_LOAD_PLUGIN_TEMPLATE
+        .replace("__TS_HEARTBEAT_SNIPPET__", TS_HEARTBEAT_SNIPPET)
+        .replace("__TS_BUDGET_SNIPPET__", ts_budget_snippet())
+        .replace("__ROLE_INDEX_NOTICE__", ROLE_INDEX_NOTICE)
+        .replace("__ROLE_OMITTED_NOTICE__", ROLE_OMITTED_NOTICE)
     )
 
 
@@ -964,12 +973,57 @@ import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 
 __TS_HEARTBEAT_SNIPPET__
+
+__TS_BUDGET_SNIPPET__
+
+const ROLE_INDEX_NOTICE = "__ROLE_INDEX_NOTICE__";
+const ROLE_OMITTED_NOTICE = "__ROLE_OMITTED_NOTICE__";
+
 const primed = new Set<string>();
+
+// First meaningful prose line of a ROLE.md, for the index fallback.
+// Prefers prose over headings: a leading `# <name>` just repeats the
+// name we already print.
+function summarise(body: string, name: string): string {
+  let fallback = "";
+  for (const raw of body.split("\\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("<!--")) continue;
+    if (line.startsWith("#")) {
+      const stripped = line.replace(/^#+/, "").trim();
+      if (stripped && stripped !== name && !fallback) {
+        fallback = stripped.slice(0, 120);
+      }
+      continue;
+    }
+    return line.slice(0, 120);
+  }
+  return fallback;
+}
+
+// Render name + summary + path per role, dropping the tail if needed.
+function buildIndex(roles: Array<[string, string]>): string {
+  const header = [ROLE_INDEX_NOTICE, ""];
+  const lines = roles.map(([name, body]) => {
+    const summary = summarise(body, name);
+    return `- ${name} — personalities/${name}/ROLE.md` +
+      (summary ? `: ${summary}` : "");
+  });
+  for (let kept = lines.length; kept > 0; kept--) {
+    const omitted = lines.length - kept;
+    const tail = omitted
+      ? [ROLE_OMITTED_NOTICE.replace("__N__", String(omitted))]
+      : [];
+    const text = header.concat(lines.slice(0, kept), tail).join("\\n").trim();
+    if (text.length <= HOOK_OUTPUT_BUDGET) return text;
+  }
+  return ROLE_INDEX_NOTICE;
+}
 
 function readAllRoles(cwd: string): string {
   const personalitiesDir = join(cwd, "personalities");
   if (!existsSync(personalitiesDir)) return "";
-  const parts: string[] = [];
+  const roles: Array<[string, string]> = [];
   let entries: string[] = [];
   try {
     entries = readdirSync(personalitiesDir).sort();
@@ -987,15 +1041,25 @@ function readAllRoles(cwd: string): string {
     }
     if (!stat.isFile()) continue;
     try {
-      parts.push(`--- Role: ${name} (ROLE.md) ---`);
-      parts.push(readFileSync(rolePath, "utf-8"));
-      parts.push(`--- End Role: ${name} ---`);
-      parts.push("");
+      roles.push([name, readFileSync(rolePath, "utf-8")]);
     } catch {
       // ignore unreadable role files
     }
   }
-  return parts.join("\\n");
+  const parts: string[] = [];
+  for (const [name, body] of roles) {
+    parts.push(`--- Role: ${name} (ROLE.md) ---`);
+    parts.push(body);
+    parts.push(`--- End Role: ${name} ---`);
+    parts.push("");
+  }
+  const text = parts.join("\\n");
+  // Budget is shared with the Claude Code hook. OpenCode has no
+  // documented injection cap, but a role visible in one editor and
+  // absent in the other is the drift the dual-platform invariant
+  // exists to prevent — so both surfaces degrade identically.
+  if (text.length <= HOOK_OUTPUT_BUDGET) return text;
+  return buildIndex(roles);
 }
 
 export const RoleLoadPlugin: Plugin = async ({ directory }: any) => {
